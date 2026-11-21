@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current ordinary mug trajectory diagnostic
+
+[Mug trajectory checkpoints](./phase-4-ordinary-img-mug-trajectory-research.md)
+capture the first added-noise state and selected steps of one original
+Invoke IMG run. Visible fragmentation appears at initialization.
+The clear pastel backdrop is confirmed at the terminal decode, with
+a still-fragmented mug and backdrop visible at step 8.
+
 ## Current VAE-only mug diagnostic
 
 [Mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md)

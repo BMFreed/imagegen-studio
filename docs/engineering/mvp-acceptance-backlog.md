@@ -9,8 +9,9 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
 [ordinary IMG strength comparison](./phase-4-ordinary-img-strength-research.md),
 [ordinary mug recoloring](./phase-4-ordinary-img-mug-research.md),
-[installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md), and
-[mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md).
+[installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md),
+[mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md), and
+[ordinary mug trajectory](./phase-4-ordinary-img-mug-trajectory-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -91,13 +92,17 @@ entries record the state at their checkpoint.
    altered the plain background. The installed InvokeAI IMG graph reproduced
    both failures on all three matching inputs and the same Euler schedule.
    Two VAE-only controls keep the source's background and gray ceramic.
-   The noise initialization and denoising path remain the next diagnostic
-   boundary before further matched references.
+   The original Invoke trajectory has visible fragmentation immediately
+   after noise addition. The mug and transitional mosaic read at step 8.
+   The recognizably patterned backdrop is clear by step 19. Use the
+   retained source latent, noise, and conditioning for the next
+   fixed-input comparison before further matched references.
    [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
    [strength comparison](./phase-4-ordinary-img-strength-research.md),
    [mug experiment](./phase-4-ordinary-img-mug-research.md),
    [installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md),
-   [VAE controls](./phase-4-ordinary-img-mug-vae-research.md).
+   [VAE controls](./phase-4-ordinary-img-mug-vae-research.md),
+   [trajectory checkpoints](./phase-4-ordinary-img-mug-trajectory-research.md).
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
    scarves survived all variants. The current original Invoke denoiser on the

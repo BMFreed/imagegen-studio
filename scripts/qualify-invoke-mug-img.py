@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import io
 import json
+import math
 import os
 import re
 import signal
@@ -24,6 +25,8 @@ PNG_LIMIT = 8 * 1024**2
 JSON_LIMIT = 8 * 1024**2
 LABELS = ("neutral", "red", "blue")
 VAE_CONTROL_SCHEMA = "installed-invoke-ordinary-img-mug-vae-reference-v1"
+TRAJECTORY_SCHEMA = "installed-invoke-ordinary-img-mug-trajectory-reference-v1"
+SNAPSHOT_STEPS = [1, 2, 4, 8, 19]
 POSITIVE = (
     "studio product photo of one {color} glazed ceramic mug, single handle on the right,"
     " empty open top, plain ivory tabletop and background, soft diffuse light"
@@ -424,6 +427,81 @@ def verify_observation(run, result, contract):
         [timestep] for timestep in contract["expectedTimesteps"]
     ]
     assert len(case["unet"]) == len(case["steps"])
+    if contract["schema"] == TRAJECTORY_SCHEMA:
+        assert len(evidence["cases"]) == 1
+        verify_trajectory(run, result, case, contract)
+
+
+def verify_trajectory(run, result, case, contract):
+    manifest_path = run / "trajectory/manifest.json"
+    assert case["trajectoryManifest"] == "trajectory/manifest.json"
+    assert manifest_path.resolve(strict=True) == manifest_path
+    with manifest_path.open("rb") as stream:
+        body = stream.read(JSON_LIMIT + 1)
+    assert len(body) <= JSON_LIMIT
+    manifest = json.loads(body)
+    assert manifest["schemaVersion"] == 1
+    for field in ("graphId", "queueItemId", "sessionId"):
+        assert manifest[field] == case[field], field
+    assert manifest["decodeAfterOriginal"] is True
+    assert manifest["terminalMatchesNativeDecode"] is True
+    assert manifest["terminalReusesNativeDecodeOutput"] is True
+
+    (added,) = case["addNoise"]
+    assert added["sample"]["sha256"] == case["encode"]["scaledLatents"]["sha256"]
+    assert added["noise"]["sha256"] == case["noise"]["tensor"]["sha256"]
+    assert added["timesteps"] == [contract["expectedTimesteps"][0]]
+    previous = added["result"]["sha256"]
+    for step in case["steps"]:
+        assert step["sample"]["sha256"] == previous
+        previous = step["output"]["sha256"]
+
+    first_unet = case["unet"][0]
+    for unet in case["unet"]:
+        assert unet["context"] == first_unet["context"]
+        assert unet["addedConditioning"] == first_unet["addedConditioning"]
+    latents = {
+        "source": added["sample"],
+        "noised": added["result"],
+        **{
+            f"step-{step:02d}": case["steps"][step - 1]["output"]
+            for step in contract["snapshotSteps"]
+        },
+    }
+    tensors = {
+        **latents,
+        "noise": added["noise"],
+        "context": first_unet["context"],
+        "text_embeds": first_unet["addedConditioning"]["text_embeds"],
+        "time_ids": first_unet["addedConditioning"]["time_ids"],
+    }
+    assert set(manifest["tensors"]) == set(tensors)
+    directory = manifest_path.parent
+    for role, observed in tensors.items():
+        artifact = manifest["tensors"][role]
+        assert artifact["path"] == f"{role}.raw"
+        for field in ("shape", "dtype", "sha256"):
+            assert artifact[field] == observed[field], (role, field)
+        assert artifact["dtype"] == "torch.float16"
+        assert artifact["byteSize"] == math.prod(artifact["shape"]) * 2
+        pin_file(directory / artifact["path"], artifact["byteSize"], artifact["sha256"])
+
+    frames = manifest["frames"]
+    assert [frame["role"] for frame in frames] == list(latents)
+    for frame in frames:
+        assert frame["path"] == f"{frame['role']}.png"
+        assert 0 < frame["byteSize"] <= PNG_LIMIT
+        path = directory / frame["path"]
+        pin_file(path, frame["byteSize"], frame["sha256"])
+        descriptor = png_description(
+            path.read_bytes(), contract["width"], contract["height"]
+        )
+        for field in ("byteSize", "width", "height", "rgbSha256", "sha256"):
+            assert descriptor[field] == frame[field], (frame["role"], field)
+        if frame["role"] == "step-19":
+            assert frame["decodedTensorSha256"] == case["decode"]["tensor"]["sha256"]
+            for field in ("rgbSha256", "rgbaSha256"):
+                assert descriptor[field] == result[field], field
 
 
 def shutdown(server, group, identity):
@@ -463,13 +541,19 @@ def shutdown(server, group, identity):
 
 def check_contract(contract, run):
     vae_only = contract["schema"] == VAE_CONTROL_SCHEMA
-    profile = "invoke-ordinary-img-mug-vae" if vae_only else "invoke-ordinary-img-mug"
+    trajectory = contract["schema"] == TRAJECTORY_SCHEMA
+    if vae_only:
+        profile, temp_suffix = "invoke-ordinary-img-mug-vae", "iv"
+    elif trajectory:
+        profile, temp_suffix = "invoke-ordinary-img-mug-trajectory", "it"
+    else:
+        profile, temp_suffix = "invoke-ordinary-img-mug", "im"
     assert run.parent == ARTIFACT_ROOT / "runs" / profile, run
     assert re.fullmatch(r"[0-9]{8}-r[1-9][0-9]*", run.name)
     assert run.resolve(strict=True) == run and run.stat().st_uid == os.getuid()
     tmp = Path(contract["tempRoot"])
     root = Path(contract["appRoot"])
-    tmp_pattern = r"t-igs-iv[1-9][0-9]*" if vae_only else r"t-igs-im[1-9][0-9]*"
+    tmp_pattern = rf"t-igs-{temp_suffix}[1-9][0-9]*"
     assert tmp.parent == ARTIFACT_ROOT and re.fullmatch(tmp_pattern, tmp.name)
     assert root == tmp / "app" and root.resolve(strict=True) == root and root.is_dir()
     assert tmp.stat().st_uid == root.stat().st_uid == os.getuid()
@@ -492,10 +576,13 @@ def check_contract(contract, run):
         }
         return
 
-    assert contract["cases"] == [
+    cases = [
         {"label": label, "positive": POSITIVE.format(color=color)}
         for label, color in zip(LABELS, ("gray", "red", "blue"), strict=True)
     ]
+    if trajectory:
+        assert contract["snapshotSteps"] == SNAPSHOT_STEPS
+    assert contract["cases"] == (cases[:1] if trajectory else cases)
     assert (contract["width"], contract["height"], contract["seed"]) == (512, 512, 123)
     assert (contract["steps"], contract["cfg"], contract["cfgRescale"]) == (30, 5, 0)
     assert (
@@ -504,7 +591,7 @@ def check_contract(contract, run):
         contract["denoisingEnd"],
         contract["negative"],
         contract["freshNativeRequestsMax"],
-    ) == ("euler", 0.4, 1, "", 3)
+    ) == ("euler", 0.4, 1, "", 1 if trajectory else 3)
     assert contract["expectedTimesteps"] == list(range(595, 0, -33))
 
 

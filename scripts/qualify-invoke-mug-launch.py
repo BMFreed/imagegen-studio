@@ -7,6 +7,8 @@ app/invocations/sd/denoise_latents.py, and the legacy loop in
 backend/stable_diffusion/{diffusers_pipeline,diffusion/shared_invokeai_diffusion}.py.
 The installed release has its own flat invocation module paths. Each wrapper
 below delegates to that release and reads tensor bytes for diagnostics.
+The trajectory profile previews held latents after the native terminal decode,
+using the installed app's latents_to_image.py VAE scaling and postprocessing.
 """
 
 import argparse
@@ -17,6 +19,9 @@ import sys
 from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
+
+TRAJECTORY_SCHEMA = "installed-invoke-ordinary-img-mug-trajectory-reference-v1"
+SNAPSHOT_STEPS = (1, 2, 4, 8, 19)
 
 
 def launch_arguments():
@@ -61,7 +66,7 @@ def launch_arguments():
     return args, contract
 
 
-def install_observers(run, labels, config):
+def install_observers(run, labels, config, snapshot_steps):
     import torch
     from diffusers import AutoencoderKL, UNet2DConditionModel
     from invokeai.app.invocations import (
@@ -75,6 +80,16 @@ def install_observers(run, labels, config):
     )
 
     vae_only = labels == ("vae",)
+    if snapshot_steps:
+        trajectory = run / "trajectory"
+        trajectory.mkdir(mode=0o700)
+        snapshots = {}
+        preview_roles = ("source", "noised", *(f"step-{n:02d}" for n in snapshot_steps))
+        conditioning_shapes = {
+            "context": (2, 77, 2048),
+            "text_embeds": (2, 1280),
+            "time_ids": (2, 6),
+        }
     # The original isolated application qualification used the same allocator fraction.
     torch.cuda.set_per_process_memory_fraction(0.75, 0)
     observed = {
@@ -120,6 +135,16 @@ def install_observers(run, labels, config):
         if isinstance(value, torch.Tensor):
             return value.detach().to("cpu").reshape(-1).tolist()
         return [value]
+
+    def hold(role, tensor):
+        expected_shape = conditioning_shapes.get(role, (1, 4, 64, 64))
+        if (
+            role in snapshots
+            or tensor.dtype != torch.float16
+            or tuple(tensor.shape) != expected_shape
+        ):
+            raise RuntimeError(f"Unexpected trajectory tensor: {role}")
+        snapshots[role] = tensor.detach().to("cpu", copy=True).contiguous()
 
     def invocation_row(context):
         item = context._data.queue_item
@@ -302,9 +327,14 @@ def install_observers(run, labels, config):
         @wraps(original_add_noise)
         def observe_add_noise(original_samples, noise, timesteps, *args, **kwargs):
             sample = digest(original_samples)
+            if snapshot_steps:
+                hold("source", original_samples)
+                hold("noise", noise)
             out = original_add_noise(
                 original_samples, noise, timesteps, *args, **kwargs
             )
+            if snapshot_steps:
+                hold("noised", out)
             row["addNoise"].append(
                 {
                     "sample": sample,
@@ -339,10 +369,12 @@ def install_observers(run, labels, config):
                 "stepIndex": scheduler.step_index,
             }
             value = original_step(model_output, timestep, sample, *args, **kwargs)
-            before["output"] = digest(
-                value.prev_sample if hasattr(value, "prev_sample") else value[0]
-            )
+            previous = value.prev_sample if hasattr(value, "prev_sample") else value[0]
+            before["output"] = digest(previous)
             row["steps"].append(before)
+            transition = len(row["steps"])
+            if transition in snapshot_steps:
+                hold(f"step-{transition:02d}", previous)
             return value
 
         scheduler.add_noise = observe_add_noise
@@ -361,6 +393,10 @@ def install_observers(run, labels, config):
         timestep = args[1] if len(args) > 1 else kwargs["timestep"]
         context = args[2] if len(args) > 2 else kwargs["encoder_hidden_states"]
         extra = kwargs.get("added_cond_kwargs") or {}
+        if snapshot_steps and not row["unet"]:
+            hold("context", context)
+            hold("text_embeds", extra["text_embeds"])
+            hold("time_ids", extra["time_ids"])
         record = {
             "sample": digest(sample),
             "timestep": timestep_values(timestep),
@@ -399,11 +435,86 @@ def install_observers(run, labels, config):
 
     original_decode = AutoencoderKL.decode
 
+    def publish_trajectory(row, vae, native_input, native_decoded):
+        expected = set(preview_roles) | {"noise", *conditioning_shapes}
+        if snapshots.keys() != expected or len(row["steps"]) != snapshot_steps[-1]:
+            raise RuntimeError("Incomplete trajectory before native VAE decode.")
+
+        tensors = {}
+        for role, tensor in snapshots.items():
+            raw = tensor.view(torch.uint8).numpy().tobytes()
+            name = f"{role}.raw"
+            with (trajectory / name).open("xb") as output:
+                output.write(raw)
+            tensors[role] = {
+                "path": name,
+                "byteSize": len(raw),
+                "shape": list(tensor.shape),
+                "dtype": str(tensor.dtype),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+
+        frames = []
+        for role in preview_roles:
+            # Match the installed l2i's FP16 CUDA preprocessing and image quantization.
+            latent = snapshots[role].to(native_input) / vae.config.scaling_factor
+            if role == preview_roles[-1]:
+                if digest(latent) != row["decode"]["latents"]:
+                    raise RuntimeError(
+                        "Terminal snapshot differs from the native VAE input."
+                    )
+                decoded = native_decoded
+            else:
+                decoded = original_decode(vae, latent, return_dict=False)[0]
+            decoded_digest = digest(decoded)
+            image = (decoded / 2 + 0.5).clamp(0, 1)
+            pixels = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            rgb = latents_to_image.VaeImageProcessor.numpy_to_pil(pixels)[0]
+            if rgb.mode != "RGB" or rgb.size != (512, 512):
+                raise RuntimeError(f"Unexpected trajectory preview shape: {role}")
+            name = f"{role}.png"
+            path = trajectory / name
+            with path.open("xb") as output:
+                rgb.save(output, format="PNG")
+            encoded = path.read_bytes()
+            frames.append(
+                {
+                    "role": role,
+                    "path": name,
+                    "byteSize": len(encoded),
+                    "width": rgb.width,
+                    "height": rgb.height,
+                    "rgbSha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "decodedTensorSha256": decoded_digest["sha256"],
+                }
+            )
+
+        manifest = trajectory / "manifest.json"
+        with manifest.open("x") as output:
+            json.dump(
+                {
+                    "schemaVersion": 1,
+                    "graphId": row["graphId"],
+                    "queueItemId": row["queueItemId"],
+                    "sessionId": row["sessionId"],
+                    "decodeAfterOriginal": True,
+                    "terminalMatchesNativeDecode": True,
+                    "terminalReusesNativeDecodeOutput": True,
+                    "tensors": tensors,
+                    "frames": frames,
+                },
+                output,
+                indent=2,
+            )
+            output.write("\n")
+        row["trajectoryManifest"] = str(manifest.relative_to(run))
+
     @wraps(original_decode)
     def observe_decode(self, z, *args, **kwargs):
         row = active.get()
         if row is not None:
-            if vae_only:
+            if vae_only or snapshot_steps:
                 assert "latents" not in row["decode"]
             row["decode"].update(
                 latents=digest(z), scalingFactor=self.config.scaling_factor
@@ -412,6 +523,8 @@ def install_observers(run, labels, config):
         if row is not None:
             decoded = result.sample if hasattr(result, "sample") else result[0]
             row["decode"]["tensor"] = digest(decoded)
+            if snapshot_steps:
+                publish_trajectory(row, self, z, decoded)
         return result
 
     wrap_invocation(image_to_latents.ImageToLatentsInvocation, "encode")
@@ -458,6 +571,15 @@ def main():
         contract["schema"] == "installed-invoke-ordinary-img-mug-vae-reference-v1"
     )
     expected_labels = ("vae",) if vae_only else ("neutral", "red", "blue")
+    snapshot_steps = ()
+    if contract["schema"] == TRAJECTORY_SCHEMA:
+        expected_labels = ("neutral",)
+        steps = contract["snapshotSteps"]
+        if tuple(steps) != SNAPSHOT_STEPS or any(
+            type(step) is not int for step in steps
+        ):
+            raise ValueError("Expected the preregistered trajectory snapshots.")
+        snapshot_steps = SNAPSHOT_STEPS
     if labels != expected_labels:
         raise ValueError("Expected the preregistered graph roles in order.")
 
@@ -483,7 +605,7 @@ def main():
         ):
             raise RuntimeError("Invoke resolved a different app root or listener.")
         result = original_get_app()
-        install_observers(args.run, labels, config)
+        install_observers(args.run, labels, config, snapshot_steps)
         return result
 
     installed.get_app = get_app_with_observers

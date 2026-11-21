@@ -78,10 +78,10 @@ both controls.
 Encoding and decoding the original source alone do not reproduce the
 pattern for these exact installed configurations. Attribution is now
 bounded to the added-noise and denoising path and its changed latents.
-The next comparison can hold a common source latent, raw noise and text
-conditioning, then inspect the image or latent after initialization and
-the first Euler transitions. This source-level diagnostic leaves human
-visual acceptance open.
+The [trajectory follow-up](./phase-4-ordinary-img-mug-trajectory-research.md)
+captures visible color fragmentation after noise addition, a transitional
+mosaic at step 8, and the clear patterned background at the terminal
+decode. These diagnostics leave human visual acceptance open.
 
 ## Evidence and replay
 
