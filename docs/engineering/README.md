@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Current installed Invoke IMG mug comparison
+
+[Installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md)
+completed the three exact ordinary mug requests through its real queue and
+IMG graph. Both applications preserved the mug and left it gray against
+a changed multicolor background. Each matched pair was recognized blind.
+
 ## Current ordinary Illustrious IMG mug control
 
 [Ordinary mug recoloring](./phase-4-ordinary-img-mug-research.md)

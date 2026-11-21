@@ -86,15 +86,14 @@ still saw a visibly changed background. One subject, seed, strength, and
 one phrase per color are covered. Human visual acceptance remains open.
 
 This leaves no positive ordinary control for the matched Regional
-Reference comparison. For the next comparison, the read-only preflight
+Reference comparison. The read-only preflight
 confirmed the installed InvokeAI 6.14.3 environment and matched all 17
 offline configuration and tokenizer pins from the
 [previous application reference](./phase-4-illustrious-invoke-application-research.md)
-against the signed Studio installation. The installed image upload and
-`i2l` owners can feed the exact mug PNG to its own IMG graph. This will
-compare observable application behavior. Causal attribution also needs
-a common-runtime comparison of the original denoiser and Studio with the
-same VAE source latent, noise, conditioning, and Euler schedule.
+against the signed Studio installation.
+The [installed Invoke IMG follow-up](./phase-4-invoke-ordinary-img-mug-research.md)
+fed the exact mug PNG to Invoke's own graph and reproduced the gray body
+and changed background on all three inputs.
 
 ## Checks and retained evidence
 
