@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current ordinary Illustrious IMG color control
+
+[Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md)
+reproduced the original gray cat input and neutral IMG output byte for byte.
+The red and blue text variants leave the head gray at strength 0.5.
+The native worker completes all three jobs. This input and strength fail
+as a positive recoloring control for the earlier Regional Reference pilot.
+
 ## Current Illustrious XL prompt comparison
 
 [Ordinary prose and tags](./phase-4-ordinary-cat-tags-research.md) reproduced

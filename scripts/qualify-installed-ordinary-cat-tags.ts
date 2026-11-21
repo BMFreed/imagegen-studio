@@ -12,14 +12,17 @@ import { promisify } from 'node:util'
 
 import { GenerationWorkerClient } from '../src/main/projects/generation-worker-client.js'
 import {
-  type IllustriousTxt2ImgRequestV1,
-  withIllustriousTxt2ImgRequest,
+  type IllustriousGenerationRequestV1,
+  withIllustriousGenerationRequest,
 } from '../src/main/projects/illustrious-txt2img-job.js'
 import { captureInferenceWorkerOwner } from '../src/main/projects/inference-worker-ownership.js'
 import {
   ORDINARY_CAT_TAGS_CASES,
   ORDINARY_CAT_TAGS_CONTRACT,
+  ORDINARY_IMG_RECOLOR_CASES,
+  ORDINARY_IMG_RECOLOR_CONTRACT,
   produceOrdinaryCatTagsProbe,
+  produceOrdinaryImgRecolorProbe,
 } from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
 import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-client.js'
 
@@ -112,7 +115,7 @@ async function verifyCheckpoint() {
   return before
 }
 
-function pairedInputs(request: IllustriousTxt2ImgRequestV1) {
+function pairedInputs(request: IllustriousGenerationRequestV1) {
   const { output: _output, prompts, target, ...job } = request.job
   const { path: _path, ...targetContent } = target
   return {
@@ -195,7 +198,14 @@ async function runtimeIdle(engine: Awaited<ReturnType<typeof readEngine>>) {
 async function main() {
   const run = process.argv[3] ?? ''
   assert.deepEqual(process.argv.slice(2), ['--run', run])
-  assert.equal(path.dirname(run), runRoot)
+  const img = path.dirname(run) === path.join(artifactRoot, 'runs/ordinary-img-recolor')
+  assert.ok(img || path.dirname(run) === runRoot)
+  const contract = img ? ORDINARY_IMG_RECOLOR_CONTRACT : ORDINARY_CAT_TAGS_CONTRACT
+  const cases = img ? ORDINARY_IMG_RECOLOR_CASES : ORDINARY_CAT_TAGS_CASES
+  const bbox = img ? ORDINARY_IMG_RECOLOR_CONTRACT.bbox : box
+  const executedSteps = img ? ORDINARY_IMG_RECOLOR_CONTRACT.executedSteps : steps
+  const produce = img ? produceOrdinaryImgRecolorProbe : produceOrdinaryCatTagsProbe
+  const operation = img ? 'illustrious-img2img' : 'illustrious-txt2img'
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
   assert.equal(await realpath(run), run)
   const directory = await lstat(run)
@@ -205,19 +215,22 @@ async function main() {
   const deadline = Date.now() + bounds.runtimeMaxSeconds * 1000
   const contractPath = path.join(run, 'experiment-contract.json')
   const contractBytes = await bytesAt(contractPath)
-  assert.deepEqual(JSON.parse(contractBytes.toString()), ORDINARY_CAT_TAGS_CONTRACT)
+  assert.deepEqual(JSON.parse(contractBytes.toString()), contract)
   const applicationRevision = await revision(repository)
   const invokeRevision = await revision(invoke)
-  assert.equal(applicationRevision, ORDINARY_CAT_TAGS_CONTRACT.base)
-  assert.equal(invokeRevision, ORDINARY_CAT_TAGS_CONTRACT.invokeRevision)
+  assert.equal(applicationRevision, contract.base)
+  assert.equal(invokeRevision, contract.invokeRevision)
+  const checkedInvokeFiles = img
+    ? [...invokeFiles, 'invokeai/app/invocations/vae/image_to_latents.py']
+    : invokeFiles
   const source = {
     applicationRevision,
     files: await sourceHashes(repository, ownerFiles),
-    invokeFiles: await sourceHashes(invoke, invokeFiles),
+    invokeFiles: await sourceHashes(invoke, checkedInvokeFiles),
     invokeRevision,
   }
   const engine = await readEngine([
-    'illustrious-txt2img',
+    operation,
     'illustrious-euler',
     'denoising-progress',
     'linux-owned-inference-v1',
@@ -236,7 +249,6 @@ async function main() {
     await mkdir(directory, { mode: 0o700 })
   }
   const retain = (name: string, value: unknown) => writeJson(name, value, run)
-  const cases = ORDINARY_CAT_TAGS_CASES
   const checkpointPin = { byteSize: checkpointBytes, path: checkpoint, sha256: checkpointSha }
   await retain('native-start.json', {
     bootstrapStorage,
@@ -255,18 +267,28 @@ async function main() {
   let submitted = 0
   let failure: unknown
   try {
-    await produceOrdinaryCatTagsProbe({
+    await produce({
       pythonExecutable: engine.pythonExecutable,
       run,
       runtimeRoot: engine.runtimeDir,
       async useCase({ case: testCase, models, prepared, recipe, references }) {
         assert.deepEqual(testCase, cases[attempted])
-        assert.equal(prepared.context.kind, 'normal-txt2img-preparation')
-        assert.deepEqual(prepared.context.bbox, box)
+        assert.equal(
+          prepared.context.kind,
+          img ? 'normal-img2img-preparation' : 'normal-txt2img-preparation',
+        )
+        assert.deepEqual(prepared.context.bbox, bbox)
         assert.deepEqual(recipe.regions, [])
         assert.equal(references, undefined)
         const actualTarget = sha(prepared.targetPngBytes)
         assert.equal(prepared.context.target.sha256, actualTarget)
+        if (img) {
+          assert.equal(actualTarget, ORDINARY_IMG_RECOLOR_CONTRACT.source.sha256)
+          assert.equal(
+            prepared.targetPngBytes.length,
+            ORDINARY_IMG_RECOLOR_CONTRACT.source.byteSize,
+          )
+        }
         targetSha ??= actualTarget
         assert.equal(actualTarget, targetSha)
         const target = path.join(outputRoot, `${testCase.label}.target.png`)
@@ -319,14 +341,22 @@ async function main() {
           assert.equal((await readFile(`${proc}/cgroup`, 'utf8')).trim(), `0::${bounds.group}`)
           stopGpu = observeGpu(owner.worker.pid)
 
-          output = await withIllustriousTxt2ImgRequest({
+          output = await withIllustriousGenerationRequest({
             modelService: models,
             prepared,
             ready: active.ready,
             scratchBasePath: scratch,
             async use(request) {
               const { job } = request
-              assert.deepEqual(job.bbox, box)
+              assert.equal(request.type, `generate-${operation}`)
+              assert.deepEqual(job.bbox, bbox)
+              if (img) {
+                assert.ok('denoisingStrength' in job.sampling)
+                assert.equal(
+                  job.sampling.denoisingStrength,
+                  ORDINARY_IMG_RECOLOR_CONTRACT.sampling.denoisingStrength,
+                )
+              }
               assert.deepEqual(job.checkpoint, {
                 path: checkpoint,
                 predictionType: 'epsilon',
@@ -348,7 +378,7 @@ async function main() {
                   !job.embeddings?.positive.length &&
                   !job.embeddings?.negative.length,
               )
-              if (testCase.label.endsWith('-prose')) {
+              if (testCase.label === 'neutral' || testCase.label.endsWith('-prose')) {
                 controls.set(testCase.seed, pairedInputs(request))
               } else {
                 assert.deepEqual(pairedInputs(request), controls.get(testCase.seed))
@@ -365,7 +395,7 @@ async function main() {
               })
               submitted++
               const response = (await active.generate(request, (event) => {
-                assert.equal(event.totalSteps, steps)
+                assert.equal(event.totalSteps, executedSteps)
                 assert.equal(event.step, progress.length + 1)
                 progress.push({ ...event })
               })) as { outputPath: string; requestId: string; seed: number; type: string }
@@ -373,17 +403,17 @@ async function main() {
               assert.equal(response.requestId, request.requestId)
               assert.equal(response.outputPath, job.output.pngPath)
               assert.equal(response.seed, testCase.seed)
-              assert.equal(progress.length, steps)
+              assert.equal(progress.length, executedSteps)
               const bytes = await bytesAt(job.output.pngPath, 32 * 1024 ** 2)
               const sha256 = sha(bytes)
               const png = await readSmartPatchModelSourceOutput(job.output.pngPath, {
                 byteSize: bytes.length,
                 colorSpace: 'srgb',
-                height: box.height,
+                height: bbox.height,
                 iccSha256: IGS_SRGB_ICC_SHA256,
                 path: job.output.pngPath,
                 sha256,
-                width: box.width,
+                width: bbox.width,
               })
               const filename = path.join(outputRoot, `${testCase.label}.png`)
               await writeFile(filename, png, { flag: 'wx', mode: 0o600 })
@@ -432,7 +462,7 @@ async function main() {
     })
     assert.equal(attempted, cases.length)
     assert.equal(submitted, cases.length)
-    assert.equal(controls.size, 2)
+    assert.equal(controls.size, img ? 1 : 2)
   } catch (error) {
     failure = error
   }
@@ -449,7 +479,7 @@ async function main() {
     assert.equal(await revision(repository), applicationRevision)
     assert.equal(await revision(invoke), invokeRevision)
     assert.deepEqual(await sourceHashes(repository, ownerFiles), source.files)
-    assert.deepEqual(await sourceHashes(invoke, invokeFiles), source.invokeFiles)
+    assert.deepEqual(await sourceHashes(invoke, checkedInvokeFiles), source.invokeFiles)
     const measured = Object.fromEntries(
       await Promise.all(
         ['memory.peak', 'memory.events', 'memory.stat', 'memory.swap.peak'].map(async (name) => [

@@ -4,8 +4,9 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
 [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md),
 [recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md),
-[CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md), and
-[ordinary Illustrious prompt comparison](./phase-4-ordinary-cat-tags-research.md).
+[CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md),
+[ordinary Illustrious prompt comparison](./phase-4-ordinary-cat-tags-research.md), and
+[ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -78,12 +79,17 @@ entries record the state at their checkpoint.
    [Ordinary prose and tags](./phase-4-ordinary-cat-tags-research.md).
    The source-anchored IMG pilot preserved geometry in all three jobs. Both
    reference cards failed the preregistered red/blue recoloring criterion.
+   The ordinary IMG text follow-up reproduced the neutral PNG byte for byte.
+   Both color edits also left the head gray at strength 0.5. Establish a
+   positive ordinary color control with an independently fixed higher-strength
+   comparison before the next matched reference pair.
+   [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md).
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
    scarves survived all variants. The current original Invoke denoiser on the
    held source latent repeats that result. Exact negative permissions and
    prompt inputs match. Selective attenuation remains unqualified.
-   Retain both IMG pilots and record a new hypothesis before any further
+   Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
    The representative Illustrious 512×512 IMG case with three separately masked

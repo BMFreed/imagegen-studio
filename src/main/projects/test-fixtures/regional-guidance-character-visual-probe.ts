@@ -1254,6 +1254,90 @@ export async function produceOrdinaryCatTagsProbe<T>(options: {
   })
 }
 
+const ORDINARY_IMG_RECOLOR_ROOT = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/ordinary-img-recolor',
+)
+const ordinaryImg = { image: null, outside: false, seed: 123, side: 512 } as const
+export const ORDINARY_IMG_RECOLOR_CASES = [
+  { ...ordinaryImg, label: 'neutral', positive: CAT_PROSE },
+  { ...ordinaryImg, label: 'red', positive: CAT_PROSE.replace('one cat', 'one red cat') },
+  { ...ordinaryImg, label: 'blue', positive: CAT_PROSE.replace('one cat', 'one blue cat') },
+] as const
+export const ORDINARY_IMG_RECOLOR_CONTRACT = {
+  base: 'b76ffc51ca15ef38fc1acda0071377850d00e148',
+  bbox: { height: 512, width: 512, x: 0, y: 0 },
+  cases: ORDINARY_IMG_RECOLOR_CASES,
+  executedSteps: 16,
+  globalPositive: CAT_PROSE,
+  historicalNeutral: {
+    byteSize: 158_090,
+    sha256: 'd6031c5f699b4f308933a3dc8cefe3fabd8a114271ac3873667c54ec14baa556',
+  },
+  historicalRun: 'regional-reference-img-utility/20261118-r1',
+  invokeRevision: '4875d96531ca6712b288f6e660fcbb34143408c1',
+  masks: {
+    'background-corners.png': {
+      byteSize: 662,
+      pixels: 25_600,
+      sha256: '025ef8c0cab891616fcd96c664e4e13b856c5a247f1a31c15a5513a1195c9fbe',
+    },
+    'head-core.png': {
+      byteSize: 2705,
+      pixels: 51_878,
+      sha256: 'b50ea83a94b2a523ae3f6d27f96545c3ba822a4519f7b03f09acb66b5cbe9146',
+    },
+  },
+  nativeRequestCeiling: ORDINARY_IMG_RECOLOR_CASES.length,
+  sampling: {
+    cfgRescale: 0,
+    cfgScale: 5,
+    denoisingStrength: 0.5,
+    negativePrompt: '',
+    sampler: 'Euler',
+    scheduler: 'Normal',
+    steps: 30,
+    vaePrecision: 'FP16',
+  },
+  schema: 'ordinary-img-recolor-experiment-v1',
+  source: {
+    byteSize: 5143,
+    sha256: '636c9337dd4fcf0afdd5d0f4b0c2756f410f9e11bbdd3f77dd74a879b31b68e7',
+  },
+  visualGate:
+    'Blind review must identify a coherent frontal head with two ears and two eyes, neutral in the control and broadly colored correctly in both edits with a plain light background. Ambiguity is inconclusive. Measure RGB dominance at a margin of 30 in both pinned masks for corroboration.',
+} as const
+
+type OrdinaryImgRecolorUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
+  case: (typeof ORDINARY_IMG_RECOLOR_CASES)[number]
+  prepared: PreparedNormalGeneration
+}
+
+/** Keep the source Raster in the saved ordinary Canvas for each literal prompt. */
+export async function produceOrdinaryImgRecolorProbe<T>(options: {
+  pythonExecutable: string
+  run: string
+  runtimeRoot: string
+  useCase: (input: OrdinaryImgRecolorUseCase) => Promise<T>
+}): Promise<unknown> {
+  assert.equal(path.dirname(options.run), ORDINARY_IMG_RECOLOR_ROOT)
+  assert.match(path.basename(options.run), /^\d{8}-r[1-9]\d*$/)
+  return produceFixedUtilityProbe({
+    ...options,
+    prepare: prepareNormalGeneration,
+    sourceImage: {
+      ...ORDINARY_IMG_RECOLOR_CONTRACT.source,
+      path: path.join(options.run, 'cat-source.png'),
+    },
+    spec: {
+      cases: ORDINARY_IMG_RECOLOR_CASES,
+      contract: ORDINARY_IMG_RECOLOR_CONTRACT,
+      prefix: 'ordinary-img-recolor',
+      run: options.run,
+    },
+  })
+}
+
 export const REFERENCE_IMG_UTILITY_ROOT = path.join(
   os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/regional-reference-img-utility',
@@ -1310,7 +1394,8 @@ async function produceFixedUtilityProbe<
   spec: {
     cases: readonly C[]
     contract: { globalPositive: string; nativeRequestCeiling: number }
-    prefix: 'ordinary-cat-tags' | 'reference-img' | 'reference' | 'resolution'
+    prefix:
+      'ordinary-cat-tags' | 'ordinary-img-recolor' | 'reference-img' | 'reference' | 'resolution'
     run: string
   }
   useCase: (
@@ -1419,6 +1504,7 @@ async function produceFixedUtilityProbe<
       height: 512,
       title: {
         'ordinary-cat-tags': 'Fixed cat prompt comparison',
+        'ordinary-img-recolor': 'Fixed cat source recoloring',
         reference: 'Fixed cat reference utility',
         'reference-img': 'Fixed cat reference utility',
         resolution: 'Fixed cat ordinary resolution',
@@ -1675,12 +1761,13 @@ async function produceFixedUtilityProbe<
     }
     assert.equal(cases.length, spec.contract.nativeRequestCeiling)
     assert.equal(networkAttempts, 0)
-    const name =
-      spec.prefix === 'resolution'
-        ? 'main-ordinary-resolution'
-        : spec.prefix === 'ordinary-cat-tags'
-          ? 'main-ordinary-cat-tags'
-          : `main-${spec.prefix}-utility`
+    const name = {
+      'ordinary-cat-tags': 'main-ordinary-cat-tags',
+      'ordinary-img-recolor': 'main-ordinary-img-recolor',
+      reference: 'main-reference-utility',
+      'reference-img': 'main-reference-img-utility',
+      resolution: 'main-ordinary-resolution',
+    }[spec.prefix]
     const manifest = {
       cases,
       nativeRequestCeiling: spec.contract.nativeRequestCeiling,
