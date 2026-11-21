@@ -1401,8 +1401,46 @@ export const ORDINARY_IMG_MUG_VAE_CONTRACT = {
     'Compare the zero-strength reconstruction against the exact source and the earlier neutral IMG outputs. Judge whether the patterned background and metallic surface appear before denoising.',
 } as const
 
+export const ORDINARY_IMG_MUG_WEIGHT_CONTRACT = {
+  ...ORDINARY_IMG_MUG_CONTRACT,
+  base: 'f3dc43e43ed4c0d1739c9b1bddbc48217155b154',
+  cases: [
+    ORDINARY_IMG_MUG_CASES[0],
+    {
+      ...ORDINARY_IMG_MUG_CASES[1],
+      positive: MUG_PROSE.replace('gray glazed', '(red)2.0 glazed'),
+    },
+    {
+      ...ORDINARY_IMG_MUG_CASES[2],
+      positive: MUG_PROSE.replace('gray glazed', '(blue)2.0 glazed'),
+    },
+  ],
+  historical: {
+    neutralOutput: {
+      byteSize: 320_822,
+      sha256: '43ee1c291a838769be86430d5e177dd57dca4c85620ddec9375cb699963fd05d',
+    },
+    requests: {
+      blue: {
+        byteSize: 3568,
+        sha256: '234c6306247b42478f57f39ecae7294e56c09b2541a2b9fed777a792a8e6d077',
+      },
+      neutral: {
+        byteSize: 3571,
+        sha256: '90618714adb618b902b6fcbb6c550563d0da1a75cf122ada55d19cc57b8c4550',
+      },
+      red: {
+        byteSize: 3564,
+        sha256: '04b8c13da9d3ef89629de3e7dbe9f54b538c5344004307951fcc98767cd2f986',
+      },
+    },
+    run: 'ordinary-img-mug-recolor/20261121-r1',
+  },
+  schema: 'ordinary-img-mug-weight-experiment-v1',
+} as const
+
 type OrdinaryImgRecolorUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
-  case: (typeof ORDINARY_IMG_MUG_CASES | typeof ORDINARY_IMG_RECOLOR_CASES)[number]
+  case: (typeof ORDINARY_IMG_MUG_WEIGHT_CONTRACT.cases | typeof ORDINARY_IMG_RECOLOR_CASES)[number]
   prepared: PreparedNormalGeneration
 }
 
@@ -1419,6 +1457,9 @@ export function ordinaryImgRecolorContract(run: string) {
   }
   if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-mug-vae')) {
     return ORDINARY_IMG_MUG_VAE_CONTRACT
+  }
+  if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-mug-weight')) {
+    return ORDINARY_IMG_MUG_WEIGHT_CONTRACT
   }
 }
 

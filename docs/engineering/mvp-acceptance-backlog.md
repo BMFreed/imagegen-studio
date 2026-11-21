@@ -11,8 +11,9 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [ordinary mug recoloring](./phase-4-ordinary-img-mug-research.md),
 [installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md),
 [mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md),
-[ordinary mug trajectory](./phase-4-ordinary-img-mug-trajectory-research.md), and
-[held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md).
+[ordinary mug trajectory](./phase-4-ordinary-img-mug-trajectory-research.md),
+[held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md), and
+[mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -98,16 +99,24 @@ entries record the state at their checkpoint.
    The recognizably patterned backdrop is clear by step 19. On one shared
    runtime, Invoke and Studio match byte for byte through initial noise
    addition and all 19 transitions with the source latent, noise, and
-   conditioning held. Before another ordinary IMG visual run, choose
-   one controlled variable and preregister how it could establish a
-   positive ordinary control for the reference comparison.
+   conditioning held. The next installed run wrapped only the authored
+   color word with Compel weight 2.0. The neutral PNG replayed exactly,
+   both treatments kept the mug geometry, and both still showed gray
+   bodies and patterned backgrounds. Installed InvokeAI 6.14.3 reproduced
+   this weighted result on the same inputs and schedule. By product decision,
+   exact prompt-only recoloring in ordinary IMG is outside the product
+   goals. Qualify regional influence on a separate fixed scene with
+   recognizable attributes, an ordinary no-region control, an assignment
+   swap and a human verdict on the effect inside and outside the mask.
    [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
    [strength comparison](./phase-4-ordinary-img-strength-research.md),
    [mug experiment](./phase-4-ordinary-img-mug-research.md),
    [installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md),
    [VAE controls](./phase-4-ordinary-img-mug-vae-research.md),
    [trajectory checkpoints](./phase-4-ordinary-img-mug-trajectory-research.md),
-   [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md).
+   [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md),
+   [explicit color emphasis and Invoke comparison](./phase-4-ordinary-img-mug-weight-research.md),
+   [product scope](../specs/00-product-scope.md#продуктовые-нецели-mvp).
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
    scarves survived all variants. The current original Invoke denoiser on the
@@ -175,6 +184,9 @@ entries record the state at their checkpoint.
    execution inputs and PNG bytes matched. C passed explicit Add, Save and
    reopen with the same accepted Raster and provenance. The shipping host
    matrix and inference across distinct release sources remain open.
+   The native KDE Wayland SaveFile dialog for Save Recovery AppImage
+   remains open for publisher-independent qualification. The previous
+   signed recovery run supplied scripted Save and Cancel dialog replies.
    Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.

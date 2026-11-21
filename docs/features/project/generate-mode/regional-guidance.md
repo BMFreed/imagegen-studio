@@ -1152,6 +1152,14 @@ Not yet implemented in the Vue prototype:
   `Use global negative prompt` remains an explicit inheritance choice.
 - Generic ControlNet/IP-Adapter regional features are not exposed in MVP.
 
+Visual qualification uses a fixed scene with recognizable attributes or
+objects. Compare a genuinely ordinary run to regional assignments and swap
+the guidance between regions. Check that the visible effect follows the
+assigned region and that key features outside it are preserved. Exact
+prompt-only recoloring in ordinary IMG is outside the product goals and
+the regional acceptance gate.
+[Scope decision](../../../specs/00-product-scope.md#продуктовые-нецели-mvp).
+
 ## Private trained Illustrious checkpoint
 
 The [trained checkpoint qualification](../../../engineering/phase-4-regional-guidance-trained-illustrious-research.md)

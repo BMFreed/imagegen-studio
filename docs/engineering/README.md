@@ -1,5 +1,15 @@
 # Engineering Workflow
 
+## Current ordinary mug IMG color emphasis
+
+[Mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md)
+replayed the gray control exactly. With Compel weight 2.0, the two
+colored edits kept the mug geometry, left the body gray and kept
+the patterned backdrop. Installed InvokeAI reproduced the same visual
+result at the same weight. Exact prompt-only recoloring in ordinary IMG
+is outside the product goals. Regional visual qualification uses a
+separate scene.
+
 ## Current ordinary mug IMG operator comparison
 
 [Held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md)

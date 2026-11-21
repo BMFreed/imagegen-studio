@@ -26,6 +26,7 @@ JSON_LIMIT = 8 * 1024**2
 LABELS = ("neutral", "red", "blue")
 VAE_CONTROL_SCHEMA = "installed-invoke-ordinary-img-mug-vae-reference-v1"
 TRAJECTORY_SCHEMA = "installed-invoke-ordinary-img-mug-trajectory-reference-v1"
+WEIGHT_SCHEMA = "installed-invoke-ordinary-img-mug-weight-reference-v1"
 SNAPSHOT_STEPS = [1, 2, 4, 8, 19]
 POSITIVE = (
     "studio product photo of one {color} glazed ceramic mug, single handle on the right,"
@@ -542,10 +543,13 @@ def shutdown(server, group, identity):
 def check_contract(contract, run):
     vae_only = contract["schema"] == VAE_CONTROL_SCHEMA
     trajectory = contract["schema"] == TRAJECTORY_SCHEMA
+    weighted = contract["schema"] == WEIGHT_SCHEMA
     if vae_only:
         profile, temp_suffix = "invoke-ordinary-img-mug-vae", "iv"
     elif trajectory:
         profile, temp_suffix = "invoke-ordinary-img-mug-trajectory", "it"
+    elif weighted:
+        profile, temp_suffix = "invoke-ordinary-img-mug-weight", "iw"
     else:
         profile, temp_suffix = "invoke-ordinary-img-mug", "im"
     assert run.parent == ARTIFACT_ROOT / "runs" / profile, run
@@ -576,9 +580,10 @@ def check_contract(contract, run):
         }
         return
 
+    colors = ("gray", "(red)2.0", "(blue)2.0") if weighted else ("gray", "red", "blue")
     cases = [
         {"label": label, "positive": POSITIVE.format(color=color)}
-        for label, color in zip(LABELS, ("gray", "red", "blue"), strict=True)
+        for label, color in zip(LABELS, colors, strict=True)
     ]
     if trajectory:
         assert contract["snapshotSteps"] == SNAPSHOT_STEPS
