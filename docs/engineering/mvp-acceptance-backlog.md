@@ -6,8 +6,9 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md),
 [CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md),
 [ordinary Illustrious prompt comparison](./phase-4-ordinary-cat-tags-research.md),
-[ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md), and
-[ordinary IMG strength comparison](./phase-4-ordinary-img-strength-research.md).
+[ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
+[ordinary IMG strength comparison](./phase-4-ordinary-img-strength-research.md), and
+[ordinary mug recoloring](./phase-4-ordinary-img-mug-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -83,10 +84,13 @@ entries record the state at their checkpoint.
    The ordinary IMG text follow-up reproduced the neutral PNG byte for byte.
    Both color edits also left the head gray at strength 0.5. The matched
    follow-up at 0.75 changed facial details and added shapes around the head.
-   Both color edits failed. Preregister a different readable source and establish
-   a positive ordinary color control before the next matched reference pair.
+   Both color edits failed. A new gray mug source at 0.6 preserved its overall
+   geometry, but both color edits left the mug gray and all three outputs
+   altered the plain background. Compare the same mug input and settings on the
+   original Invoke execution path before attempting further matched references.
    [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
-   [strength comparison](./phase-4-ordinary-img-strength-research.md).
+   [strength comparison](./phase-4-ordinary-img-strength-research.md),
+   [mug experiment](./phase-4-ordinary-img-mug-research.md).
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
    scarves survived all variants. The current original Invoke denoiser on the

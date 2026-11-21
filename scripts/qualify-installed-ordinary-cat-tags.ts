@@ -235,6 +235,14 @@ async function main() {
     const { request } = JSON.parse(bytes.toString()) as { request: IllustriousGenerationRequestV1 }
     previous.set(pin.label, request)
   }
+  const maskPins =
+    img && 'sourceFilename' in img
+      ? Object.entries(img.masks).map(([name, pin]) => ({
+          path: path.join(run, name),
+          sha256: pin.sha256,
+          sizeBytes: pin.byteSize,
+        }))
+      : []
   const checkedInvokeFiles = img
     ? [...invokeFiles, 'invokeai/app/invocations/vae/image_to_latents.py']
     : invokeFiles
@@ -253,7 +261,7 @@ async function main() {
   const enginePins = [...engine.pinned, ...engine.configs]
   const idle = () => runtimeIdle(engine)
   const bootstrapStorage = await idle()
-  for (const pin of enginePins) {
+  for (const pin of [...enginePins, ...maskPins]) {
     await verify(pin)
   }
   const checkpointBefore = await verifyCheckpoint()
@@ -273,6 +281,7 @@ async function main() {
     checkpoint: checkpointPin,
     contract: { byteSize: contractBytes.length, path: contractPath, sha256: sha(contractBytes) },
     installation: engine,
+    ...(maskPins.length > 0 ? { maskPins } : {}),
     source,
   })
 
@@ -500,7 +509,7 @@ async function main() {
     await idle()
     assert.deepEqual(await regular(checkpoint), checkpointBefore)
     assert.deepEqual(await bytesAt(contractPath), contractBytes)
-    for (const pin of enginePins) {
+    for (const pin of [...enginePins, ...maskPins]) {
       await verify(pin)
     }
     for (const pin of baselinePins) {

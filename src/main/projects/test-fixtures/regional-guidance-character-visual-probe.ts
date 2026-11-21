@@ -1331,8 +1331,56 @@ export const ORDINARY_IMG_RECOLOR_STRENGTH_CONTRACT = {
   schema: 'ordinary-img-recolor-strength-experiment-v1',
 } as const
 
+const MUG_PROSE =
+  'studio product photo of one gray glazed ceramic mug, single handle on the right, empty open top, plain ivory tabletop and background, soft diffuse light'
+const ORDINARY_IMG_MUG_CASES = [
+  { ...ordinaryImg, label: 'neutral', positive: MUG_PROSE },
+  { ...ordinaryImg, label: 'red', positive: MUG_PROSE.replace('gray glazed', 'red glazed') },
+  { ...ordinaryImg, label: 'blue', positive: MUG_PROSE.replace('gray glazed', 'blue glazed') },
+] as const
+export const ORDINARY_IMG_MUG_CONTRACT = {
+  base: '4c3b1aab0021046ba332a1dad34077e8017d25b2',
+  bbox: ORDINARY_IMG_RECOLOR_CONTRACT.bbox,
+  cases: ORDINARY_IMG_MUG_CASES,
+  executedSteps: 19,
+  globalPositive: MUG_PROSE,
+  invokeRevision: ORDINARY_IMG_RECOLOR_CONTRACT.invokeRevision,
+  masks: {
+    'background-corners.png': {
+      byteSize: 657,
+      pixels: 25_600,
+      sha256: '83fa773a50acf0e3a449cff8bbdbd0576c3fec7996130e2cbe40e2ba37fb65af',
+    },
+    'mug-body-core.png': {
+      byteSize: 694,
+      pixels: 33_304,
+      sha256: 'ceadae61b4432dd7ef7d7e2d4ffe8e48c8cc447c421145b76d3dcf7ef1fe34a2',
+    },
+    'mug-handle-opening.png': {
+      byteSize: 512,
+      pixels: 3910,
+      sha256: 'f190927b59e467344197813f05fa763f61d627a211716a973479d50412649ce5',
+    },
+  },
+  nativeRequestCeiling: ORDINARY_IMG_MUG_CASES.length,
+  sampling: { ...ORDINARY_IMG_RECOLOR_CONTRACT.sampling, denoisingStrength: 0.6 },
+  schema: 'ordinary-img-mug-recolor-experiment-v1',
+  source: {
+    byteSize: 279_553,
+    sha256: 'c60751aa01b763158f3d25788b9541e3ee5859e30ae56fb92290bb705d3ea3b5',
+  },
+  sourceFilename: 'mug-source.png',
+  visualGate: {
+    dominantChannelMargin: 30,
+    maximumUnwantedCoverage: 0.05,
+    minimumBodyCoverage: 0.5,
+    requiredGeometry:
+      'One centered upright mug in the source pose and scale, fully in frame with readable open rim, a single right handle with a visible gap, and a plain light background. All three cases preserve the geometry. The neutral body reads gray and the edits distinctly red and blue over the broad body. Ambiguity is inconclusive.',
+  },
+} as const
+
 type OrdinaryImgRecolorUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
-  case: (typeof ORDINARY_IMG_RECOLOR_CASES)[number]
+  case: (typeof ORDINARY_IMG_MUG_CASES | typeof ORDINARY_IMG_RECOLOR_CASES)[number]
   prepared: PreparedNormalGeneration
 }
 
@@ -1343,6 +1391,9 @@ export function ordinaryImgRecolorContract(run: string) {
   }
   if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-recolor-strength')) {
     return ORDINARY_IMG_RECOLOR_STRENGTH_CONTRACT
+  }
+  if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-mug-recolor')) {
+    return ORDINARY_IMG_MUG_CONTRACT
   }
 }
 
@@ -1356,18 +1407,20 @@ export async function produceOrdinaryImgRecolorProbe<T>(options: {
   const contract = ordinaryImgRecolorContract(options.run)
   assert.ok(contract)
   assert.match(path.basename(options.run), /^\d{8}-r[1-9]\d*$/)
+  const sourceFilename = 'sourceFilename' in contract ? contract.sourceFilename : 'cat-source.png'
   return produceFixedUtilityProbe({
     ...options,
     prepare: prepareNormalGeneration,
     sourceImage: {
       ...contract.source,
-      path: path.join(options.run, 'cat-source.png'),
+      path: path.join(options.run, sourceFilename),
     },
     spec: {
-      cases: ORDINARY_IMG_RECOLOR_CASES,
+      cases: contract.cases,
       contract,
       prefix: 'ordinary-img-recolor',
       run: options.run,
+      sourceFilename,
     },
   })
 }
@@ -1435,6 +1488,7 @@ async function produceFixedUtilityProbe<
     prefix:
       'ordinary-cat-tags' | 'ordinary-img-recolor' | 'reference-img' | 'reference' | 'resolution'
     run: string
+    sourceFilename?: string
   }
   useCase: (
     input: Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
@@ -1542,7 +1596,10 @@ async function produceFixedUtilityProbe<
       height: 512,
       title: {
         'ordinary-cat-tags': 'Fixed cat prompt comparison',
-        'ordinary-img-recolor': 'Fixed cat source recoloring',
+        'ordinary-img-recolor':
+          spec.sourceFilename === 'mug-source.png'
+            ? 'Fixed mug source recoloring'
+            : 'Fixed cat source recoloring',
         reference: 'Fixed cat reference utility',
         'reference-img': 'Fixed cat reference utility',
         resolution: 'Fixed cat ordinary resolution',
@@ -1555,7 +1612,7 @@ async function produceFixedUtilityProbe<
       return value
     }
     if (sourceImage) {
-      assert.equal(sourceImage.path, path.join(run, 'cat-source.png'))
+      assert.equal(sourceImage.path, path.join(run, spec.sourceFilename ?? 'cat-source.png'))
       assert.equal(await realpath(sourceImage.path), sourceImage.path)
       const source = await readFile(sourceImage.path)
       assert.equal(source.length, sourceImage.byteSize)

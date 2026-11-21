@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current ordinary Illustrious IMG mug control
+
+[Ordinary mug recoloring](./phase-4-ordinary-img-mug-research.md)
+preserved a readable mug, open rim and handle in three installed worker calls
+at strength 0.6. All three altered the plain backdrop and neither color
+reached the body. The source and three outputs are retained for an exact
+input comparison with InvokeAI.
+
 ## Current ordinary Illustrious IMG strength comparison
 
 [Ordinary IMG at strength 0.75](./phase-4-ordinary-img-strength-research.md)
