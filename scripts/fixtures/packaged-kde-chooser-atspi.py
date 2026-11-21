@@ -13,7 +13,11 @@ from gi.repository import Atspi, GLib
 
 
 OPEN_TITLES = ("Import Project", "Locate Project")
-SAVE_NAMES = {"Export As": "canvas.png", "Export Generation BBox": "generation-bbox.png"}
+SAVE_NAMES = {
+    "Export As": "canvas.png",
+    "Export Generation BBox": "generation-bbox.png",
+    "Save Recovery AppImage": "ImageGen-Studio-0.2.0-Recovery.AppImage",
+}
 SAVE_TITLES = tuple(SAVE_NAMES)
 
 
@@ -90,39 +94,68 @@ def press(button):
         raise RuntimeError("The chooser did not accept the AT-SPI action.")
 
 
-def choose(pid, title, filename, accept_label):
+def choose(pid, title, filename, accept_label, accept_default):
     dialog = single(wait_for(lambda: list(owned_dialog(pid, title)), "Chooser did not appear."), title)
     if filename is not None:
         suggested_name = SAVE_NAMES.get(title)
         if suggested_name is not None:
             named_control(dialog, Atspi.Role.LABEL, "Name:")
-        combo = named_control(dialog, Atspi.Role.COMBO_BOX, suggested_name or "Name:")
-        field = single(
-            (obj for obj in children(combo) if obj.get_role() == Atspi.Role.TEXT and showing(obj)),
-            "chooser filename field",
-        )
+        if title == "Save Recovery AppImage":
+            # KFileWidget can render the AppImage suffix through its filter.
+            # Identify the filename by its pre-filled text instead of the combo's name.
+            initial_names = {
+                suggested_name,
+                Path(suggested_name).stem + Path(suggested_name).suffix.lower(),
+            }
+            inputs = []
+            for combo in controls(dialog):
+                if combo.get_role() != Atspi.Role.COMBO_BOX:
+                    continue
+                for obj in children(combo):
+                    if obj.get_role() == Atspi.Role.TEXT and showing(obj):
+                        text = obj.get_text_iface()
+                        if text is not None:
+                            inputs.append((obj, Atspi.Text.get_text(text, 0, -1)))
+            field = single(
+                (obj for obj, value in inputs if value in initial_names),
+                f"recovery filename field with its suggested value from {[value for _, value in inputs]}",
+            )
+        else:
+            combo = named_control(dialog, Atspi.Role.COMBO_BOX, suggested_name or "Name:")
+            field = single(
+                (obj for obj in children(combo) if obj.get_role() == Atspi.Role.TEXT and showing(obj)),
+                "chooser filename field",
+            )
+            initial_names = {suggested_name}
         editor = field.get_editable_text_iface()
         text = field.get_text_iface()
         if editor is None or text is None:
             raise RuntimeError("The chooser filename could not be edited.")
-        if suggested_name is not None and Atspi.Text.get_text(text, 0, -1) != suggested_name:
+        if suggested_name is not None and Atspi.Text.get_text(text, 0, -1) not in initial_names:
             raise RuntimeError("The Save dialog did not show the expected suggested filename.")
-        if not editor.set_text_contents(str(filename)):
-            raise RuntimeError("The chooser did not accept the selected filename.")
-        wait_for(
-            lambda: Atspi.Text.get_text(text, 0, -1) == str(filename),
-            "The chooser filename changed.",
-        )
+        if accept_default:
+            if Atspi.Text.get_text(text, 0, -1) != filename.name:
+                raise RuntimeError("The recovery dialog shows a different default filename.")
+        else:
+            if not editor.set_text_contents(str(filename)):
+                raise RuntimeError("The chooser did not accept the selected filename.")
+            wait_for(
+                lambda: Atspi.Text.get_text(text, 0, -1) == str(filename),
+                "The chooser filename changed.",
+            )
 
     press(named_control(dialog, Atspi.Role.PUSH_BUTTON, accept_label if filename else "Cancel"))
     wait_for(lambda: not list(owned_dialog(pid, title)), "Chooser did not close.")
-    return {
+    result = {
         "pid": pid,
         "title": title,
         "action": "select" if filename else "dismiss",
         "selectedPath": str(filename) if filename else None,
         "closed": True,
     }
+    if accept_default:
+        result["acceptedDefaultName"] = filename.name
+    return result
 
 
 def main():
@@ -131,12 +164,17 @@ def main():
     parser.add_argument("--title", required=True, choices=OPEN_TITLES + SAVE_TITLES)
     parser.add_argument("--accept-label", choices=("Save", "Export PNG"))
     parser.add_argument("--select", type=Path)
+    parser.add_argument("--accept-default", action="store_true")
     args = parser.parse_args()
     if args.pid <= 1 or not os.environ.get("AT_SPI_BUS_ADDRESS"):
         parser.error("Supply the owned portal PID and its isolated AT-SPI bus.")
     saving = args.title in SAVE_TITLES
     if saving != (args.accept_label is not None):
-        parser.error("Supply the observed SaveFile action label for export dialogs.")
+        parser.error("Supply the observed SaveFile action label for save dialogs.")
+    if args.title == "Save Recovery AppImage" and args.accept_label != "Save":
+        parser.error("The recovery dialog must use the native Save action.")
+    if args.accept_default and (args.title != "Save Recovery AppImage" or args.select is None):
+        parser.error("Default-name acceptance requires an owned recovery destination.")
     if args.select is not None:
         if not args.select.is_absolute():
             parser.error("The selected file must have a canonical absolute path.")
@@ -146,15 +184,19 @@ def main():
             if (
                 not parent.is_relative_to(evidence)
                 or parent.resolve(strict=True) != parent
-                or args.select.suffix != ".png"
+                or args.select.suffix != (
+                    ".appimage" if args.accept_default else Path(SAVE_NAMES[args.title]).suffix
+                )
                 or args.select.exists()
                 or args.select.is_symlink()
             ):
-                parser.error("The save destination must be a new PNG inside the run directory.")
+                parser.error("The save destination must be a new file of the expected format inside the run directory.")
         elif args.select.resolve(strict=True) != args.select or not args.select.is_file():
             parser.error("The selected path must be a file.")
     Atspi.set_timeout(1200, 1200)
-    print(json.dumps(choose(args.pid, args.title, args.select, args.accept_label or "Open")))
+    print(json.dumps(choose(
+        args.pid, args.title, args.select, args.accept_label or "Open", args.accept_default,
+    )))
 
 
 if __name__ == "__main__":

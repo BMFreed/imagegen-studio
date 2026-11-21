@@ -20,7 +20,8 @@ const artifactRoot = path.join(
   '.codex/artifacts/imagegen-studio/runs/packaged-recovery-action',
 )
 const [run, ...extra] = process.argv.slice(2)
-assert.ok(run && !extra.length)
+assert.ok(run && (extra.length === 0 || (extra.length === 1 && extra[0] === '--kde-save')))
+const kdeSave = extra.length === 1
 assert.equal(await fs.realpath(run), run)
 assert.equal(path.dirname(run), artifactRoot)
 assert.equal((await fs.lstat(run)).uid, process.geteuid())
@@ -114,7 +115,7 @@ const compatibility = {
 const publicTrust = { appId: config.appId, keys: trustedKeys, schemaVersion: 1 }
 const trust = { compatibility, trustedKeys }
 const releases = {}
-for (const version of ['0.1.0', '0.2.0', '0.3.0']) {
+for (const version of kdeSave ? ['0.1.0', '0.2.0'] : ['0.1.0', '0.2.0', '0.3.0']) {
   let embedded
   const images = await build({
     projectDir: repo,
@@ -214,6 +215,7 @@ await writeJson('package-manifest.json', {
   electronVersion,
   feedPort,
   fuses: config.electronFuses,
+  ...(kdeSave ? { kdeSave } : {}),
   privateKeyRetained: false,
   releases,
   sqliteSha256,

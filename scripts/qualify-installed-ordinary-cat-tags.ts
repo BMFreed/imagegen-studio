@@ -28,7 +28,6 @@ import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-cli
 const installedHelpers = new URL('./qualify-installed-reference-img-utility.mts', import.meta.url)
 const {
   artifactRoot,
-  assertRuntimeIdle,
   assertUpgradeBounds,
   bytesAt,
   children,
@@ -36,6 +35,7 @@ const {
   observeGpu,
   readEngine,
   regular,
+  runtimeIdle,
   sha,
   verify,
   workerExited,
@@ -122,76 +122,6 @@ function pairedInputs(request: IllustriousGenerationRequestV1) {
     ...envelope,
     job: { ...job, prompts: { negative: prompts.negative }, target: targetContent },
   }
-}
-
-async function runtimeIdle(engine: Awaited<ReturnType<typeof readEngine>>) {
-  const mountpoint = path.join(path.dirname(path.dirname(engine.pythonExecutable)), 'bootstrap')
-  const mount = await execute(
-    'findmnt',
-    ['--json', '--mountpoint', mountpoint, '--output', 'TARGET,FSTYPE,SOURCE'],
-    { timeout: 10_000 },
-  ).catch((error: { code?: number; stderr?: string }) => {
-    if (error.code === 1 && error.stderr === '') {
-      return null
-    }
-    throw error
-  })
-  if (!mount) {
-    await assertRuntimeIdle(engine.appDataDir, engine.basePrefix)
-    return null
-  }
-  assert.deepEqual(JSON.parse(mount.stdout).filesystems, [
-    { fstype: 'fuse.fuse-overlayfs', source: 'fuse-overlayfs', target: mountpoint },
-  ])
-  const unit = 'imagegen-qualification-view@bootstrap.service'
-  const { stdout } = await execute(
-    'systemctl',
-    ['--user', 'show', unit, '--property=MainPID,ControlGroup,ActiveState'],
-    { timeout: 10_000 },
-  )
-  const fields = Object.fromEntries(
-    stdout
-      .trim()
-      .split('\n')
-      .map((line) => line.split('=')),
-  )
-  assert.equal(fields.ActiveState, 'active')
-  assert.match(fields.MainPID, /^[1-9]\d*$/)
-  assert.equal(path.basename(fields.ControlGroup), unit)
-  const proc = `/proc/${fields.MainPID}`
-  const startTime = async () => {
-    const stat = await readFile(`${proc}/stat`, 'utf8')
-    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
-  }
-  const start = await startTime()
-  assert.equal((await lstat(proc)).uid, process.getuid?.())
-  assert.equal(await realpath(`${proc}/exe`), '/usr/bin/fuse-overlayfs')
-  assert.equal(await realpath(`${proc}/cwd`), '/')
-  assert.equal((await readFile(`${proc}/cgroup`, 'utf8')).trim(), `0::${fields.ControlGroup}`)
-  const cmdline = await readFile(`${proc}/cmdline`, 'utf8')
-  const parts = cmdline.split('\0')
-  assert.equal(parts.length, 6)
-  assert.match(parts[3], /^lowerdir=.+,upperdir=.+,workdir=.+$/)
-  assert.deepEqual(parts, ['fuse-overlayfs', '-f', '-o', parts[3], mountpoint, ''])
-
-  // Only the verified view's mountpoint operand describes storage rather than execution.
-  const scan = assertRuntimeIdle as (
-    appData: string,
-    python: string,
-    options: { read: (file: string, encoding: 'utf8') => Promise<string> },
-  ) => Promise<unknown>
-  await scan(engine.appDataDir, engine.basePrefix, {
-    async read(file, encoding) {
-      const body = await readFile(file, encoding)
-      if (file !== `${proc}/cmdline`) {
-        return body
-      }
-      assert.equal(await startTime(), start)
-      assert.equal(body, cmdline)
-      return [...parts.slice(0, 4), ''].join('\0')
-    },
-  })
-  return { mountpoint, pid: Number(fields.MainPID), start, unit }
 }
 
 async function main() {

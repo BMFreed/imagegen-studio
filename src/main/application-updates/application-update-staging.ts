@@ -582,9 +582,10 @@ export async function publishVerifiedApplicationRecovery(input: {
     } = input
     need(process.platform === 'linux' && process.arch === 'x64', 'UNSAFE')
     need(
-      [sourceAppImage, originalAppImage, destinationAppImage].every(
-        (filename) => canonicalPath(filename) && path.extname(filename) === '.AppImage',
-      ) &&
+      [sourceAppImage, originalAppImage, destinationAppImage].every(canonicalPath) &&
+        path.extname(sourceAppImage) === '.AppImage' &&
+        path.extname(originalAppImage).toLowerCase() === '.appimage' &&
+        path.extname(destinationAppImage).toLowerCase() === '.appimage' &&
         destinationAppImage !== originalAppImage &&
         destinationAppImage !== sourceAppImage &&
         !destinationAppImage.startsWith(originalAppImage + path.sep) &&

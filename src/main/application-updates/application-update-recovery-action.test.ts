@@ -153,6 +153,57 @@ test(
   },
 )
 
+test(
+  'recovery preserves the spelling of a local AppImage path selected by KDE',
+  host,
+  async (t) => {
+    const f = await fixture(t)
+    const originalAppImage = path.join(path.dirname(f.originalAppImage), 'Original.aPpImAgE')
+    const destination = path.join(f.selected, 'Recovered.appimage')
+    await fs.rename(f.originalAppImage, originalAppImage)
+
+    assert.deepEqual(
+      await saveApplicationRecovery({
+        ...f.input,
+        chooseDestination: async () => destination,
+        originalAppImage,
+      }),
+      { status: 'saved' },
+    )
+    assert.deepEqual(await fs.readdir(f.selected), ['Recovered.appimage'])
+    assert.deepEqual(await fs.readFile(destination), f.signed.bytes)
+    const published = await fs.stat(destination)
+    assert.equal(published.mode & 0o7777, 0o755)
+    assert.equal(published.nlink, 1)
+    assert.deepEqual(await fs.readFile(originalAppImage), originalBytes)
+    assert.deepEqual(await fs.readFile(f.sourceAppImage), f.signed.bytes)
+  },
+)
+
+test(
+  'recovery still refuses a different local extension and a noncanonical download suffix',
+  host,
+  async (t) => {
+    const f = await fixture(t)
+    const unsafe = { code: 'APPLICATION_UPDATE_RECOVERY_UNSAFE' }
+    await assert.rejects(
+      saveApplicationRecovery({
+        ...f.input,
+        chooseDestination: async () => path.join(f.selected, 'Recovered.zip'),
+      }),
+      unsafe,
+    )
+    const source = path.join(path.dirname(f.sourceAppImage), 'downloaded.appimage')
+    await fs.copyFile(f.sourceAppImage, source)
+    const artifact = { ...f.artifact, path: source }
+    await assert.rejects(
+      saveApplicationRecovery({ ...f.input, prepareVerifiedArtifact: async () => artifact }),
+      unsafe,
+    )
+    assert.deepEqual(await fs.readdir(f.selected), [])
+  },
+)
+
 test('unavailable recovery, unsupported AppImage source, and malformed version never open the picker', async (t) => {
   const f = await fixture(t)
   await assert.rejects(

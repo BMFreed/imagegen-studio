@@ -21,19 +21,27 @@ import {
   stageVerifiedApplicationArtifact,
 } from '../src/main/application-updates/application-update-staging.ts'
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { assertPrivateWayland, driveKdeSaveChooser } from './fixtures/packaged-kde-chooser.mjs'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
 const repo = path.dirname(import.meta.dirname)
+const [run, ...rest] = process.argv.slice(2)
+assert.ok(
+  run &&
+    (rest.length === 0 ||
+      (rest.length === 1 &&
+        ['--install-next', '--kde-save', '--kde-save-default'].includes(rest[0]))),
+)
+const installNext = rest[0] === '--install-next'
+const kdeSaveDefault = rest[0] === '--kde-save-default'
+const kdeSave = rest[0] === '--kde-save' || kdeSaveDefault
 const outputRoot = path.join(
-  os.homedir(),
+  kdeSave ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-recovery-action',
 )
-const [run, ...rest] = process.argv.slice(2)
-assert.ok(run && (rest.length === 0 || (rest.length === 1 && rest[0] === '--install-next')))
-const installNext = rest.length === 1
 assert.equal(await fs.realpath(run), run)
 assert.equal(path.dirname(run), outputRoot)
 assert.equal((await fs.lstat(run)).uid, process.geteuid())
@@ -42,13 +50,28 @@ assert.equal((await readJson('artifact-lifecycle.json')).state, 'running')
 const manifest = await readJson('package-manifest.json')
 const root = path.join(run, 'payloads')
 assert.equal(await fs.realpath(root), root)
+assert.equal(manifest.kdeSave === true, kdeSave)
+if (kdeSave) {
+  await assertPrivateWayland()
+  process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS = run
+}
 const execute = (command, args, options) =>
   promisify(execFile)(
     command,
     args.map((arg) => (['MemoryMax=10G', 'MemoryMax=12G'].includes(arg) ? 'MemoryMax=4G' : arg)),
-    options,
+    kdeSave
+      ? {
+          ...options,
+          env: {
+            ...process.env,
+            XDG_RUNTIME_DIR: process.env.IMAGEGEN_CHOOSER_SYSTEMD_RUNTIME_DIR,
+          },
+        }
+      : options,
   )
-const [a, b, c] = ['0.1.0', '0.2.0', '0.3.0'].map((version) => {
+const releaseVersions = kdeSave ? ['0.1.0', '0.2.0'] : ['0.1.0', '0.2.0', '0.3.0']
+assert.deepEqual(Object.keys(manifest.releases).sort(), releaseVersions)
+const releases = releaseVersions.map((version) => {
   const release = manifest.releases[version]
   assert.equal(path.dirname(release.filename), path.join(root, 'build', version))
   assert.equal(
@@ -57,6 +80,7 @@ const [a, b, c] = ['0.1.0', '0.2.0', '0.3.0'].map((version) => {
   )
   return release
 })
+const [a, b, c] = releases
 assert.ok(
   Number.isInteger(manifest.feedPort) && manifest.feedPort > 1024 && manifest.feedPort <= 65535,
 )
@@ -221,6 +245,7 @@ async function readInstalledRuntime() {
 }
 
 const installedRuntime = await readInstalledRuntime()
+assert.ok(!kdeSave || !installedRuntime)
 const trained = installedRuntime?.trained
 const signedTrained = trained
   ? await import('./fixtures/packaged-signed-trained-generation.mjs')
@@ -234,7 +259,7 @@ async function assertInheritedScope(observed) {
 }
 
 const packaged = []
-for (const release of [a, b, c]) {
+for (const release of releases) {
   const observation = await fileWitness(release.filename)
   assert.equal(observation.sizeBytes, release.sizeBytes)
   assert.equal(observation.sha256, release.sha256)
@@ -257,7 +282,10 @@ const cwd = path.join(root, 'cwd')
 const data = installedRuntime ? path.dirname(installedRuntime.appData) : path.join(root, 'data')
 const workspace = path.join(data, 'imagegen-studio/workspaces/Uncategorized')
 const original = path.join(applicationDir, 'Original.AppImage')
-const newPath = path.join(applicationDir, 'Recovered.AppImage')
+const newPath = path.join(
+  applicationDir,
+  kdeSaveDefault ? 'ImageGen-Studio-0.2.0-Recovery.appimage' : 'Recovered.AppImage',
+)
 const events = async () =>
   (
     await fs.readFile(path.join(root, 'native-events.ndjson'), 'utf8').catch((error) => {
@@ -278,6 +306,14 @@ for (const folder of [
   path.join(root, 'cache'),
 ]) {
   await fs.mkdir(folder, { mode: 0o700 })
+}
+if (kdeSaveDefault) {
+  assert.match(applicationDir, /^\/[a-zA-Z0-9_/.-]+$/)
+  await fs.writeFile(
+    path.join(root, 'config/user-dirs.dirs'),
+    `XDG_DOWNLOAD_DIR="${applicationDir}"\n`,
+    { flag: 'wx', mode: 0o600 },
+  )
 }
 
 async function inspectInstalledProject(filename) {
@@ -436,13 +472,14 @@ const env = {
   ...process.env,
   APPIMAGE_EXTRACT_AND_RUN: '1',
   APPIMAGELAUNCHER_DISABLE: '1',
-  ELECTRON_OZONE_PLATFORM_HINT: 'x11',
+  ELECTRON_OZONE_PLATFORM_HINT: kdeSave ? 'wayland' : 'x11',
+  IGS_RECOVERY_QUALIFICATION_KDE_SAVE: kdeSave ? '1' : '0',
   IGS_RECOVERY_QUALIFICATION_ROOT: root,
   IGS_RECOVERY_QUALIFICATION_INSTALL_NEXT: installNext ? '1' : '0',
   XDG_CACHE_HOME: path.join(root, 'cache'),
   XDG_CONFIG_HOME: path.join(root, 'config'),
   XDG_DATA_HOME: data,
-  XDG_SESSION_TYPE: 'x11',
+  XDG_SESSION_TYPE: kdeSave ? 'wayland' : 'x11',
 }
 for (const key of [
   'APPDIR',
@@ -457,9 +494,9 @@ for (const key of [
   'IGS_RECOVERY_QUALIFICATION_OWNER_START',
   'NODE_OPTIONS',
   'NO_CLEANUP',
-  'WAYLAND_DISPLAY',
 ])
   delete env[key]
+if (!kdeSave) delete env.WAYLAND_DISPLAY
 if (installedRuntime) {
   env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME = '1'
   env.IGS_RECOVERY_QUALIFICATION_OWNER_START = installedRuntime.owner.start
@@ -707,6 +744,7 @@ async function observeStartup(state) {
   if (state.pid !== undefined) assert.equal(startup.pid, state.pid)
   state.pid = startup.pid
   state.start = startup.start
+  if (kdeSave) state.mainPid = startup.pid
   assert.equal((await proc(state.pid)).start, state.start)
   if (installedRuntime) {
     assert.equal(startup.appData, installedRuntime.appData)
@@ -718,7 +756,13 @@ async function observeStartup(state) {
 async function launch(filename, version) {
   await removePortFile()
   const stderrPath = path.join(run, `native-${version}.stderr`)
-  const state = { checks: [], filename, stderrPath, version }
+  const state = {
+    checks: [],
+    filename,
+    stderrPath,
+    version,
+    ...(kdeSave ? { name: version === '0.1.0' ? 'recovery-original' : 'recovery-saved' } : {}),
+  }
   lifetimes.push(state)
   const stdout = await fs.open(path.join(run, `native-${version}.stdout`), 'wx', 0o600)
   const stderr = await fs.open(stderrPath, 'wx', 0o600)
@@ -750,7 +794,7 @@ async function confirmNormalMainExit(state) {
       [0, null],
     )
   }
-  if (!state.exit || installNext) {
+  if (!state.exit || installNext || kdeSave) {
     const quit = await nativeEvent('app-quit', state.version, 20_000)
     const exit = await nativeEvent('process-exit', state.version, 20_000)
     for (const event of [quit, exit]) {
@@ -832,8 +876,8 @@ async function retainInstalledPreview(name, current, before, prompt) {
   return { ...after, witness, destination }
 }
 
-async function retainInstalledDatabase(name) {
-  const source = path.join(installedRuntime.appData, 'database/app.sqlite')
+async function retainClosedDatabase(name) {
+  const source = path.join(data, 'imagegen-studio/database/app.sqlite')
   for (const suffix of ['-wal', '-shm']) {
     await assert.rejects(fs.lstat(source + suffix), { code: 'ENOENT' })
   }
@@ -979,7 +1023,7 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
   if (successorIdentity.group === prior.group) assert.deepEqual(scopeIdentity, scopeIdentityBefore)
   else assert.ok(admittedGroup.ownedScope)
   const beforeDatabase = trainedBefore
-    ? await retainInstalledDatabase('trained-after-b-close.sqlite')
+    ? await retainClosedDatabase('trained-after-b-close.sqlite')
     : null
   await writeFlag('admit-c-startup', { ...successorIdentity, scopeIdentity })
   const released = await nativeEvent('successor-ready-released', successor.version)
@@ -1097,6 +1141,7 @@ const report = {
   outcome: 'FAIL',
   retainedBefore: retained,
   requests,
+  ...(kdeSave ? { kdeSave: { portal: [], useDefaultName: kdeSaveDefault } } : {}),
   ...(installedRuntime ? { installedRuntime } : {}),
 }
 try {
@@ -1141,7 +1186,24 @@ try {
   const downloadedB = await call(first, 'applicationUpdates', 'getStatus')
   assert.equal(downloadedB.availableVersion, '0.2.0')
   assert.equal(downloadedB.verification, 'signed-release')
-  await save.click()
+  const chooseRecovery = async (destination) => {
+    if (!kdeSave) {
+      await save.click()
+      return
+    }
+    const choice = await driveKdeSaveChooser({
+      state: old,
+      destination,
+      trigger: save,
+      windowTitle: 'Save Recovery AppImage',
+      acceptDefault: kdeSaveDefault && destination !== null,
+      onPresented: async () => {
+        await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
+      },
+    })
+    report.kdeSave.portal.push(choice)
+  }
+  await chooseRecovery(null)
   await expect
     .poll(async () => (await events()).filter((event) => event.name === 'recovery-response').length)
     .toBe(1)
@@ -1150,7 +1212,20 @@ try {
     () => assert.fail('Cancel published an AppImage.'),
     (error) => assert.equal(error.code, 'ENOENT'),
   )
-  await save.click()
+  if (kdeSave) assert.deepEqual(await retainedState(), retained)
+  await chooseRecovery(newPath)
+  if (kdeSaveDefault) {
+    await expect
+      .poll(
+        async () => (await events()).filter((event) => event.name === 'recovery-response').length,
+      )
+      .toBe(2)
+    const responses = (await events())
+      .filter((event) => event.name === 'recovery-response')
+      .map(({ result }) => result)
+    report.kdeSave.defaultSelectionResult = responses[1]
+    assert.deepEqual(responses[1], { ok: true, value: { status: 'saved' } })
+  }
   await expect(updates.getByText('Recovery AppImage saved', { exact: true })).toBeVisible({
     timeout: 30_000,
   })
@@ -1169,12 +1244,20 @@ try {
     ],
   )
   assert.equal((await events()).filter((event) => event.name === 'relaunch').length, 0)
-  assert.deepEqual(await retainedState(), retained)
+  const retainedAfter = await retainedState()
+  assert.deepEqual(retainedAfter, retained)
+  if (kdeSave) report.kdeSave.retainedAfterSave = retainedAfter
   await first.screenshot({ path: path.join(run, 'save-recovery-success.png') })
   await updates.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(projectTab(first)).toBeVisible()
   assert.equal(await hash(project), projectSha)
   await closeNormally(old)
+  if (kdeSave) {
+    report.kdeSave.afterOriginal = await retainClosedDatabase('original-closed.sqlite')
+    const snapshot = path.join(run, 'original-closed.igs')
+    await fs.copyFile(project, snapshot, constants.COPYFILE_EXCL)
+    assert.equal(await hash(snapshot), projectSha)
+  }
 
   const requestCount = requests.length
   offered = null
@@ -1190,78 +1273,93 @@ try {
   await second.getByRole('button', { name: `Open ${title}`, exact: true }).click()
   await expect(projectTab(second)).toBeVisible()
   assert.equal((await call(second, 'projects', 'open', projectId)).tab.dirty, false)
-  const prompt = 'Owned draft saved during the B to C application close'
   const recoveredRuntime = installedRuntime ? await readInstalledReady(second) : undefined
-  let trainedBefore
-  if (trained) {
-    trainedBefore = await signedTrained.runSignedTrainedBefore({
-      state: recovered,
-      trained,
-      root: run,
-      bindWorker: bindTrainedWorker,
-    })
-    trainedBefore.memoryAfter = await readTrainedMemory(recovered)
-    await expect(
-      projectTab(second).getByRole('button', { name: `Close ${title}`, exact: true }),
-    ).toBeEnabled({ timeout: 60_000 })
-    await projectTab(second).click()
-  }
-  if (installNext) await editPositivePrompt(second, projectId, prompt)
-  offered = c
-  const next = await openUpdates(second)
-  const review = next.getByRole('button', { name: 'Review installation', exact: true })
-  await expect(review).toBeEnabled({ timeout: 120_000 })
-  const downloadedC = await call(second, 'applicationUpdates', 'getStatus')
-  assert.equal(downloadedC.availableVersion, '0.3.0')
-  assert.equal(downloadedC.verification, 'signed-release')
-  await review.click()
-  await expect(next.getByRole('button', { name: 'Install and restart', exact: true })).toBeEnabled({
-    timeout: trained ? 90_000 : 5_000,
-  })
-  await second.screenshot({ path: path.join(run, 'next-signed-release-review.png') })
+  let downloadedC
   let installed
-  if (installNext) {
-    installed = await installFromRecoveredPath(
-      recovered,
-      next,
-      { before: projectSha, filename: project, id: projectId, prompt },
-      trainedBefore,
-    )
-    assert.notEqual(installed.current.ino, materialized.ino)
-    assert.deepEqual(await fileWitness(newPath), installed.current)
-  } else {
-    await next.getByRole('button', { name: 'Install later', exact: true }).click()
-    await expect(projectTab(second)).toBeVisible()
+  if (kdeSave) {
+    await second.screenshot({ path: path.join(run, 'reopened-recovery-project.png') })
     await closeNormally(recovered)
     assert.deepEqual(await fileWitness(newPath), materialized)
     assert.equal(await hash(project), projectSha)
+    report.kdeSave.afterRecovered = await retainClosedDatabase('recovered-closed.sqlite')
+    const snapshot = path.join(run, 'recovered-closed.igs')
+    await fs.copyFile(project, snapshot, constants.COPYFILE_EXCL)
+    assert.equal(await hash(snapshot), projectSha)
+  } else {
+    const prompt = 'Owned draft saved during the B to C application close'
+    let trainedBefore
+    if (trained) {
+      trainedBefore = await signedTrained.runSignedTrainedBefore({
+        state: recovered,
+        trained,
+        root: run,
+        bindWorker: bindTrainedWorker,
+      })
+      trainedBefore.memoryAfter = await readTrainedMemory(recovered)
+      await expect(
+        projectTab(second).getByRole('button', { name: `Close ${title}`, exact: true }),
+      ).toBeEnabled({ timeout: 60_000 })
+      await projectTab(second).click()
+    }
+    if (installNext) await editPositivePrompt(second, projectId, prompt)
+    offered = c
+    const next = await openUpdates(second)
+    const review = next.getByRole('button', { name: 'Review installation', exact: true })
+    await expect(review).toBeEnabled({ timeout: 120_000 })
+    downloadedC = await call(second, 'applicationUpdates', 'getStatus')
+    assert.equal(downloadedC.availableVersion, '0.3.0')
+    assert.equal(downloadedC.verification, 'signed-release')
+    await review.click()
+    await expect(
+      next.getByRole('button', { name: 'Install and restart', exact: true }),
+    ).toBeEnabled({
+      timeout: trained ? 90_000 : 5_000,
+    })
+    await second.screenshot({ path: path.join(run, 'next-signed-release-review.png') })
+    if (installNext) {
+      installed = await installFromRecoveredPath(
+        recovered,
+        next,
+        { before: projectSha, filename: project, id: projectId, prompt },
+        trainedBefore,
+      )
+      assert.notEqual(installed.current.ino, materialized.ino)
+      assert.deepEqual(await fileWitness(newPath), installed.current)
+    } else {
+      await next.getByRole('button', { name: 'Install later', exact: true }).click()
+      await expect(projectTab(second)).toBeVisible()
+      await closeNormally(recovered)
+      assert.deepEqual(await fileWitness(newPath), materialized)
+      assert.equal(await hash(project), projectSha)
+    }
   }
 
   assert.deepEqual(await retainedState(), retained)
+  if (kdeSave) {
+    report.kdeSave.retainedAfterReopen = await retainedState()
+    assert.deepEqual(report.kdeSave.retainedAfterReopen, retained)
+  }
   assert.equal(
     (await events()).filter((event) => event.name === 'relaunch').length,
     installNext ? 1 : 0,
   )
   for (let index = 0; index < packaged.length; index++) {
-    assert.deepEqual(await fileWitness([a, b, c][index].filename), packaged[index])
+    assert.deepEqual(await fileWitness(releases[index].filename), packaged[index])
   }
-  assert.ok(
-    requests.some(
-      (entry) => entry.route === '/' + path.basename(b.filename) && entry.status === 200,
-    ),
-  )
-  assert.ok(
-    requests.some(
-      (entry) => entry.route === '/' + path.basename(c.filename) && entry.status === 200,
-    ),
-  )
+  for (const release of releases.slice(1)) {
+    assert.ok(
+      requests.some(
+        (entry) => entry.route === '/' + path.basename(release.filename) && entry.status === 200,
+      ),
+    )
+  }
   let database
   if (installedRuntime) {
     assert.deepEqual(
       await fileWitness(installedRuntime.baselineProject.path),
       installedRuntime.baselineWitness,
     )
-    database = await retainInstalledDatabase('installed-after-c-close.sqlite')
+    database = await retainClosedDatabase('installed-after-c-close.sqlite')
     await assertInheritedScope(await proc(process.pid))
   }
   Object.assign(report, {

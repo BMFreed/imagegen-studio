@@ -15,9 +15,12 @@ const desktopPath = '/org/freedesktop/portal/desktop'
 const requestRoot = `${desktopPath}/request/`
 const projectFilter = /^\s*string "\*\.(?:igs|\[iI\]\[gG\]\[sS\])"$/m
 const pngFilter = /^\s*string "\*\.(?:png|\[pP\]\[nN\]\[gG\])"$/m
+const appImageFilter =
+  /^\s*string "\*\.(?:[aA][pP][pP][iI][mM][aA][gG][eE]|\[aA\]\[pP\]\[pP\]\[iI\]\[mM\]\[aA\]\[gG\]\[eE\])"$/m
 const saveNames = new Map([
   ['Export As', 'canvas.png'],
   ['Export Generation BBox', 'generation-bbox.png'],
+  ['Save Recovery AppImage', 'ImageGen-Studio-0.2.0-Recovery.AppImage'],
 ])
 const processes = {
   bus: '/usr/bin/dbus-daemon',
@@ -243,7 +246,7 @@ async function observeRequest(
   state,
   windowTitle,
   kdePid,
-  { method, filter, suggestedName },
+  { method, filter, suggestedName, defaultDirectory },
 ) {
   let calls
   await expect
@@ -285,12 +288,21 @@ async function observeRequest(
   assert.ok(backend.body.includes(`object path "${requestPath}"`))
   const request = { parent, requestPath, frontSender: front.sender, frontPid }
   if (method === 'SaveFile') {
+    const recovery = windowTitle === 'Save Recovery AppImage'
     for (const { body } of [front, backend]) {
-      assert.match(body, /^\s*string "PNG image"$/m)
+      assert.match(body, recovery ? /^\s*string "AppImage"$/m : /^\s*string "PNG image"$/m)
       assert.equal(readStringOption(body, 'current_name'), suggestedName)
+      if (defaultDirectory) {
+        assert.ok(
+          body.includes(`array of bytes "${defaultDirectory}" + \\0`),
+          'The native recovery suggestion must point to the owned destination directory.',
+        )
+      }
     }
     const frontAcceptLabel = readStringOption(front.body, 'accept_label')
-    assert.ok(frontAcceptLabel === undefined || frontAcceptLabel === 'Export PNG')
+    assert.ok(
+      frontAcceptLabel === undefined || frontAcceptLabel === (recovery ? 'Save' : 'Export PNG'),
+    )
     assert.equal(readStringOption(backend.body, 'accept_label'), frontAcceptLabel)
     return { ...request, acceptLabel: frontAcceptLabel ?? 'Save' }
   }
@@ -350,14 +362,23 @@ export async function driveKdeSaveChooser({
   windowTitle,
   trigger,
   onPresented,
+  acceptDefault,
 }) {
   const suggestedName = saveNames.get(windowTitle)
-  assert.ok(suggestedName, 'Use one of the two Project image export dialogs.')
+  assert.ok(suggestedName, 'Use a qualified export or recovery dialog.')
+  const recovery = windowTitle === 'Save Recovery AppImage'
+  if (acceptDefault) {
+    assert.ok(recovery && destination)
+    assert.equal(path.basename(destination), 'ImageGen-Studio-0.2.0-Recovery.appimage')
+  }
   if (destination !== undefined && destination !== null) {
     const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
     assert.equal(await realpath(root), root)
     assert.ok(path.isAbsolute(destination) && path.resolve(destination) === destination)
-    assert.equal(path.extname(destination), '.png')
+    assert.equal(
+      path.extname(destination),
+      acceptDefault ? '.appimage' : recovery ? '.AppImage' : '.png',
+    )
     const parent = path.dirname(destination)
     const relative = path.relative(root, parent)
     assert.ok(!path.isAbsolute(relative) && !relative.startsWith('..'))
@@ -372,9 +393,10 @@ export async function driveKdeSaveChooser({
     windowTitle,
     trigger,
     method: 'SaveFile',
-    filter: pngFilter,
+    filter: recovery ? appImageFilter : pngFilter,
     suggestedName,
     onPresented,
+    acceptDefault,
   })
 }
 
@@ -387,6 +409,7 @@ async function drive({
   filter,
   suggestedName,
   onPresented,
+  acceptDefault,
 }) {
   const session = await assertPrivateWayland()
   await assertWaylandPeer(state.mainPid, session)
@@ -419,6 +442,7 @@ async function drive({
       method,
       filter,
       suggestedName,
+      defaultDirectory: acceptDefault ? path.dirname(selectedPath) : undefined,
     })
     await expect
       .poll(async () => {
@@ -444,6 +468,7 @@ async function drive({
           windowTitle,
           ...(request.acceptLabel ? ['--accept-label', request.acceptLabel] : []),
           ...(filename ? ['--select', filename] : []),
+          ...(acceptDefault && filename ? ['--accept-default'] : []),
         ],
         { timeout: 15000 },
       )
@@ -455,15 +480,14 @@ async function drive({
       accessibility = await actOnDialog(selectedPath)
     } catch (error) {
       if (method !== 'SaveFile') throw error
-      // The export lease stays active while Main is awaiting this verified
-      // SaveFile request. Release the chooser before normal-close verification.
+      // Release the lease of the verified SaveFile request before checking normal close.
       try {
         await actOnDialog(null)
         await observeResponse(monitor, request, null)
       } catch (cancelError) {
         throw new AggregateError(
           [error, cancelError],
-          'Export observation and chooser cleanup failed.',
+          'SaveFile observation and chooser cleanup failed.',
         )
       }
       throw error
@@ -474,6 +498,7 @@ async function drive({
       action: selectedPath ? 'select' : 'dismiss',
       selectedPath: selectedPath ?? null,
       closed: true,
+      ...(acceptDefault ? { acceptedDefaultName: path.basename(selectedPath) } : {}),
     })
     const responseCode = await observeResponse(monitor, request, selectedPath)
     return {

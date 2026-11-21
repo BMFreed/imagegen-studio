@@ -552,7 +552,10 @@ The action saves to a new AppImage path and keeps the current application
 open. Cancel returns to Updates. The occupied-path and uncertain-publication
 messages preserve the chosen filesystem state for the user's inspection.
 After success the user closes Studio normally and opens the AppImage they
-saved. An explicit Check or Download clears feedback from the previous
+saved. Main keeps the exact spelling returned by the native Save dialog.
+The local original and destination recognize the AppImage extension regardless
+of case. The downloaded artifact follows the signed publisher filename
+contract. An explicit Check or Download clears feedback from the previous
 selection. The original AppImage stage, app data and SQLite recovery remain
 under their existing owners.
 

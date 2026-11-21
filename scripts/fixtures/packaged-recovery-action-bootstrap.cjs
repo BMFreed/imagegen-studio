@@ -7,8 +7,9 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 const Database = require('better-sqlite3')
 
 const root = process.env.IGS_RECOVERY_QUALIFICATION_ROOT
+const kdeSave = process.env.IGS_RECOVERY_QUALIFICATION_KDE_SAVE === '1'
 const expected = path.join(
-  os.homedir(),
+  kdeSave ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-recovery-action',
 )
 assert.ok(root && fs.realpathSync(root) === root)
@@ -20,6 +21,12 @@ assert.ok(['0.1.0', '0.2.0', '0.3.0'].includes(version))
 const installNext = process.env.IGS_RECOVERY_QUALIFICATION_INSTALL_NEXT === '1'
 const installedMode = process.env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME
 assert.ok(installedMode === undefined || installedMode === '1')
+if (kdeSave) {
+  assert.ok(!installNext && installedMode === undefined && version !== '0.3.0')
+  assert.equal(process.env.XDG_SESSION_TYPE, 'wayland')
+  assert.ok(process.env.WAYLAND_DISPLAY && process.env.DBUS_SESSION_BUS_ADDRESS)
+  assert.equal(process.env.DISPLAY, undefined)
+}
 const group = () => fs.readFileSync('/proc/self/cgroup', 'utf8').trim().slice(3)
 let memoryLimitGiB = 4n
 
@@ -95,7 +102,7 @@ assert.equal(process.env.XDG_DATA_HOME, path.dirname(appData))
 app.setPath('userData', path.join(root, 'profile'))
 app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
 app.commandLine.appendSwitch('remote-debugging-port', '0')
-app.commandLine.appendSwitch('ozone-platform', 'x11')
+app.commandLine.appendSwitch('ozone-platform', kdeSave ? 'wayland' : 'x11')
 
 const event = (name, details) =>
   fs.appendFileSync(
@@ -106,17 +113,19 @@ const event = (name, details) =>
 const flag = (name) => path.join(root, name)
 const start = fs.readFileSync('/proc/self/stat', 'utf8').split(') ').at(-1).split(' ')[19]
 const identity = () => ({ group: group(), pid: process.pid, start })
-const nativePicker = dialog.showSaveDialog
-let selections = 0
-dialog.showSaveDialog = async function (...args) {
-  const options = args.at(-1)
-  if (options?.title !== 'Save Recovery AppImage') return Reflect.apply(nativePicker, this, args)
-  assert.equal(version, '0.1.0')
-  selections++
-  assert.ok(selections <= 2)
-  const filePath = path.join(root, 'Applications/Recovered.AppImage')
-  event('selected-recovery', { options, selected: selections === 2, selections })
-  return selections === 1 ? { canceled: true, filePath: '' } : { canceled: false, filePath }
+if (!kdeSave) {
+  const nativePicker = dialog.showSaveDialog
+  let selections = 0
+  dialog.showSaveDialog = async function (...args) {
+    const options = args.at(-1)
+    if (options?.title !== 'Save Recovery AppImage') return Reflect.apply(nativePicker, this, args)
+    assert.equal(version, '0.1.0')
+    selections++
+    assert.ok(selections <= 2)
+    const filePath = path.join(root, 'Applications/Recovered.AppImage')
+    event('selected-recovery', { options, selected: selections === 2, selections })
+    return selections === 1 ? { canceled: true, filePath: '' } : { canceled: false, filePath }
+  }
 }
 const nativeHandle = ipcMain.handle
 ipcMain.handle = function (channel, listener) {
@@ -220,7 +229,7 @@ if (installNext && version === '0.3.0') {
     return gate
   }
 }
-if (installNext) {
+if (installNext || kdeSave) {
   app.on('quit', (_event, code) => event('app-quit', { code, ...identity() }))
   process.on('exit', (code) => event('process-exit', { code, ...identity() }))
 }

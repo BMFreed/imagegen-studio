@@ -1,5 +1,19 @@
 # Engineering Workflow
 
+## Native KDE dialog for recovery AppImage
+
+[KDE Wayland SaveFile recovery](./phase-5-packaged-recovery-kde-chooser-research.md)
+reproduced rejection of KDE's lowercase default extension. The corrected
+AppImage accepted the exact native path, published signed bytes and
+reopened the saved Project from the new path.
+
+## Regional references on two display plinths
+
+[Two-plinth placement comparison](./phase-4-regional-reference-placement-research.md)
+passed the signed-worker assignment swap with two stable masks and an ordinary
+control. Both blind readers found the divider and display positions and saw no
+recognizable duck and camera pair. Visual qualification remains open.
+
 ## Current ordinary mug IMG color emphasis
 
 [Mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md)

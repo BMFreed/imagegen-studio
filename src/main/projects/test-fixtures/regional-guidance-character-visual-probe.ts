@@ -1532,6 +1532,55 @@ export async function produceReferenceImgUtilityProbe<T>(options: {
   })
 }
 
+export const REFERENCE_PLACEMENT_ROOT = path.join(
+  QUALIFICATION_RUNS_ROOT,
+  'regional-reference-placement',
+)
+export const REFERENCE_PLACEMENT_POSITIVE =
+  'a clean anime still life of two collectible objects on separate display plinths, oak divider in the center, teal trim above, cream gallery wall, gentle shadows'
+export const REFERENCE_PLACEMENT_MASKS = [
+  { height: 320, width: 192, x: 0, y: 64 },
+  { height: 320, width: 192, x: 320, y: 64 },
+] as const
+export const REFERENCE_PLACEMENT_CASES = [
+  { image: null, label: 'ordinary', outside: false, seed: 123 },
+  { image: 'A', label: 'assigned', outside: false, seed: 123 },
+  { image: 'B', label: 'swapped', outside: false, seed: 123 },
+] as const
+
+/** Hold the two mask owners fixed and move only their reference images. */
+export async function produceReferencePlacementProbe<T>(options: {
+  pythonExecutable: string
+  referenceImages: Record<'A' | 'B', CharacterVisualFile>
+  resources: VerifiedRegionalReferenceResources
+  run: string
+  runtimeRoot: string
+  sourceImage: CharacterVisualFile
+  useCase: (
+    input: Omit<ReferenceImgUtilityUseCase, 'case'> & {
+      case: (typeof REFERENCE_PLACEMENT_CASES)[number]
+    },
+  ) => Promise<T>
+}): Promise<unknown> {
+  assert.equal(path.dirname(options.run), REFERENCE_PLACEMENT_ROOT)
+  assert.match(path.basename(options.run), /^\d{8}-r[1-9]\d*$/)
+  return produceFixedUtilityProbe({
+    ...options,
+    prepare: prepareNormalGeneration,
+    spec: {
+      cases: REFERENCE_PLACEMENT_CASES,
+      contract: {
+        globalPositive: REFERENCE_PLACEMENT_POSITIVE,
+        nativeRequestCeiling: REFERENCE_PLACEMENT_CASES.length,
+        sampling: { denoisingStrength: 0.6, steps: 30 },
+      },
+      prefix: 'reference-placement',
+      run: options.run,
+      sourceFilename: 'display-source.png',
+    },
+  })
+}
+
 async function produceFixedUtilityProbe<
   C extends FixedUtilityCase,
   P extends PreparedNormalGeneration,
@@ -1552,7 +1601,12 @@ async function produceFixedUtilityProbe<
       sampling?: { denoisingStrength?: number; steps: number }
     }
     prefix:
-      'ordinary-cat-tags' | 'ordinary-img-recolor' | 'reference-img' | 'reference' | 'resolution'
+      | 'ordinary-cat-tags'
+      | 'ordinary-img-recolor'
+      | 'reference-img'
+      | 'reference-placement'
+      | 'reference'
+      | 'resolution'
     run: string
     sourceFilename?: string
   }
@@ -1565,6 +1619,7 @@ async function produceFixedUtilityProbe<
 }): Promise<unknown> {
   const { sourceImage, spec } = options
   const mode = sourceImage ? 'img2img' : 'txt2img'
+  const placement = spec.prefix === 'reference-placement'
   assert.equal(options.run, spec.run)
   const run = options.run
   await directory(run)
@@ -1668,6 +1723,7 @@ async function produceFixedUtilityProbe<
             : 'Fixed cat source recoloring',
         reference: 'Fixed cat reference utility',
         'reference-img': 'Fixed cat reference utility',
+        'reference-placement': 'Fixed display plinths',
         resolution: 'Fixed cat ordinary resolution',
       }[spec.prefix],
       width: 512,
@@ -1691,28 +1747,51 @@ async function produceFixedUtilityProbe<
       assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
     }
     const initial = structuredClone(co().document)
-    const maskId = randomUUID()
-    const regionId = randomUUID()
-    const bytes = encodeProjectMaskPng(new Uint8Array(512 * 512).fill(255), 512, 512)
-    const member = `assets/masks/${maskId}/${sha(bytes)}.png`
-    const sources: Record<string, IgsAssetSource> = { [member]: { bytes } }
+    const masks = placement ? REFERENCE_PLACEMENT_MASKS : [{ height: 512, width: 512, x: 0, y: 0 }]
+    const maskOwners = masks.map((bounds) => {
+      const { height, width } = bounds
+      const maskId = randomUUID()
+      const regionId = randomUUID()
+      const bytes = encodeProjectMaskPng(new Uint8Array(width * height).fill(255), width, height)
+      const sha256 = sha(bytes)
+      const member = `assets/masks/${maskId}/${sha256}.png`
+      return { bounds, bytes, maskId, member, regionId, sha256 }
+    })
+    const sources: Record<string, IgsAssetSource> = Object.fromEntries(
+      maskOwners.map(({ bytes, member }) => [member, { bytes }]),
+    )
     for (const testCase of spec.cases) {
       const side = testCase.side ?? 512
       const bbox = { height: side, width: side, x: sourceImage ? 0 : -13, y: sourceImage ? 0 : 5 }
-      const owner: IgsRegionalGuidanceV1 = {
-        enabled: true,
-        id: regionId,
-        locked: false,
-        mask: {
-          asset: { bytes: bytes.length, height: 512, path: member, sha256: sha(bytes), width: 512 },
-          bounds: { ...bbox, x: testCase.outside ? bbox.x + bbox.width + 8 : bbox.x },
-          id: maskId,
-          revision: testCase.outside ? 2 : 1,
-        },
-        name: 'Cat reference owner',
-        overlayOpacity: 0,
-        prompts: { negative: prompt(''), positive: null, useGlobalNegativePrompt: false },
-      }
+      const owners: IgsRegionalGuidanceV1[] =
+        testCase.image === null
+          ? []
+          : maskOwners.map(({ bounds, bytes, maskId, member, regionId, sha256 }, index) => ({
+              enabled: true,
+              id: regionId,
+              locked: false,
+              mask: {
+                asset: {
+                  bytes: bytes.length,
+                  height: bounds.height,
+                  path: member,
+                  sha256,
+                  width: bounds.width,
+                },
+                bounds: placement
+                  ? bounds
+                  : { ...bbox, x: testCase.outside ? bbox.x + bbox.width + 8 : bbox.x },
+                id: maskId,
+                revision: testCase.outside ? 2 : 1,
+              },
+              name: placement
+                ? index === 0
+                  ? 'Left plinth'
+                  : 'Right plinth'
+                : 'Cat reference owner',
+              overlayOpacity: 0,
+              prompts: { negative: prompt(''), positive: null, useGlobalNegativePrompt: false },
+            }))
       const desired = parseProjectDocumentV1({
         ...initial,
         documentRevision: co().document.documentRevision,
@@ -1737,7 +1816,7 @@ async function produceFixedUtilityProbe<
           vaePrecision: 'FP16',
         },
         primaryBbox: bbox,
-        regionalGuidance: testCase.image === null ? [] : [owner],
+        regionalGuidance: owners,
       })
       await co().applyDocument(desired, testCase.image === null ? {} : sources, {
         expectedDocumentEpoch: co().documentEpoch,
@@ -1745,28 +1824,39 @@ async function produceFixedUtilityProbe<
       })
       if (testCase.image !== null) {
         assert.ok(options.referenceImages)
-        const image = options.referenceImages[testCase.image]
-        const pin = REFERENCE_UTILITY_CONTRACT.referenceImages[testCase.image]
-        assert.equal(
-          image.path,
-          path.join(sourceImage ? REFERENCE_UTILITY_RUN : run, `reference-${testCase.image}.png`),
-        )
-        assert.equal(image.byteSize, pin.byteSize)
-        assert.equal(image.sha256, pin.sha256)
-        const imageBytes = await readFile(image.path)
-        assert.equal(imageBytes.length, pin.byteSize)
-        assert.equal(sha(imageBytes), pin.sha256)
         worker = await startImageWorker()
-        await service.importRegionalGuidanceReferenceImage(
-          tab.id,
-          {
-            documentId: co().document.documentId,
-            documentRevision: co().document.documentRevision,
-            regionId,
-          },
-          async () => image.path,
-          worker,
-        )
+        for (const [index, owner] of owners.entries()) {
+          const key: 'A' | 'B' = index === 0 ? testCase.image : testCase.image === 'A' ? 'B' : 'A'
+          const image: CharacterVisualFile = options.referenceImages[key]
+          const pin: Pick<CharacterVisualFile, 'byteSize' | 'sha256'> = placement
+            ? image
+            : REFERENCE_UTILITY_CONTRACT.referenceImages[key]
+          assert.equal(
+            image.path,
+            path.join(
+              sourceImage && !placement ? REFERENCE_UTILITY_RUN : run,
+              `reference-${key}.png`,
+            ),
+          )
+          assert.equal(await realpath(image.path), image.path)
+          assert.equal(image.byteSize, pin.byteSize)
+          assert.equal(image.sha256, pin.sha256)
+          const imageBytes = await readFile(image.path)
+          assert.equal(imageBytes.length, pin.byteSize)
+          assert.equal(sha(imageBytes), pin.sha256)
+          assert.ok(
+            await service.importRegionalGuidanceReferenceImage(
+              tab.id,
+              {
+                documentId: co().document.documentId,
+                documentRevision: co().document.documentRevision,
+                regionId: owner.id,
+              },
+              async () => image.path,
+              worker,
+            ),
+          )
+        }
         await worker.close()
         worker = undefined
         assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
@@ -1819,14 +1909,18 @@ async function produceFixedUtilityProbe<
           },
           models,
         })
-        assert.equal(recipe.regions.length, testCase.image === null ? 0 : 1)
-        if (testCase.image !== null) {
-          const region = recipe.regions[0]
-          assert.equal(region.regionId, regionId)
-          assert.equal(region.maskId, maskId)
+        assert.equal(recipe.regions.length, owners.length)
+        for (const [index, region] of recipe.regions.entries()) {
+          const owner = owners[index]
+          assert.equal(region.regionId, owner.id)
+          assert.equal(region.maskId, owner.mask.id)
           assert.equal(region.positive, null)
           assert.equal(region.coverage.kind, testCase.outside ? 'outside' : 'covered')
-          assert.ok(region.coverage.alpha.every((value) => value === (testCase.outside ? 0 : 255)))
+          if (!placement) {
+            assert.ok(
+              region.coverage.alpha.every((value) => value === (testCase.outside ? 0 : 255)),
+            )
+          }
           assert.equal(region.referenceImages!.length, 1)
         }
         const references =
@@ -1929,6 +2023,7 @@ async function produceFixedUtilityProbe<
       'ordinary-img-recolor': 'main-ordinary-img-recolor',
       reference: 'main-reference-utility',
       'reference-img': 'main-reference-img-utility',
+      'reference-placement': 'main-reference-placement',
       resolution: 'main-ordinary-resolution',
     }[spec.prefix]
     const manifest = {

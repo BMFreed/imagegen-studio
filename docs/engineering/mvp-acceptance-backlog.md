@@ -14,6 +14,9 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [ordinary mug trajectory](./phase-4-ordinary-img-mug-trajectory-research.md),
 [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md), and
 [mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md).
+The next
+[two-plinth regional placement trial](./phase-4-regional-reference-placement-research.md)
+passes native execution and leaves visual regional utility open.
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -108,6 +111,10 @@ entries record the state at their checkpoint.
    goals. Qualify regional influence on a separate fixed scene with
    recognizable attributes, an ordinary no-region control, an assignment
    swap and a human verdict on the effect inside and outside the mask.
+   The two-plinth trial preserved exact base inputs and moved the
+   duck and camera reference PNGs between two fixed masks. The
+   native requests completed. The blind review saw no recognizable
+   pair in either treatment. Choose a new hypothesis before a repeat.
    [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
    [strength comparison](./phase-4-ordinary-img-strength-research.md),
    [mug experiment](./phase-4-ordinary-img-mug-research.md),
@@ -116,6 +123,7 @@ entries record the state at their checkpoint.
    [trajectory checkpoints](./phase-4-ordinary-img-mug-trajectory-research.md),
    [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md),
    [explicit color emphasis and Invoke comparison](./phase-4-ordinary-img-mug-weight-research.md),
+   [two-plinth regional placement](./phase-4-regional-reference-placement-research.md),
    [product scope](../specs/00-product-scope.md#продуктовые-нецели-mvp).
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
@@ -184,9 +192,12 @@ entries record the state at their checkpoint.
    execution inputs and PNG bytes matched. C passed explicit Add, Save and
    reopen with the same accepted Raster and provenance. The shipping host
    matrix and inference across distinct release sources remain open.
-   The native KDE Wayland SaveFile dialog for Save Recovery AppImage
-   remains open for publisher-independent qualification. The previous
-   signed recovery run supplied scripted Save and Cancel dialog replies.
+   Native KDE Wayland SaveFile verified the AppImage filter and actual
+   Cancel. KDE returned the default filename with a lowercase extension
+   and the original local guard refused it. The corrected AppImage saves
+   exact signed bytes at the selected spelling. Launching that copy reopens
+   the same Project and clears recovery for the new path. Both lifetimes
+   close normally. [Native KDE recovery](./phase-5-packaged-recovery-kde-chooser-research.md)
    Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.
