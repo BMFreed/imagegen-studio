@@ -3,8 +3,9 @@
 Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
 [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
 [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md),
-[recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md), and
-[CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md).
+[recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md),
+[CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md), and
+[ordinary Illustrious prompt comparison](./phase-4-ordinary-cat-tags-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -72,6 +73,9 @@ entries record the state at their checkpoint.
    actual no-region ordinary controls and matched region/reference assignment
    controls. Both prior ordinary TXT baselines failed, the 1024 resolution
    diagnosis was inconclusive, and the fixed common-runtime CLIP operators matched.
+   Same-seed 1024 prompt pairs reproduced both prose controls byte for byte.
+   Both tagged variants failed the visual rubric because of tight framing.
+   [Ordinary prose and tags](./phase-4-ordinary-cat-tags-research.md).
    The source-anchored IMG pilot preserved geometry in all three jobs. Both
    reference cards failed the preregistered red/blue recoloring criterion.
    The signed Anima IMG pilot held the source and regional

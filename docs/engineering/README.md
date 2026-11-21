@@ -1,5 +1,11 @@
 # Engineering Workflow
 
+## Current Illustrious XL prompt comparison
+
+[Ordinary prose and tags](./phase-4-ordinary-cat-tags-research.md) reproduced
+the prior 1024px prose controls. Both paired tagged images failed the frozen
+visual rubric on framing. The four originals are retained for human review.
+
 ## Current CUDA generation across a signed AppImage update
 
 [Installed NoobAI EPS before and after native relaunch](./phase-5-signed-appimage-cuda-research.md)

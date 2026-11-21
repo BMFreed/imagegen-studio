@@ -1166,6 +1166,7 @@ interface FixedUtilityCase {
   image: 'A' | 'B' | null
   label: string
   outside: boolean
+  positive?: string
   seed: number
   side?: 1024 | 512
 }
@@ -1188,6 +1189,67 @@ export async function produceOrdinaryResolutionProbe<T>(options: {
       contract: ORDINARY_RESOLUTION_CONTRACT,
       prefix: 'resolution',
       run: ORDINARY_RESOLUTION_RUN,
+    },
+  })
+}
+
+const ORDINARY_CAT_TAGS_ROOT = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/ordinary-cat-tags',
+)
+const CAT_PROSE = ORDINARY_RESOLUTION_CONTRACT.globalPositive
+const CAT_TAGS =
+  'cat, feline, solo, portrait, close-up, front view, looking at viewer, pointed ears, simple background, light background, illustration'
+const ordinaryCat = { image: null, outside: false, side: 1024 } as const
+export const ORDINARY_CAT_TAGS_CASES = [
+  { ...ordinaryCat, label: 'seed123-prose', positive: CAT_PROSE, seed: 123 },
+  { ...ordinaryCat, label: 'seed123-tags', positive: CAT_TAGS, seed: 123 },
+  { ...ordinaryCat, label: 'seed124-prose', positive: CAT_PROSE, seed: 124 },
+  { ...ordinaryCat, label: 'seed124-tags', positive: CAT_TAGS, seed: 124 },
+] as const
+
+export const ORDINARY_CAT_TAGS_CONTRACT = {
+  base: 'c2ed83aa89bb2e0e30ad390568c7257f54294290',
+  bbox: { height: 1024, width: 1024, x: -13, y: 5 },
+  cases: ORDINARY_CAT_TAGS_CASES,
+  globalNegative: '',
+  globalPositive: CAT_PROSE,
+  invokeRevision: '4875d96531ca6712b288f6e660fcbb34143408c1',
+  model: { byteSize: SOURCE_BYTES, predictionType: 'epsilon', sha256: SOURCE_SHA256 },
+  nativeRequestCeiling: 4,
+  rubric: {
+    fail: 'An extra or fused face, visibly wrong subject, extreme crop, or a missing eye or ear.',
+    gate: 'Both tagged cases must pass. Compare each with the same-seed prose result. Use blinded descriptions first and record human acceptance separately.',
+    inconclusive:
+      'Species, anatomy, or the disposition of the head and background remains ambiguous.',
+    pass: 'One recognizable domestic cat head viewed primarily from the front, with two distinct eyes and two pointed ears against a simple light background.',
+  },
+  sampling: ORDINARY_RESOLUTION_CONTRACT.sampling,
+  schema: 'ordinary-cat-tags-experiment-v1',
+  vaePrecision: 'FP16',
+} as const
+
+type OrdinaryCatTagsUseCase = Omit<ReferenceUtilityUseCase, 'case'> & {
+  case: (typeof ORDINARY_CAT_TAGS_CASES)[number]
+}
+
+/** Keep the ordinary saved Canvas and Invoke-derived preparation fixed around literal text. */
+export async function produceOrdinaryCatTagsProbe<T>(options: {
+  pythonExecutable: string
+  run: string
+  runtimeRoot: string
+  useCase: (input: OrdinaryCatTagsUseCase) => Promise<T>
+}): Promise<unknown> {
+  assert.equal(path.dirname(options.run), ORDINARY_CAT_TAGS_ROOT)
+  assert.match(path.basename(options.run), /^\d{8}-r[1-9]\d*$/)
+  return produceFixedUtilityProbe({
+    ...options,
+    prepare: prepareNormalTxt2Img,
+    spec: {
+      cases: ORDINARY_CAT_TAGS_CASES,
+      contract: ORDINARY_CAT_TAGS_CONTRACT,
+      prefix: 'ordinary-cat-tags',
+      run: options.run,
     },
   })
 }
@@ -1248,7 +1310,7 @@ async function produceFixedUtilityProbe<
   spec: {
     cases: readonly C[]
     contract: { globalPositive: string; nativeRequestCeiling: number }
-    prefix: 'reference-img' | 'reference' | 'resolution'
+    prefix: 'ordinary-cat-tags' | 'reference-img' | 'reference' | 'resolution'
     run: string
   }
   useCase: (
@@ -1355,10 +1417,12 @@ async function produceFixedUtilityProbe<
     assert.equal(model.predictionType, 'epsilon')
     const tab = await service.create({
       height: 512,
-      title:
-        spec.prefix === 'resolution'
-          ? 'Fixed cat ordinary resolution'
-          : 'Fixed cat reference utility',
+      title: {
+        'ordinary-cat-tags': 'Fixed cat prompt comparison',
+        reference: 'Fixed cat reference utility',
+        'reference-img': 'Fixed cat reference utility',
+        resolution: 'Fixed cat ordinary resolution',
+      }[spec.prefix],
       width: 512,
     })
     const co = () => {
@@ -1411,7 +1475,7 @@ async function produceFixedUtilityProbe<
           loras: [],
           model,
           negativePrompt: prompt(''),
-          positivePrompt: prompt(spec.contract.globalPositive),
+          positivePrompt: prompt(testCase.positive ?? spec.contract.globalPositive),
           sampling: {
             cfgScale: 5,
             denoisingStrength: sourceImage ? 0.5 : null,
@@ -1611,27 +1675,22 @@ async function produceFixedUtilityProbe<
     }
     assert.equal(cases.length, spec.contract.nativeRequestCeiling)
     assert.equal(networkAttempts, 0)
+    const name =
+      spec.prefix === 'resolution'
+        ? 'main-ordinary-resolution'
+        : spec.prefix === 'ordinary-cat-tags'
+          ? 'main-ordinary-cat-tags'
+          : `main-${spec.prefix}-utility`
     const manifest = {
       cases,
       nativeRequestCeiling: spec.contract.nativeRequestCeiling,
       networkAttempts,
       noSharedDatabaseWrites: true,
-      profile:
-        spec.prefix === 'resolution'
-          ? 'main-ordinary-resolution-v1'
-          : `main-${spec.prefix}-utility-v1`,
+      profile: `${name}-v1`,
       schemaVersion: 1,
       visualAcceptance: 'pending',
     }
-    await writeJson(
-      path.join(
-        run,
-        spec.prefix === 'resolution'
-          ? 'main-ordinary-resolution.json'
-          : `main-${spec.prefix}-utility.json`,
-      ),
-      manifest,
-    )
+    await writeJson(path.join(run, `${name}.json`), manifest)
     return manifest
   } finally {
     try {
