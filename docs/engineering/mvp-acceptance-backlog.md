@@ -186,6 +186,11 @@ entries record the state at their checkpoint.
    Add, Undo, Redo, explicit Save and reopen after one real packaged generation
    each. Verify these flows on the shipping candidate across the supported matrix.
    [Packaged Raster history](./phase-5-packaged-raster-acceptance-history-research.md)
+   In an owned stock AppImage profile, Main was killed after publishing the
+   unsaved accepted EPS Raster to the autosave shadow. Cancel preserved the
+   shadow and saved Project. Recover restored the exact Raster as dirty,
+   and explicit Save and restart read it back with the original queue result.
+   [Packaged Raster crash recovery](./phase-5-packaged-raster-crash-recovery-research.md)
    The stock AppImage compares the accepted NoobAI EPS
    result with its edited draft and saves an exact detached preset without Seed.
    The preset and Project reopen in a profile without an installed worker or

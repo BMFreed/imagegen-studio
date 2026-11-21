@@ -32,6 +32,7 @@ const { values } = parseArgs({
     'package-proof': { type: 'string' },
     profile: { type: 'string' },
     'project-export': { type: 'boolean' },
+    'raster-crash-recovery': { type: 'boolean' },
     'raster-history': { type: 'boolean' },
   },
 })
@@ -41,7 +42,8 @@ const { family, profile } = values
 const sourcesPath = values['model-inputs']
 const packageProofPath = values['package-proof']
 const projectExport = values['project-export']
-const rasterHistory = values['raster-history']
+const rasterCrashRecovery = values['raster-crash-recovery']
+const rasterHistory = values['raster-history'] || rasterCrashRecovery
 const engineRuns = path.join(
   projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
@@ -64,6 +66,7 @@ assert.ok(!projectExport || family === undefined)
 assert.ok(
   !rasterHistory || (family === 'illustrious' && ['noobai-eps', 'noobai-v'].includes(profile)),
 )
+assert.ok(!rasterCrashRecovery || profile === 'noobai-eps')
 assert.equal(packageProofPath === undefined, profile === undefined && !projectExport)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
@@ -490,6 +493,7 @@ try {
       ...trained,
       ...(packageProof ? { profile, package: packageProof.appImage } : {}),
       ...(rasterHistory ? { rasterHistory: true } : {}),
+      ...(rasterCrashRecovery ? { rasterCrashRecovery: true } : {}),
     })
   } else {
     const rasterSourcePath = path.join(run, 'historical-raster.png')
@@ -584,7 +588,7 @@ with Path(sys.argv[1]).open('xb') as out:
       if (error.code === 'ENOENT' && smokeExit.code !== 0) return []
       throw error
     })
-    for (const phase of ['first', 'restarted']) {
+    for (const phase of ['first', ...(rasterCrashRecovery ? ['recovered'] : []), 'restarted']) {
       const receipt = `${phase}.physical-exit.json`
       if (smokeExit.code === 0 || observations.some((name) => name.startsWith(`${phase}.`))) {
         assert.equal((await readJson(path.join(nativeRoot, receipt))).scopeExit.confirmed, true)

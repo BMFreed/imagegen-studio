@@ -31,7 +31,9 @@ import { chromium, expect } from '@playwright/test'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
+  signalQualificationMain,
   stopExpiredQualificationProcess,
+  stopOwnedQualificationScope,
 } from './qualification-resource-limits.mjs'
 
 const execute = promisify(execFile)
@@ -602,6 +604,8 @@ if (trained?.rasterHistory)
       'scripts/fixtures/application-state-upgrade-fixture.mjs',
     ].map((name) => path.join(repo, name)),
   )
+if (trained?.rasterCrashRecovery)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-raster-crash-recovery.mjs'))
 if (protocolHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-worker-protocol.mjs'),
@@ -827,6 +831,7 @@ async function connect(state) {
       await boundQualificationProcess(state.mainPid, {
         deadlineSeconds: nativeDeadlineSeconds,
         execute: boundedExecute,
+        surviveMainDeath: Boolean(trained?.rasterCrashRecovery && state.name === 'first'),
       }),
     )
     state.aggregateLimits = assertAggregate(state.checks)
@@ -1012,7 +1017,7 @@ async function currentTab(state) {
   return tab
 }
 
-async function closeNormally(state) {
+async function retainLifetimeResources(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
   if (
@@ -1042,6 +1047,77 @@ async function closeNormally(state) {
       }),
     )
   }
+}
+
+async function crashForRecovery(state) {
+  assert.ok(trained?.rasterCrashRecovery)
+  assert.equal(lifetimes.length, 1)
+  assert.equal(lifetimes[0], state)
+  assert.equal(state.name, 'first')
+  assert.ok(!state.closed && !state.crashIntent && !state.page.isClosed())
+  assert.deepEqual(state.pageErrors, [])
+  // Refresh the captured cohort immediately before the deliberate fault.
+  const original = state.checks.find(({ nativeIdentity }) => nativeIdentity.pid === state.mainPid)
+  const current = await boundQualificationProcess(state.mainPid, {
+    deadlineSeconds: nativeDeadlineSeconds,
+    execute: boundedExecute,
+    surviveMainDeath: true,
+    refreshMainDeathProof: true,
+  })
+  assert.deepEqual(current.nativeIdentity, original?.nativeIdentity)
+  const scope = current.groups.find(
+    ({ ownedScope, pids }) => ownedScope && pids.includes(state.mainPid),
+  )
+  assert.ok(scope?.scopeProof, 'Project recovery needs a captured, owned native scope.')
+  state.checks.push(current)
+  state.aggregateLimits = assertAggregate(state.checks)
+  await retainLifetimeResources(state)
+  const intent = {
+    expectedSignal: 'SIGKILL',
+    mainOnly: true,
+    scopeProof: scope.scopeProof,
+  }
+  await writeFile(
+    path.join(root, `${state.name}.crash-intent.json`),
+    `${JSON.stringify(intent, null, 2)}\n`,
+    { flag: 'wx', mode: 0o600 },
+  )
+  state.crashIntent = intent
+  state.crashSignal = await signalQualificationMain(
+    { ...current.nativeIdentity, group: scope.group },
+    { execute: boundedExecute },
+  )
+  state.scopeExit = await confirmQualificationProcessExit(state.checks, { execute: boundedExecute })
+  assert.ok(state.scopeExit.confirmed)
+  assert.ok(state.scopeExit.confirmedOwnedScopeExit.includes(scope.group))
+  const closed = await bounded(state.closePromise, 15_000, 'Injected packaged crash settlement')
+  if (state.wrapperPid === state.mainPid) {
+    assert.deepEqual(closed, { code: null, signal: 'SIGKILL' })
+  } else {
+    assert.ok(
+      closed.signal === 'SIGKILL' || (closed.signal === null && closed.code > 0),
+      'The AppImage wrapper must report abnormal termination of its faulted Main.',
+    )
+  }
+  assert.deepEqual(state.pageErrors, [])
+  await state.browser?.close()
+  state.crashPhysicalExit = true
+  const evidence = {
+    intent,
+    signal: state.crashSignal,
+    wrapperExit: closed,
+    scopeExit: state.scopeExit,
+  }
+  records.push({
+    name: 'first: injected Main-only SIGKILL and physical exit confirmed',
+    ...evidence,
+  })
+  return evidence
+}
+
+async function closeNormally(state) {
+  assert.ok(!state.crashIntent, 'An injected crash cannot qualify as a normal close.')
+  await retainLifetimeResources(state)
   if (!state.closed) {
     const page = state.page && !state.page.isClosed() ? state.page : await connect(state)
     try {
@@ -1609,6 +1685,7 @@ try {
               identity,
               records,
               observeGpuWorker,
+              ...(trained.rasterCrashRecovery ? { crashForRecovery } : {}),
             })
           : noobaiPreviewMode
             ? { noobaiPreview: await runNoobaiPreviewQualification() }
@@ -1628,6 +1705,19 @@ try {
     assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
   }
   if (trainedGeneration) {
+    if (trained?.rasterCrashRecovery) {
+      assert.deepEqual(
+        lifetimes.map(({ name }) => name),
+        ['first', 'recovered', 'restarted'],
+      )
+      const [faulted, ...normallyClosed] = lifetimes
+      assert.ok(faulted.crashPhysicalExit && !faulted.normalPhysicalExit && !faulted.forcedCleanup)
+      assert.ok(
+        normallyClosed.every(
+          (state) => state.normalPhysicalExit && !state.crashIntent && !state.forcedCleanup,
+        ),
+      )
+    }
     const jobWorker = trainedGeneration.worker
     assert.ok(
       lifetimes[0].gpuSamples.some(
@@ -1796,7 +1886,25 @@ try {
     }
   }
   for (const state of lifetimes) {
-    if (!state.normalPhysicalExit) {
+    if (state.crashIntent && !state.crashPhysicalExit) {
+      try {
+        if (!state.scopeExit?.confirmed) {
+          // A failed crash run stays failed. Only the captured test scope can
+          // be signaled if the first Main-only fault left anything alive.
+          state.forcedCleanup = true
+          state.deadlineCleanup = await stopOwnedQualificationScope(state.crashIntent.scopeProof, {
+            execute: boundedExecute,
+          })
+          state.scopeExit = await confirmQualificationProcessExit(state.checks, {
+            execute: boundedExecute,
+          })
+        }
+        await bounded(state.closePromise, 15_000, 'Failed injected crash settlement')
+      } catch (error) {
+        state.physicalExitFailure = error.message
+      }
+      await state.browser?.close().catch(() => {})
+    } else if (!state.normalPhysicalExit && !state.crashPhysicalExit) {
       if (failed && state.discardOwnedProjectId && !state.closed && !state.page?.isClosed()) {
         try {
           const result = await state.page.evaluate(
@@ -1856,6 +1964,11 @@ try {
       mainPid: state.mainPid,
       closed: state.closed,
       normalPhysicalExit: state.normalPhysicalExit ?? false,
+      ...(state.crashIntent && {
+        crashIntent: state.crashIntent,
+        crashSignal: state.crashSignal,
+        crashPhysicalExit: state.crashPhysicalExit ?? false,
+      }),
       forcedCleanup: state.forcedCleanup,
       closeFailure: state.closeFailure,
       physicalExitFailure: state.physicalExitFailure,

@@ -8,6 +8,12 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged Raster crash recovery
+
+[Recover after Main process death](./phase-5-packaged-raster-crash-recovery-research.md)
+records one real unsaved CUDA Raster through owned Main SIGKILL, Cancel, Recover,
+explicit Save and clean restart with the same Project and completed queue result.
+
 ## Current packaged Raster acceptance history
 
 [Packaged Add, Undo and Redo](./phase-5-packaged-raster-acceptance-history-research.md)

@@ -176,10 +176,14 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.deepEqual(await identity(filename), fixtureBefore)
   const noobai = fixture.profile !== undefined
   assert.ok(!noobai || Object.hasOwn(noobaiPins, fixture.profile))
-  const { rasterHistory } = fixture
+  const { rasterCrashRecovery, rasterHistory } = fixture
   assert.ok(
     rasterHistory === undefined ||
       (rasterHistory === true && ['noobai-eps', 'noobai-v'].includes(fixture.profile)),
+  )
+  assert.ok(
+    rasterCrashRecovery === undefined ||
+      (rasterCrashRecovery === true && rasterHistory === true && fixture.profile === 'noobai-eps'),
   )
   assert.deepEqual(Object.keys(fixture).sort(), [
     'appData',
@@ -187,6 +191,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     'files',
     'model',
     ...(noobai ? ['package', 'profile'] : []),
+    ...(rasterCrashRecovery ? ['rasterCrashRecovery'] : []),
     ...(rasterHistory ? ['rasterHistory'] : []),
     'runtimeId',
     'schemaVersion',
@@ -324,6 +329,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     pythonPath,
     engineRun: engine.run,
     ownedEmbedding,
+    rasterCrashRecovery,
     rasterHistory,
     protectedModels,
     inputs: [fixtureBefore, previousBefore, ...catalogInputs],
@@ -1017,6 +1023,7 @@ export async function runTrainedGeneration({
   identity,
   records,
   observeGpuWorker,
+  crashForRecovery,
 }) {
   const { fixture, databasePath, baseline, python } = trained
   const first = await launch('first')
@@ -1358,13 +1365,43 @@ export async function runTrainedGeneration({
     accepted = redone
     rasterHistory = report
   }
-  await first.page.getByRole('button', { name: 'Save Project', exact: true }).click()
-  await expect.poll(async () => (await openTab(first.page, project.id)).dirty).toBe(false)
-  assert.equal((await openTab(first.page, project.id)).documentRevision, accepted.documentRevision)
-  const [summary] = await projectCall(first.page, 'list')
+  let saving = first
+  let rasterCrashRecovery
+  if (trained.rasterCrashRecovery) {
+    const { recoverPackagedRasterAfterCrash } = await import('./packaged-raster-crash-recovery.mjs')
+    const { saveState, recovered, report } = await recoverPackagedRasterAfterCrash({
+      state: first,
+      project,
+      accepted,
+      acceptedData,
+      packagePath,
+      initialPackage,
+      root,
+      appData: fixture.appData,
+      historyEvidence: rasterHistory,
+      receipt,
+      crashForRecovery,
+      launch,
+      readPorts,
+      retainOwnStore,
+      identity,
+      openTab,
+      projectCall,
+      snapshot,
+    })
+    saving = saveState
+    accepted = recovered
+    rasterCrashRecovery = report
+  }
+  await saving.page.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await openTab(saving.page, project.id)).dirty).toBe(false)
+  assert.equal((await openTab(saving.page, project.id)).documentRevision, accepted.documentRevision)
+  const [summary] = await projectCall(saving.page, 'list')
   assert.equal(summary.previewStatus, 'rendered')
-  await closeNormally(first)
-  const saved = await retainOwnStore('after-first-close')
+  await closeNormally(saving)
+  const saved = await retainOwnStore(
+    rasterCrashRecovery ? 'after-recovered-save-close' : 'after-first-close',
+  )
   assert.equal(saved.project.path, packagePath)
   assert.notEqual(saved.project.sha256, initialPackage.sha256)
   const inspection = JSON.parse(
@@ -1554,6 +1591,7 @@ export async function runTrainedGeneration({
       modelInputs: fixture.files,
       explicitAdd: true,
       ...(rasterHistory && { rasterHistory }),
+      ...(rasterCrashRecovery && { rasterCrashRecovery }),
       explicitSave: true,
       sameSavedProjectAfterReopen: true,
     },
