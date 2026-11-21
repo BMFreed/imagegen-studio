@@ -144,7 +144,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   )
   assert.ok(
     offlineProject === undefined ||
-      (['trash', 'result-preset'].includes(offlineProject) &&
+      (['trash', 'result-preset', 'home-recovery-keyboard'].includes(offlineProject) &&
         portableChooser === undefined &&
         componentRemove === undefined),
   )
@@ -418,12 +418,15 @@ const componentRemoveHarness = componentRemove
 const offlineProjectFixture = {
   trash: 'packaged-project-trash',
   'result-preset': 'packaged-noobai-result-preset',
+  'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
 }[offlineProject]
 const offlineProjectScope = {
   trash:
     'Actual stock AppImage preserves closed Project Trash across restart and restores or permanently deletes the exact owned file.',
   'result-preset':
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
+  'home-recovery-keyboard':
+    'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -650,6 +653,17 @@ if (offlineProjectFixture)
     path.join(repo, 'scripts/fixtures', `${offlineProjectFixture}.mjs`),
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (offlineProject === 'home-recovery-keyboard')
+  sourcePaths.push(
+    ...[
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-identity.ts',
+      'src/main/projects/project-shadow.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/HomeView.vue',
+      'src/shared/projects/project-schema.ts',
+    ].map((file) => path.join(repo, file)),
   )
 if (componentRemove === 'queue')
   sourcePaths.push(
@@ -1337,6 +1351,9 @@ async function runOwnedProjectProfile() {
     if (offlineProject === 'trash') {
       const { saved, restarted, packagedProjectTrash } = await fixture.runPackagedProjectTrash(args)
       return { saved, restarted, offlineProjectResult: packagedProjectTrash }
+    }
+    if (offlineProject === 'home-recovery-keyboard') {
+      return await fixture.runPackagedHomeRecoveryKeyboard(args)
     }
     const { assertOfflineProjectDesktop } =
       await import('./fixtures/packaged-noobai-import-chooser.mjs')

@@ -195,9 +195,13 @@ entries record the state at their checkpoint.
    result with its edited draft and saves an exact detached preset without Seed.
    The preset and Project reopen in a profile without an installed worker or
    models. [Packaged result preset](./phase-5-packaged-project-and-preset-research.md#compare-and-save-preset-from-result)
-   Check joint Home/Trash, resource
-   removal and export behavior, interrupted recovery, keyboard/focus/contrast and
-   performance at supported desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
+   Packaged Home opened the saved Project by keyboard at 1440×900. At
+   900×620 the Recovery dialog cycled focus through all actions and returned
+   it to the same Home card after Escape and Cancel, with a visible ring.
+   [Packaged Home and Recovery keyboard](./phase-5-packaged-home-recovery-keyboard-research.md)
+   Check joint Home/Trash, resource removal and export behavior, interrupted
+   recovery, remaining keyboard/focus/contrast and performance at supported
+   desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
    [release criteria](../specs/01-implementation-roadmap.md#фаза-5-первый-linuxnvidia-релиз),
    [model lifecycle](../features/model-manager.md#acceptance-criteria),
    [review protocol](./review-protocol.md).

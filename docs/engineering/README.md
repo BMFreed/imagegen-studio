@@ -8,6 +8,12 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged Home and Recovery keyboard focus
+
+[Home and Recovery keyboard verification](./phase-5-packaged-home-recovery-keyboard-research.md)
+reproduced focus loss on Escape and Cancel and verified return to the same Project
+card with a visible focus ring in the new AppImage at the native minimum size.
+
 ## Current packaged Raster crash recovery
 
 [Recover after Main process death](./phase-5-packaged-raster-crash-recovery-research.md)

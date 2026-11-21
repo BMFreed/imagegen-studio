@@ -1512,6 +1512,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
   white-space: normal;
 }
 
+.project-row .row-select:focus-visible {
+  outline: 2px solid var(--app-text);
+  outline-offset: -2px;
+}
+
 .row-select :deep(.n-button__content) {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);

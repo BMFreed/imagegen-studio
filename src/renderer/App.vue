@@ -173,7 +173,7 @@ type HomePresentationIntent = {
   epoch: number
   target: 'current' | 'new'
 }
-type HomeOpenIntent = HomePresentationIntent & { projectId: string }
+type HomeOpenIntent = HomePresentationIntent & { projectId: string; trigger?: HTMLElement }
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string | null }
 type PendingAcceptance = {
@@ -4535,7 +4535,10 @@ async function openHomeProject(projectId: string, target: 'current' | 'new' = 'c
   ) {
     return
   }
-  const intent: HomeOpenIntent = { epoch: homePresentationEpoch, projectId, target }
+  const focused = document.activeElement
+  const trigger =
+    focused instanceof HTMLElement && focused.closest('.home-view') ? focused : undefined
+  const intent: HomeOpenIntent = { epoch: homePresentationEpoch, projectId, target, trigger }
   await openProject(projectId, false, () => homeOpenIntentCurrent(intent), intent)
 }
 
@@ -4774,11 +4777,30 @@ function cancelRecovery() {
   if (pendingProjectAction.value?.kind === 'recover') {
     return
   }
+  const intent = homeRecoveryIntent.value
+  const focused = document.activeElement
   queueResultNavigator.cancelProjectOpen()
   cancelAcceptedHistoryNavigation()
   recoveryDecision.value = null
   homeRecoveryIntent.value = null
   recoveryError.value = null
+  if (intent?.trigger) {
+    const { trigger } = intent
+    // Opening the Project temporarily disables its trigger before the modal captures focus.
+    void nextTick(() => {
+      const currentFocus = document.activeElement
+      if (
+        homeOpenIntentCurrent(intent) &&
+        !pendingProjectAction.value &&
+        !recoveryDecision.value &&
+        (currentFocus === document.body || currentFocus === focused) &&
+        trigger.isConnected &&
+        !trigger.matches(':disabled, [aria-disabled="true"]')
+      ) {
+        trigger.focus({ preventScroll: true })
+      }
+    })
+  }
 }
 
 async function resolveRecovery(decision: 'discard' | 'recover') {
@@ -7192,6 +7214,7 @@ onBeforeUnmount(() => {
       >
         <NCard
           aria-label="Recovery available"
+          aria-modal="true"
           class="dialog-card"
           contentScrollable
           role="dialog"

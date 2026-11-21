@@ -272,12 +272,13 @@ export async function assertOfflineProjectDesktop({
   root,
   ownedRunRoot,
   packageBefore,
+  expectedPackage,
 }) {
   const run = path.dirname(root)
   assert.equal(path.dirname(run), path.join(ownedRunRoot, suite))
   assert.match(path.basename(run), /^\d{8}(?:-r[1-9]\d*)?$/)
   assert.equal(path.basename(root), scenario)
-  assert.deepEqual(packageBefore, {
+  const stock = {
     path: path.join(
       ownedRunRoot,
       'packaged-noobai-preview/20261120/package-work/live/output',
@@ -285,7 +286,8 @@ export async function assertOfflineProjectDesktop({
     ),
     sizeBytes: 147139886,
     sha256: '555c6a7985ef1cad3b0427d97862aa3db94da3cbf0d4ffdc7a67da5201bfc5d8',
-  })
+  }
+  assert.deepEqual(packageBefore, expectedPackage ?? stock)
   if (kdeChooser) {
     const { assertPrivateWayland } = await import('./packaged-kde-chooser.mjs')
     await assertPrivateWayland()
@@ -300,13 +302,22 @@ export async function verifyChooserFixture({
   ownedRunRoot,
   packageBefore,
   identity,
+  expectedPackage,
 }) {
   const suite =
     {
       locate: 'packaged-noobai-locate',
       trash: 'packaged-project-trash',
+      'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
     }[scenario] ?? 'packaged-noobai-chooser'
-  await assertOfflineProjectDesktop({ scenario, suite, root, ownedRunRoot, packageBefore })
+  await assertOfflineProjectDesktop({
+    scenario,
+    suite,
+    root,
+    ownedRunRoot,
+    packageBefore,
+    expectedPackage,
+  })
   const original = path.join(
     ownedRunRoot,
     'packaged-installed-engine/20261118/trained-noobai-v-r2/native/after-restarted-close.igs',
