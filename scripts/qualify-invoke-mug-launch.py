@@ -74,6 +74,7 @@ def install_observers(run, labels, config):
         InvokeAIDiffuserComponent,
     )
 
+    vae_only = labels == ("vae",)
     # The original isolated application qualification used the same allocator fraction.
     torch.cuda.set_per_process_memory_fraction(0.75, 0)
     observed = {
@@ -170,10 +171,18 @@ def install_observers(run, labels, config):
                     tiled=self.tiled,
                     colorCompensation=self.color_compensation,
                 )
+            if vae_only and kind == "decode":
+                record.update(
+                    inputLatentName=self.latents.latents_name,
+                    fp32=self.fp32,
+                    tiled=self.tiled,
+                )
             save()
             token = active.set(row)
             try:
                 result = original(self, context)
+                if vae_only and kind == "encode":
+                    record["outputLatentName"] = result.latents.latents_name
                 if kind == "decode":
                     record["outputImageName"] = result.image.image_name
                 return result
@@ -204,6 +213,8 @@ def install_observers(run, labels, config):
     def observe_encode(self, x, *args, **kwargs):
         row = active.get()
         if row is not None:
+            if vae_only:
+                assert "autoencoderInput" not in row["encode"]
             row["encode"]["autoencoderInput"] = digest(x)
         result = original_encode(self, x, *args, **kwargs)
         if row is not None:
@@ -392,6 +403,8 @@ def install_observers(run, labels, config):
     def observe_decode(self, z, *args, **kwargs):
         row = active.get()
         if row is not None:
+            if vae_only:
+                assert "latents" not in row["decode"]
             row["decode"].update(
                 latents=digest(z), scalingFactor=self.config.scaling_factor
             )
@@ -418,14 +431,35 @@ def install_observers(run, labels, config):
     AutoencoderKL.encode = observe_encode
     AutoencoderKL.decode = observe_decode
     InvokeAIDiffuserComponent._combine = observe_combine
+    if vae_only:
+        from invokeai.app.services.shared.invocation_context import TensorsInterface
+
+        original_load = TensorsInterface.load
+
+        @wraps(original_load)
+        def observe_load(self, name):
+            tensor = original_load(self, name)
+            row = active.get()
+            if row is not None and name == row["invocations"].get("decode", {}).get(
+                "inputLatentName"
+            ):
+                assert "loadedScaledLatents" not in row["decode"]
+                row["decode"]["loadedScaledLatents"] = digest(tensor)
+            return tensor
+
+        TensorsInterface.load = observe_load
     save(first=True)
 
 
 def main():
     args, contract = launch_arguments()
     labels = tuple(case["label"] for case in contract["cases"])
-    if labels != ("neutral", "red", "blue"):
-        raise ValueError("Expected the three preregistered graph roles in order.")
+    vae_only = (
+        contract["schema"] == "installed-invoke-ordinary-img-mug-vae-reference-v1"
+    )
+    expected_labels = ("vae",) if vae_only else ("neutral", "red", "blue")
+    if labels != expected_labels:
+        raise ValueError("Expected the preregistered graph roles in order.")
 
     # Let Invoke parse its real CLI, load its own config and set up the allocator
     # before importing application modules that transitively import torch.

@@ -94,10 +94,11 @@ mean absolute decoded RGB differences within the same-prompt pairs are
 different-prompt comparisons range from 8.03 to 9.05 channel levels.
 The source, model, seed, prompts, and visible settings in this experiment
 produce the same visual failure in both applications. The comparison
-leaves the responsible stage open. A VAE-only encode/decode control on the
-same source can test whether the pattern appears before the first denoising
-step. If the pattern requires denoising, compare the original Invoke and
-Studio paths with the same fixed source latent, noise, and conditioning.
+leaves the responsible stage open. The
+[VAE-only follow-up](./phase-4-ordinary-img-mug-vae-research.md) preserves the
+source's plain background in both applications. A fixed source latent, noise,
+and conditioning can support the next comparison of initialization and the
+first denoising transitions.
 
 ## Verification and retention
 

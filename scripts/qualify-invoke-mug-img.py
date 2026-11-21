@@ -23,6 +23,7 @@ QUEUE_PATH = "/api/v1/queue/igs-invoke-mug"
 PNG_LIMIT = 8 * 1024**2
 JSON_LIMIT = 8 * 1024**2
 LABELS = ("neutral", "red", "blue")
+VAE_CONTROL_SCHEMA = "installed-invoke-ordinary-img-mug-vae-reference-v1"
 POSITIVE = (
     "studio product photo of one {color} glazed ceramic mug, single handle on the right,"
     " empty open top, plain ivory tabletop and background, soft diffuse light"
@@ -247,6 +248,20 @@ def make_graph(contract, case, model, image_name):
         )
 
     node("model", "sdxl_model_loader", model=model)
+    source_fields = {
+        "image": {"image_name": image_name},
+        "tiled": False,
+        "fp32": False,
+        "color_compensation": "None",
+    }
+    if case["label"] == "vae":
+        node("source", "i2l", **source_fields)
+        node("output", "l2i", is_intermediate=False, tiled=False, fp32=False)
+        edge("model", "vae", "source", "vae")
+        edge("model", "vae", "output", "vae")
+        edge("source", "latents", "output", "latents")
+        return {"id": "igs-invoke-mug-vae", "nodes": nodes, "edges": edges}
+
     for sign, prompt in (("pos", case["positive"]), ("neg", contract["negative"])):
         node(
             sign,
@@ -275,14 +290,7 @@ def make_graph(contract, case, model, image_name):
         height=contract["height"],
         use_cpu=True,
     )
-    node(
-        "source",
-        "i2l",
-        image={"image_name": image_name},
-        tiled=False,
-        fp32=False,
-        color_compensation="None",
-    )
+    node("source", "i2l", **source_fields)
     node(
         "denoise",
         "denoise_latents",
@@ -338,6 +346,20 @@ def generate(api, run, case, graph, contract, deadline, report):
     write_json(run, f"{label}.queue-final-item.json", item)
     assert item["status"] == "completed", item.get("error_traceback")
     results = item["session"]["results"]
+    if label == "vae":
+        accepted = item["session"]["graph"]
+        assert accepted["id"] == graph["id"]
+        assert {key: node["type"] for key, node in accepted["nodes"].items()} == {
+            "model": "sdxl_model_loader",
+            "source": "i2l",
+            "output": "l2i",
+        }
+        assert accepted["edges"] == graph["edges"]
+        assert sorted(result["type"] for result in results.values()) == [
+            "image_output",
+            "latents_output",
+            "sdxl_model_loader_output",
+        ]
     outputs = [
         value["image"]["image_name"]
         for value in results.values()
@@ -366,6 +388,35 @@ def verify_observation(run, result, contract):
     assert case["graphId"] == f"igs-invoke-mug-{label}"
     assert case["queueItemId"] == result["queueItemId"]
     assert case["invocations"]["decode"]["outputImageName"] == result["imageName"]
+    if label == "vae":
+        assert len(evidence["cases"]) == 1
+        invocations = case["invocations"]
+        assert set(invocations) == {"encode", "decode"}
+        encode = invocations["encode"]
+        decode = invocations["decode"]
+        assert encode["sourceNodeId"] == "source" and decode["sourceNodeId"] == "output"
+        assert encode["outputLatentName"] == decode["inputLatentName"]
+        assert all(
+            invocation["fp32"] is False
+            and invocation["tiled"] is False
+            and "errorType" not in invocation
+            for invocation in invocations.values()
+        )
+        assert encode["colorCompensation"] == "None"
+        for field in ("sha256", "dtype", "shape"):
+            assert (
+                case["encode"]["scaledLatents"][field]
+                == case["decode"]["loadedScaledLatents"][field]
+            )
+        assert case["encode"]["scalingFactor"] == case["decode"]["scalingFactor"]
+        assert case["decode"]["latents"]["shape"] == [1, 4, 64, 64]
+        assert case["decode"]["tensor"]["shape"] == [1, 3, 512, 512]
+        for stage in ("noise", "prepare", "scheduler"):
+            assert case[stage] == {}, stage
+        for stage in ("addNoise", "scaleModelInput", "unet", "cfg", "steps"):
+            assert case[stage] == [], stage
+        return
+
     scheduler = case["scheduler"]
     assert scheduler["class"] == "EulerDiscreteScheduler"
     assert scheduler["timesteps"] == contract["expectedTimesteps"]
@@ -411,17 +462,36 @@ def shutdown(server, group, identity):
 
 
 def check_contract(contract, run):
-    assert run.parent == ARTIFACT_ROOT / "runs/invoke-ordinary-img-mug", run
+    vae_only = contract["schema"] == VAE_CONTROL_SCHEMA
+    profile = "invoke-ordinary-img-mug-vae" if vae_only else "invoke-ordinary-img-mug"
+    assert run.parent == ARTIFACT_ROOT / "runs" / profile, run
     assert re.fullmatch(r"[0-9]{8}-r[1-9][0-9]*", run.name)
     assert run.resolve(strict=True) == run and run.stat().st_uid == os.getuid()
     tmp = Path(contract["tempRoot"])
     root = Path(contract["appRoot"])
-    assert tmp.parent == ARTIFACT_ROOT and re.fullmatch(
-        r"t-igs-im[1-9][0-9]*", tmp.name
-    )
+    tmp_pattern = r"t-igs-iv[1-9][0-9]*" if vae_only else r"t-igs-im[1-9][0-9]*"
+    assert tmp.parent == ARTIFACT_ROOT and re.fullmatch(tmp_pattern, tmp.name)
     assert root == tmp / "app" and root.resolve(strict=True) == root and root.is_dir()
     assert tmp.stat().st_uid == root.stat().st_uid == os.getuid()
     assert contract["port"] == 9093
+    assert contract["invokeVersion"] == "6.14.3"
+    if vae_only:
+        assert contract["cases"] == [{"label": "vae"}]
+        assert (contract["width"], contract["height"]) == (512, 512)
+        assert contract["freshNativeRequestsMax"] == 1
+        assert contract["expectedTimesteps"] == []
+        assert not contract.keys() & {
+            "seed",
+            "steps",
+            "cfg",
+            "cfgRescale",
+            "scheduler",
+            "denoisingStart",
+            "denoisingEnd",
+            "negative",
+        }
+        return
+
     assert contract["cases"] == [
         {"label": label, "positive": POSITIVE.format(color=color)}
         for label, color in zip(LABELS, ("gray", "red", "blue"), strict=True)
@@ -436,7 +506,6 @@ def check_contract(contract, run):
         contract["freshNativeRequestsMax"],
     ) == ("euler", 0.4, 1, "", 3)
     assert contract["expectedTimesteps"] == list(range(595, 0, -33))
-    assert contract["invokeVersion"] == "6.14.3"
 
 
 def environment(contract):
@@ -562,7 +631,11 @@ def main(run):
                 )
                 report["results"].append(result)
                 verify_observation(run, result, contract)
-            assert report["enqueueAttempts"] == len(report["results"]) == 3
+            assert (
+                report["enqueueAttempts"]
+                == len(report["results"])
+                == contract["freshNativeRequestsMax"]
+            )
             report["status"] = "completed"
         except BaseException as error:
             report.update(

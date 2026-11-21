@@ -1379,6 +1379,28 @@ export const ORDINARY_IMG_MUG_CONTRACT = {
   },
 } as const
 
+export const ORDINARY_IMG_MUG_VAE_CONTRACT = {
+  ...ORDINARY_IMG_MUG_CONTRACT,
+  base: 'bcf4142af266b7fc5acb97140a287a09a8eb118f',
+  baseline: {
+    denoisingStrength: 0.6,
+    requests: {
+      neutral: {
+        sha256: '90618714adb618b902b6fcbb6c550563d0da1a75cf122ada55d19cc57b8c4550',
+        sizeBytes: 3571,
+      },
+    },
+    run: 'ordinary-img-mug-recolor/20261121-r1',
+  },
+  cases: [ORDINARY_IMG_MUG_CASES[0]],
+  executedSteps: 0,
+  nativeRequestCeiling: 1,
+  sampling: { ...ORDINARY_IMG_MUG_CONTRACT.sampling, denoisingStrength: 0 },
+  schema: 'ordinary-img-mug-vae-experiment-v1',
+  visualGate:
+    'Compare the zero-strength reconstruction against the exact source and the earlier neutral IMG outputs. Judge whether the patterned background and metallic surface appear before denoising.',
+} as const
+
 type OrdinaryImgRecolorUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
   case: (typeof ORDINARY_IMG_MUG_CASES | typeof ORDINARY_IMG_RECOLOR_CASES)[number]
   prepared: PreparedNormalGeneration
@@ -1394,6 +1416,9 @@ export function ordinaryImgRecolorContract(run: string) {
   }
   if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-mug-recolor')) {
     return ORDINARY_IMG_MUG_CONTRACT
+  }
+  if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-mug-vae')) {
+    return ORDINARY_IMG_MUG_VAE_CONTRACT
   }
 }
 

@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Current VAE-only mug diagnostic
+
+[Mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md)
+kept the plain background and gray ceramic in both installed runtimes.
+Studio's strength 0 path reported no denoising progress. Invoke's direct
+graph handed the exact scaled latent from its encoder to its decoder.
+
 ## Current installed Invoke IMG mug comparison
 
 [Installed Invoke mug IMG](./phase-4-invoke-ordinary-img-mug-research.md)
