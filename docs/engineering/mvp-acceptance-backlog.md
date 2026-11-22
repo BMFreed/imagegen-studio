@@ -310,6 +310,10 @@ entries record the state at their checkpoint.
    focus from Retry, moved from Clear finished to Back to models and
    the catalog search, and returned to the Home launcher after Escape.
    [Model Manager queue keyboard](./phase-5-model-install-queue-keyboard-research.md)
+   Private KDE Wayland repeated all five transitions through native KWin
+   keys in the secure-store unavailable state. The X11 missing-token
+   control also passed. Fresh KDE wallet setup remains a separate check.
+   [Native Install Queue keyboard](./phase-5-model-install-queue-wayland-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

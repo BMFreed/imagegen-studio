@@ -98,9 +98,10 @@ def start_private_session(command):
             or 'DISPLAY' in os.environ or 'WAYLAND_SOCKET' in os.environ):
         raise RuntimeError('The private Wayland launcher requires its isolated session.')
     keyboard = os.environ.get('IMAGEGEN_WAYLAND_KEYBOARD_HELPER')
+    scenario = os.environ.get('IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT')
     if keyboard is not None:
-        if os.environ.get('IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT') != 'home-recovery-keyboard':
-            raise RuntimeError('The private keyboard belongs to the Home Recovery test.')
+        if scenario not in ('home-recovery-keyboard', 'model-install-history'):
+            raise RuntimeError('The private keyboard belongs to a supported keyboard test.')
         binary = Path(keyboard)
         if (not re.fullmatch(r'/[A-Za-z0-9/_.-]+', keyboard)
                 or binary.resolve(strict=True) != binary or artifacts not in binary.parents
@@ -116,6 +117,15 @@ def start_private_session(command):
                           'Name=ImageGen Studio Qualification Keyboard\n'
                           f'Exec={binary}\n'
                           'X-KDE-Wayland-Interfaces=org_kde_kwin_fake_input\n')
+    if scenario == 'model-install-history':
+        mesa = Path('/usr/share/glvnd/egl_vendor.d/50_mesa.json')
+        if keyboard is None or not mesa.is_file():
+            raise RuntimeError('Install Queue requires a private keyboard and software Mesa EGL.')
+        os.environ.update(
+            __EGL_VENDOR_LIBRARY_FILENAMES=str(mesa),
+            LIBGL_ALWAYS_SOFTWARE='1',
+            GALLIUM_DRIVER='llvmpipe',
+        )
     address = subprocess.check_output(
         [
             '/usr/bin/gdbus', 'call', '--session', '--dest', 'org.a11y.Bus',

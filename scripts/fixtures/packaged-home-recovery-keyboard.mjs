@@ -136,7 +136,7 @@ reportFrame();
   }
 }
 
-async function connectNativeInput(state, record, root) {
+export async function connectNativeInput(state, record, root) {
   const pid = String(state.mainPid)
   assert.match(pid, /^[1-9]\d*$/)
   const input = process.env.IMAGEGEN_CHOOSER_KWIN_PID

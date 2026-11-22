@@ -60,14 +60,13 @@ const modelInstallRetry = offlineProject === 'model-install-retry'
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
+const nativeWaylandKeyboard =
+  kdeChooser && (offlineProject === 'home-recovery-keyboard' || modelInstallHistory)
 assert.ok(
-  !kdeChooser || portableChooser || projectExport || offlineProject === 'home-recovery-keyboard',
+  !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard,
   'The private Wayland launcher requires a supported packaged case.',
 )
-assert.equal(
-  process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined,
-  kdeChooser && offlineProject === 'home-recovery-keyboard',
-)
+assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
@@ -792,8 +791,10 @@ if (offlineProject === 'home-recovery-keyboard')
       'src/shared/projects/project-schema.ts',
     ].map((file) => path.join(repo, file)),
   )
-if (kdeChooser && offlineProject === 'home-recovery-keyboard')
+if (nativeWaylandKeyboard)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-wayland-keyboard.c'))
+if (modelInstallHistory)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-home-recovery-keyboard.mjs'))
 if (offlineProject === 'queue-startup-recovery')
   sourcePaths.push(
     ...[
@@ -1116,6 +1117,11 @@ async function launch(name, selectedAppImage = appImage) {
       '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
+      // The keyboard fixture exercises the unavailable secure-store state in private
+      // KWin. Electron's portal provider otherwise opens a fresh wallet dialog.
+      ...(kdeChooser && modelInstallHistory
+        ? ['--disable-gpu', '--disable-features=DbusSecretPortal', '--password-store=basic']
+        : []),
     ],
     { cwd, env: launchEnvironment, stdio: ['ignore', 'pipe', 'pipe'] },
   )

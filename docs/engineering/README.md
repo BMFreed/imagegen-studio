@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Model install queue keyboard on KDE Wayland
+
+[Native KWin input](./phase-5-model-install-queue-wayland-research.md)
+passed all five Install Queue focus transitions with secure storage
+unavailable. The X11 missing-token control also passed. Both runs preserved
+the installed embedding across a cold reopen.
+
 ## Anima red-apple negative preparation
 
 [Red-apple IMG preparation](./phase-4-anima-apple-negative-research.md)
