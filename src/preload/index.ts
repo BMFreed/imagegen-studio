@@ -1338,6 +1338,13 @@ const api: StudioApi = {
         (value): value is { availableVersions: { id: number; name: string }[] } =>
           isRecord(value) && Array.isArray(value.availableVersions),
       ),
+    clearFinishedInstallJobs: () =>
+      invokeModel(
+        ipcChannels.models.clearFinishedInstallJobs,
+        [],
+        (value): value is string[] =>
+          Array.isArray(value) && value.every((id) => typeof id === 'string'),
+      ),
     getCatalog: () => invokeModel(ipcChannels.models.getCatalog, [], isModelCatalog),
     getInstallJobs: () =>
       invokeModel(

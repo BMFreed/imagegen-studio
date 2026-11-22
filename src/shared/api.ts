@@ -163,6 +163,7 @@ export const ipcChannels = {
     cancelInstall: 'models:cancel-install',
     catalogChanged: 'models:catalog-changed',
     checkUpdates: 'models:check-updates',
+    clearFinishedInstallJobs: 'models:clear-finished-install-jobs',
     getCatalog: 'models:get-catalog',
     getInstallJobs: 'models:get-install-jobs',
     getStorageSummary: 'models:get-storage-summary',
@@ -1014,6 +1015,7 @@ export interface ModelApi {
   checkUpdates: (
     modelId: number,
   ) => Promise<ApiResult<{ availableVersions: { id: number; name: string }[] }>>
+  clearFinishedInstallJobs: () => Promise<ApiResult<string[]>>
   getCatalog: () => Promise<ApiResult<ModelCatalogItem[]>>
   getInstallJobs: () => Promise<ApiResult<ModelInstallJobView[]>>
   getStorageSummary: () => Promise<ApiResult<{ totalBytes: number }>>

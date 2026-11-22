@@ -1860,6 +1860,7 @@ if (!gotInstanceLock) {
       const modelMutationChannels = new Set<string>([
         ipcChannels.models.cancelInstall,
         ipcChannels.models.checkUpdates,
+        ipcChannels.models.clearFinishedInstallJobs,
         ipcChannels.models.removeLocalResource,
         ipcChannels.models.removeToken,
         ipcChannels.models.saveToken,
@@ -3451,6 +3452,12 @@ if (!gotInstanceLock) {
       )
       registerModelHandler(ipcChannels.models.getInstallJobs, noArgs, () =>
         installCoordinator.listJobs(),
+      )
+      registerModelHandler(
+        ipcChannels.models.clearFinishedInstallJobs,
+        noArgs,
+        () => installCoordinator.clearFinishedJobs(),
+        true,
       )
       registerModelHandler(ipcChannels.models.getTokenStatus, noArgs, () =>
         modelService.getTokenStatus(),

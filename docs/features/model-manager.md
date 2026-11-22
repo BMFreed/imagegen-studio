@@ -679,6 +679,11 @@ shows installation, repair or already-installed status and any required terms.
 Confirmation creates a separate installation attempt. Cancel leaves the
 original failed entry and the catalog intact.
 
+**Clear finished** removes settled completed, failed and canceled jobs
+from queue history across restarts. Active installations continue, and
+installed versions and their files remain available. Retry is available
+for a failed job while its queue entry exists.
+
 ```mermaid
 stateDiagram-v2
   [*] --> waiting

@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Clear finished model installations
+
+[Install Queue history](./phase-5-model-install-history-research.md) cleared
+three terminal entries from the packaged Model Manager. The installed
+embedding and empty history survived cold reopen. Main controls covered
+preserved active work and the final installer acknowledgments.
+
 ## Retry from the Model Manager queue
 
 [Install Queue Retry](./phase-5-model-install-queue-retry-research.md)

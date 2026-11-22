@@ -55,6 +55,7 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const modelInstallCrash = offlineProject === 'model-install-interruption'
+const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
@@ -183,6 +184,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'home-recovery-keyboard',
         'queue-startup-recovery',
         'model-install-startup',
+        'model-install-history',
         'model-install-interruption',
         'model-install-retry',
       ].includes(offlineProject) &&
@@ -484,6 +486,7 @@ const offlineProjectFixture = {
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
+  'model-install-history': 'packaged-model-install-history',
   'model-install-interruption': 'packaged-model-install-interruption',
   'model-install-retry': 'packaged-model-install-retry',
 }[offlineProject]
@@ -498,6 +501,8 @@ const offlineProjectScope = {
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
     'Stock AppImage reconciles persisted unfinished model installations and owned files once across two cold startups.',
+  'model-install-history':
+    'Stock AppImage clears the finished model install history and preserves the installed resource across a cold reopen.',
   'model-install-interruption':
     'Stock AppImage recovers one live CivitAI installation interrupted by a Main-only process fault.',
   'model-install-retry':
@@ -774,7 +779,12 @@ if (offlineProject === 'queue-startup-recovery')
       'src/renderer/components/GenerationQueueManager.vue',
     ].map((file) => path.join(repo, file)),
   )
-if (offlineProject === 'model-install-startup' || modelInstallCrash || modelInstallRetry)
+if (
+  offlineProject === 'model-install-startup' ||
+  modelInstallCrash ||
+  modelInstallHistory ||
+  modelInstallRetry
+)
   sourcePaths.push(
     ...[
       'scripts/fixtures/application-state-upgrade-fixture.mjs',
@@ -787,6 +797,17 @@ if (offlineProject === 'model-install-startup' || modelInstallCrash || modelInst
       'src/main/projects/project-index.ts',
       'src/renderer/components/ModelManager.vue',
       'src/renderer/App.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (modelInstallHistory)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-noobai-install-ui.mjs',
+      'src/main/db/migrations/0002_models.sql',
+      'src/preload/index.ts',
+      'src/renderer/components/model-manager-read-guard.ts',
+      'src/renderer/components/model-manager-job-snapshot.ts',
+      'src/shared/api.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (modelInstallRetry)
@@ -1592,6 +1613,9 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'model-install-startup') {
       return await fixture.runPackagedModelInstallStartup(args)
+    }
+    if (modelInstallHistory) {
+      return await fixture.runPackagedModelInstallHistory(args)
     }
     if (modelInstallCrash) {
       return await fixture.runPackagedModelInstallInterruption({

@@ -284,6 +284,11 @@ entries record the state at their checkpoint.
    sibling, and confirmation installed just the original file. Both
    jobs and the verified bytes survived a cold reopen.
    [Install Queue Retry](./phase-5-model-install-queue-retry-research.md)
+   **Clear finished** removed completed, failed and canceled history from
+   the AppImage queue. The ready embedding and empty queue survived a cold
+   reopen. Main controls also cleared old history during an active transfer
+   that later completed.
+   [Install Queue history](./phase-5-model-install-history-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

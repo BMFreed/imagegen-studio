@@ -62,6 +62,7 @@ export class ModelInstallCoordinator {
   private closing = false
   private readonly committingJobs = new Set<string>()
   private readonly controllers = new Map<string, AbortController>()
+  private readonly historyOperations = new Set<Promise<unknown>>()
   private readonly lastProgressAt = new Map<string, number>()
   private readonly listeners = new Set<(job: ModelInstallJobView) => void>()
   private readonly modelRoot: string
@@ -96,6 +97,11 @@ export class ModelInstallCoordinator {
     this.assertAcceptingWork()
     const operation = Promise.resolve().then(() => this.cancelInstallOne(jobId))
     return await this.trackOperation(this.cancellationOperations, operation)
+  }
+
+  async clearFinishedJobs(): Promise<string[]> {
+    this.assertAcceptingWork()
+    return await this.trackOperation(this.historyOperations, this.clearFinishedJobsOne())
   }
 
   getCloseImpact(): {
@@ -251,6 +257,19 @@ export class ModelInstallCoordinator {
       await this.emitJob(jobId)
     }
     return this.requireJob(jobId)
+  }
+
+  private async clearFinishedJobsOne(): Promise<string[]> {
+    const terminalJobs = await this.repository.listFinishedInstallJobIds()
+    const eligible = terminalJobs.filter(
+      (id) => !this.controllers.has(id) && !this.terminalUpdates.has(id),
+    )
+    if (eligible.length === 0) {
+      return []
+    }
+    // A cancel or failed preparation can still read its terminal result before returning.
+    await Promise.allSettled([...this.preparationOperations, ...this.cancellationOperations])
+    return this.repository.pruneFinishedInstallJobs(eligible)
   }
 
   private async downloadArtifact(
@@ -937,6 +956,7 @@ export class ModelInstallCoordinator {
     await Promise.allSettled([
       ...this.preparationOperations,
       ...this.cancellationOperations,
+      ...this.historyOperations,
       ...(this.storageMutationOperation ? [this.storageMutationOperation] : []),
     ])
     await this.pumpOperation?.catch(() => undefined)
@@ -982,6 +1002,7 @@ export class ModelInstallCoordinator {
       this.running ||
       this.preparationOperations.size ||
       this.cancellationOperations.size ||
+      this.historyOperations.size ||
       this.storageMutation ||
       this.controllers.size ||
       this.progressWrites.size

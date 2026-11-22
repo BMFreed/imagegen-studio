@@ -172,6 +172,7 @@ const resourcePaneSize = ref<number | string>('calc(100% - 400px)')
 const loading = ref(false)
 const busy = ref<
   | 'cancel'
+  | 'clear-history'
   | 'default'
   | 'install'
   | 'noise'
@@ -922,6 +923,30 @@ async function cancelJob(jobId: string) {
   busy.value = null
 }
 
+async function clearFinishedJobs() {
+  if (busy.value || jobs.value.length === activeJobs.value.length) {
+    return
+  }
+  busy.value = 'clear-history'
+  error.value = null
+  notice.value = null
+  const cleared = await runApi(
+    () => requireApi().clearFinishedInstallJobs(),
+    (ids) => {
+      readGuard.invalidate('jobs')
+      const removed = new Set(ids)
+      jobs.value = jobs.value.filter(({ id }) => !removed.has(id))
+      notice.value = ids.length
+        ? `Cleared ${ids.length} finished installation${ids.length === 1 ? '' : 's'}.`
+        : 'No finished installations were cleared.'
+    },
+  )
+  if (cleared) {
+    await loadJobs()
+  }
+  busy.value = null
+}
+
 async function setDefault(resourceId: string, versionId: string) {
   if (busy.value) {
     return
@@ -1436,7 +1461,18 @@ onBeforeUnmount(() => {
                   <div v-else-if="showJobs" class="job-list">
                     <div class="queue-heading">
                       <strong>Install Queue</strong>
-                      <NButton size="small" text @click="showCatalog">Back to models</NButton>
+                      <div class="queue-actions">
+                        <NButton
+                          :disabled="busy !== null || jobs.length === activeJobs.length"
+                          :loading="busy === 'clear-history'"
+                          size="small"
+                          text
+                          @click="clearFinishedJobs"
+                        >
+                          Clear finished
+                        </NButton>
+                        <NButton size="small" text @click="showCatalog">Back to models</NButton>
+                      </div>
                     </div>
                     <NEmpty v-if="jobs.length === 0" description="No install jobs yet" />
                     <article v-for="job of jobs" :key="job.id" class="job-row">
@@ -2457,6 +2493,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+.queue-heading,
+.queue-actions {
+  flex-wrap: wrap;
+}
+.queue-actions {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
 .job-row {

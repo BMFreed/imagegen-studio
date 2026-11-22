@@ -265,6 +265,7 @@ export interface StoredModelInstallJob {
 type DbExecutor = Kysely<DB> | Transaction<DB>
 
 const sha256Pattern = /^[0-9a-f]{64}$/i
+const finishedInstallJobStatuses = ['completed', 'failed', 'canceled'] as const
 
 const jobTransitions: Record<ModelInstallJobStatus, readonly ModelInstallJobStatus[]> = {
   canceled: [],
@@ -498,6 +499,15 @@ export class ModelRepository {
     return inspectModelResourceRemoval(this.db, resourceId, expected)
   }
 
+  async listFinishedInstallJobIds(): Promise<string[]> {
+    const jobs = await this.db
+      .selectFrom('model_install_job')
+      .select('id')
+      .where('status', 'in', finishedInstallJobStatuses)
+      .execute()
+    return jobs.map(({ id }) => id)
+  }
+
   async listInstalled(): Promise<InstalledModel[]> {
     return listInstalledModels(this.db)
   }
@@ -566,6 +576,26 @@ export class ModelRepository {
       sizeBytes: row.size_bytes,
       updatedAt: row.updated_at,
     }))
+  }
+
+  async pruneFinishedInstallJobs(jobIds: readonly string[]): Promise<string[]> {
+    if (jobIds.length === 0) {
+      return []
+    }
+    return this.db.transaction().execute(async (trx) => {
+      const pruned: string[] = []
+      const batchSize = 500
+      for (let offset = 0; offset < jobIds.length; offset += batchSize) {
+        const deleted = await trx
+          .deleteFrom('model_install_job')
+          .where('status', 'in', finishedInstallJobStatuses)
+          .where('id', 'in', jobIds.slice(offset, offset + batchSize))
+          .returning('id')
+          .execute()
+        pruned.push(...deleted.map(({ id }) => id))
+      }
+      return pruned
+    })
   }
 
   async publishVerifiedInstallation(
