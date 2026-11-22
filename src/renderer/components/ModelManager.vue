@@ -27,6 +27,7 @@ import {
   X as XIcon,
 } from '@vicons/tabler'
 import {
+  type InputInst,
   NAlert,
   NButton,
   NCard,
@@ -161,6 +162,7 @@ const storageBytes = ref<number | null>(null)
 const tokenStatus = ref<CivitaiTokenStatus | null>(null)
 const selectedId = ref<string | null>(null)
 const managerShell = ref<HTMLElement | null>(null)
+const catalogSearch = ref<InputInst | null>(null)
 const typeFilter = ref<TypeFilter>('all')
 const statusFilter = ref<StatusFilter>('all')
 const search = ref('')
@@ -353,6 +355,7 @@ const activeJobs = computed(() =>
   ),
 )
 const prominentJob = computed(() => activeJobs.value.at(0) ?? null)
+const hasFinishedJobs = computed(() => jobs.value.length > activeJobs.value.length)
 const showJobs = computed(() => queueView.value || statusFilter.value === 'downloading')
 
 function failureMessage(cause: unknown): string {
@@ -640,6 +643,7 @@ function selectStatus(value: StatusFilter) {
 function showCatalog() {
   queueView.value = false
   statusFilter.value = 'all'
+  catalogSearch.value?.focus()
 }
 
 async function loadCatalog() {
@@ -923,10 +927,11 @@ async function cancelJob(jobId: string) {
   busy.value = null
 }
 
-async function clearFinishedJobs() {
-  if (busy.value || jobs.value.length === activeJobs.value.length) {
+async function clearFinishedJobs(event: MouseEvent) {
+  if (busy.value || !hasFinishedJobs.value) {
     return
   }
+  const trigger = event.currentTarget
   busy.value = 'clear-history'
   error.value = null
   notice.value = null
@@ -943,6 +948,16 @@ async function clearFinishedJobs() {
   )
   if (cleared) {
     await loadJobs()
+  }
+  if (
+    show.value &&
+    showJobs.value &&
+    !hasFinishedJobs.value &&
+    document.activeElement === trigger
+  ) {
+    managerShell.value
+      ?.querySelector<HTMLButtonElement>('.queue-back-to-models')
+      ?.focus({ preventScroll: true })
   }
   busy.value = null
 }
@@ -1427,6 +1442,7 @@ onBeforeUnmount(() => {
                   <label class="toolbar-field toolbar-field--search">
                     <span>Name</span>
                     <NInput
+                      ref="catalogSearch"
                       v-model:value="search"
                       clearable
                       placeholder="Search installed models"
@@ -1463,7 +1479,9 @@ onBeforeUnmount(() => {
                       <strong>Install Queue</strong>
                       <div class="queue-actions">
                         <NButton
-                          :disabled="busy !== null || jobs.length === activeJobs.length"
+                          :disabled="
+                            busy !== 'clear-history' && (busy !== null || !hasFinishedJobs)
+                          "
                           :loading="busy === 'clear-history'"
                           size="small"
                           text
@@ -1471,7 +1489,14 @@ onBeforeUnmount(() => {
                         >
                           Clear finished
                         </NButton>
-                        <NButton size="small" text @click="showCatalog">Back to models</NButton>
+                        <NButton
+                          class="queue-back-to-models"
+                          size="small"
+                          text
+                          @click="showCatalog"
+                        >
+                          Back to models
+                        </NButton>
                       </div>
                     </div>
                     <NEmpty v-if="jobs.length === 0" description="No install jobs yet" />

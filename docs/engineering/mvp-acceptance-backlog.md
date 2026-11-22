@@ -289,6 +289,10 @@ entries record the state at their checkpoint.
    reopen. Main controls also cleared old history during an active transfer
    that later completed.
    [Install Queue history](./phase-5-model-install-history-research.md)
+   At 1380×900 on isolated X11, the AppImage returned visible keyboard
+   focus from Retry, moved from Clear finished to Back to models and
+   the catalog search, and returned to the Home launcher after Escape.
+   [Model Manager queue keyboard](./phase-5-model-install-queue-keyboard-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

@@ -684,6 +684,10 @@ from queue history across restarts. Active installations continue, and
 installed versions and their files remain available. Retry is available
 for a failed job while its queue entry exists.
 
+In keyboard navigation, clearing the last finished entries moves focus
+from Clear finished to Back to models. Back to models focuses the
+catalog search. Dismissing Retry returns focus to its queue row.
+
 ```mermaid
 stateDiagram-v2
   [*] --> waiting

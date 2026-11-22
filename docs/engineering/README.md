@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Keyboard focus after clearing model installs
+
+[Model Manager queue keyboard check](./phase-5-model-install-queue-keyboard-research.md)
+reproduced focus loss after Clear finished and Back to models. The
+corrected AppImage focused the return action and catalog search. The
+three dismissal transitions also passed.
+
 ## Clear finished model installations
 
 [Install Queue history](./phase-5-model-install-history-research.md) cleared

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import {
+  appendFile,
   chmod,
   copyFile,
   lstat,
@@ -193,6 +194,97 @@ async function assertEmptyQueue(manager) {
   await expect(manager.getByRole('button', { name: 'Clear finished', exact: true })).toBeDisabled()
 }
 
+async function tabTo(page, target, message) {
+  await expect(target).toBeVisible()
+  for (let count = 0; count < 64; count++) {
+    if (await target.evaluate((element) => element === document.activeElement)) {
+      return
+    }
+    await page.keyboard.press('Tab')
+  }
+  await expect(target, message).toBeFocused({ timeout: 1_000 })
+}
+
+async function keyboardQueue(page) {
+  const homeModels = page
+    .getByRole('region', { name: 'Home', exact: true })
+    .getByRole('complementary', { name: 'Workspace navigation', exact: true })
+    .getByRole('button', { name: 'Manage Models', exact: true })
+  await tabTo(page, homeModels, 'Tab reaches Manage Models from Home.')
+  await page.keyboard.press('Enter')
+  const manager = page.getByRole('dialog', { name: 'Model Manager', exact: true })
+  await expect(manager).toBeVisible()
+  const downloading = manager.getByRole('button', { name: /^Downloading\s*0$/ })
+  await tabTo(page, downloading, 'Tab reaches the install queue from Model Manager.')
+  await page.keyboard.press('Enter')
+  await expect(manager.getByText('Install Queue', { exact: true })).toBeVisible()
+  return { manager, homeModels }
+}
+
+function observeFocus(page, root) {
+  const observations = []
+  const trace = path.join(root, 'keyboard-focus.ndjson')
+  return {
+    observations,
+    async record(phase, target) {
+      const state = () =>
+        target.evaluate((expected) => {
+          const active = document.activeElement
+          return {
+            focused: active === expected,
+            focusVisible: Boolean(active?.matches(':focus-visible')),
+            expected: expected.getAttribute('aria-label') ?? expected.textContent?.trim(),
+            active: active && {
+              tag: active.tagName,
+              label: active.getAttribute('aria-label') ?? active.textContent?.trim().slice(0, 90),
+            },
+          }
+        })
+      // Keep the real result and finish the durable path even when the baseline loses focus.
+      await expect
+        .poll(
+          async () => {
+            const { focused, focusVisible } = await state()
+            return focused && focusVisible
+          },
+          { timeout: 2_000 },
+        )
+        .toBe(true)
+        .catch(() => undefined)
+      const observed = { phase, ...(await state()) }
+      observations.push(observed)
+      await appendFile(trace, `${JSON.stringify(observed)}\n`, { mode: 0o600 })
+      await page.screenshot({ path: path.join(root, `${phase}.png`), animations: 'disabled' })
+    },
+  }
+}
+
+async function keyboardRetryDismissals(page, manager, root, focus) {
+  const retry = manager
+    .locator('.job-row')
+    .filter({ hasText: 'Fixture failed installation' })
+    .getByRole('button', { name: 'Retry', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Retry model installation', exact: true })
+  for (const dismissal of ['escape', 'cancel']) {
+    await tabTo(page, retry, 'Tab reaches Retry on the failed install row.')
+    await page.keyboard.press('Enter')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText('CivitAI token required', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Fetch preview', exact: true })).toBeDisabled()
+    if (dismissal === 'escape') {
+      await page.screenshot({ path: path.join(root, 'retry-open.png'), animations: 'disabled' })
+      await page.keyboard.press('Escape')
+    } else {
+      const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
+      await tabTo(page, cancel, 'Tab reaches Cancel within the nested Retry dialog.')
+      await page.keyboard.press('Enter')
+    }
+    await expect(dialog).toBeHidden()
+    await expect(manager).toBeVisible()
+    await focus.record(`retry-after-${dismissal}`, retry)
+  }
+}
+
 export async function runPackagedModelInstallHistory({
   root,
   appData,
@@ -274,23 +366,38 @@ export async function runPackagedModelInstallHistory({
     jobs,
   )
   const catalog = await assertCatalog(first.page, installed)
-  const manager = await openQueue(first.page)
+  const { manager, homeModels } = await keyboardQueue(first.page)
+  const focus = observeFocus(first.page, root)
   const rows = manager.locator('.job-row')
   await expect(rows).toHaveCount(jobs.length)
   for (const job of jobs) {
     const row = rows.filter({ has: first.page.getByText(job.modelName, { exact: true }) })
     await expect(row.getByText(job.status, { exact: true })).toBeVisible()
   }
+  await keyboardRetryDismissals(first.page, manager, root, focus)
+  assert.deepEqual(
+    (await modelApi(first.page, 'getInstallJobs')).sort((a, b) => a.id.localeCompare(b.id)),
+    jobs,
+  )
+  const clear = manager.getByRole('button', { name: 'Clear finished', exact: true })
+  await tabTo(first.page, clear, 'Tab reaches Clear finished in the queue header.')
   await first.page.screenshot({ path: path.join(root, 'before-clear.png'), animations: 'disabled' })
-  await manager.getByRole('button', { name: 'Clear finished', exact: true }).click()
+  await first.page.keyboard.press('Enter')
   await expect(
     manager.getByText('Cleared 3 finished installations.', { exact: true }),
   ).toBeVisible()
   await assertEmptyQueue(manager)
   assert.deepEqual(await modelApi(first.page, 'getInstallJobs'), [])
   assert.deepEqual(await assertCatalog(first.page, installed), catalog)
-  await first.page.screenshot({ path: path.join(root, 'after-clear.png'), animations: 'disabled' })
-  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  const back = manager.getByRole('button', { name: 'Back to models', exact: true })
+  await focus.record('after-clear', back)
+  await tabTo(first.page, back, 'Tab reaches Back to models from the empty queue.')
+  await first.page.keyboard.press('Enter')
+  await expect(manager.getByText('Install Queue', { exact: true })).toBeHidden()
+  await focus.record('after-back-to-models', manager.getByPlaceholder('Search installed models'))
+  await first.page.keyboard.press('Escape')
+  await expect(manager).toBeHidden()
+  await focus.record('after-manager-escape', homeModels)
   await closeNormally(first)
   assert.ok(first.normalPhysicalExit && !first.forcedCleanup)
 
@@ -336,10 +443,26 @@ export async function runPackagedModelInstallHistory({
   assert.deepEqual(await identity(original.path), original)
   assert.deepEqual(await identity(neighborPath), neighbor)
   assert.deepEqual(await readdir(staging), ['notes.part'])
+  const lostFocus = focus.observations.filter(
+    ({ focused, focusVisible }) => !focused || !focusVisible,
+  )
+  assert.deepEqual(
+    lostFocus,
+    [],
+    'Keyboard focus must reach each expected control after transition.',
+  )
 
   return {
     saved: saved.store,
     restarted: restarted.store,
-    offlineProjectResult: { before: before.store, jobs, installed, managed, original, neighbor },
+    offlineProjectResult: {
+      before: before.store,
+      jobs,
+      installed,
+      managed,
+      original,
+      neighbor,
+      keyboardFocus: focus.observations,
+    },
   }
 }
