@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## CivitAI token presence in a fresh KDE wallet profile
+
+[Token presence](./phase-5-civitai-token-presence-research.md) passed
+the default-wallet KDE AppImage scenario with no saved token. A second
+run preserved the explicit `basic_text` refusal. Both completed the
+Install Queue keyboard flow and cold reopen.
+
 ## Model install queue keyboard on KDE Wayland
 
 [Native KWin input](./phase-5-model-install-queue-wayland-research.md)

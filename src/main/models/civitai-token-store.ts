@@ -71,35 +71,34 @@ export class CivitaiTokenStore {
   }
 
   async getAvailability(): Promise<TokenStorageAvailability> {
-    let backend: string
-    try {
-      backend = this.safeStorage.getSelectedStorageBackend()
-    } catch {
-      return { available: false, reason: 'backend-error' }
-    }
-
-    if (backend === 'basic_text') {
-      return { available: false, backend, reason: 'basic_text' }
-    }
-    if (!backend || backend === 'unknown') {
-      return { available: false, backend, reason: 'unknown' }
+    const selected = this.getSelectedBackendAvailability()
+    if (!selected.available) {
+      return selected
     }
 
     try {
       if (!(await this.safeStorage.isAsyncEncryptionAvailable())) {
-        return { available: false, backend, reason: 'encryption-unavailable' }
+        return { available: false, backend: selected.backend, reason: 'encryption-unavailable' }
       }
     } catch {
-      return { available: false, backend, reason: 'encryption-unavailable' }
+      return { available: false, backend: selected.backend, reason: 'encryption-unavailable' }
     }
-    return { available: true, backend }
+    return selected
   }
 
   getStatus(): Promise<CivitaiTokenStoreStatus> {
     return this.enqueue(async () => {
-      const availability = await this.getAvailability()
+      // The asynchronous provider can ask to open a wallet. A passive read only
+      // needs it when the token file may actually exist.
+      const absent = await this.isTokenFileAbsent()
+      const availability = absent
+        ? this.getSelectedBackendAvailability()
+        : await this.getAvailability()
       if (!availability.available) {
         return { backend: availability.backend, kind: 'unavailable', reason: availability.reason }
+      }
+      if (absent) {
+        return { backend: availability.backend, kind: 'missing' }
       }
       try {
         const token = await this.readTokenUnlocked()
@@ -170,6 +169,23 @@ export class CivitaiTokenStore {
     return result
   }
 
+  private getSelectedBackendAvailability(): TokenStorageAvailability {
+    let backend: string
+    try {
+      backend = this.safeStorage.getSelectedStorageBackend()
+    } catch {
+      return { available: false, reason: 'backend-error' }
+    }
+
+    if (backend === 'basic_text') {
+      return { available: false, backend, reason: 'basic_text' }
+    }
+    if (!backend || backend === 'unknown') {
+      return { available: false, backend, reason: 'unknown' }
+    }
+    return { available: true, backend }
+  }
+
   private async inspectDirectory(create: boolean): Promise<boolean> {
     if (create) {
       try {
@@ -197,6 +213,18 @@ export class CivitaiTokenStore {
         throw error
       }
       throw new CivitaiTokenStoreError('TOKEN_STORAGE_FAILED')
+    }
+  }
+
+  private async isTokenFileAbsent(): Promise<boolean> {
+    try {
+      if (!(await this.inspectDirectory(false))) {
+        return true
+      }
+      await lstat(this.filePath)
+      return false
+    } catch (error) {
+      return isMissing(error)
     }
   }
 

@@ -312,8 +312,13 @@ entries record the state at their checkpoint.
    [Model Manager queue keyboard](./phase-5-model-install-queue-keyboard-research.md)
    Private KDE Wayland repeated all five transitions through native KWin
    keys in the secure-store unavailable state. The X11 missing-token
-   control also passed. Fresh KDE wallet setup remains a separate check.
+   control also passed.
    [Native Install Queue keyboard](./phase-5-model-install-queue-wayland-research.md)
+   The follow-up AppImage completed the same flow with default KDE wallet
+   settings and returned missing without an existing token file. Its
+   `basic_text` control retained the unavailable diagnostic. First-time
+   secure Save and unlock with a stored token remain separate checks.
+   [Fresh KDE token status](./phase-5-civitai-token-presence-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

@@ -160,7 +160,7 @@ async function retainDatabase({ database, root, identity }, label) {
   return { store: { databaseFiles: [pin] }, snapshot }
 }
 
-async function assertCatalog(page, installed) {
+async function assertCatalog(page, installed, walletMode) {
   const catalog = await modelApi(page, 'getCatalog')
   assert.equal(catalog.length, 1)
   const [entry] = catalog
@@ -179,15 +179,32 @@ async function assertCatalog(page, installed) {
   assert.equal(version.fileStatus, 'ready')
   assert.deepEqual(await modelApi(page, 'getStorageSummary'), { totalBytes: embedding.sizeBytes })
   const token = await modelApi(page, 'getTokenStatus')
-  if (process.env.IMAGEGEN_CHOOSER_KWIN_PID) {
+  if (walletMode === 'wayland-basic-text') {
     assert.deepEqual(token, {
       detail: 'Secure token storage is unavailable: Linux selected the basic_text backend.',
       kind: 'unavailable',
+    })
+  } else if (walletMode === 'wayland-default-wallet') {
+    assert.deepEqual(token, {
+      detail: 'Connect a CivitAI API token to install models.',
+      kind: 'missing',
     })
   } else {
     assert.equal(token.kind, 'missing')
   }
   return catalog
+}
+
+async function assertMissingPrivateToken(appData) {
+  assert.equal(await realpath(appData), appData)
+  const secrets = path.join(appData, 'secrets')
+  try {
+    assert.ok((await lstat(secrets)).isDirectory())
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    return
+  }
+  await assert.rejects(lstat(path.join(secrets, 'civitai-token.bin')), { code: 'ENOENT' })
 }
 
 async function openQueue(page) {
@@ -302,6 +319,7 @@ export async function runPackagedModelInstallHistory({
   identity,
   packageBefore,
   ownedRunRoot,
+  kdeDefaultWallet,
 }) {
   const proof = JSON.parse(
     await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
@@ -319,6 +337,12 @@ export async function runPackagedModelInstallHistory({
   assert.equal(await realpath(root), root)
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   await assert.rejects(lstat(appData), { code: 'ENOENT' })
+  const nativeWayland = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
+  const walletMode = kdeDefaultWallet
+    ? 'wayland-default-wallet'
+    : nativeWayland
+      ? 'wayland-basic-text'
+      : 'x11'
   const original = await identity(
     path.join(
       ownedRunRoot,
@@ -359,10 +383,11 @@ export async function runPackagedModelInstallHistory({
       .sort((a, b) => a.id.localeCompare(b.id)),
     jobs.map(({ id, status }) => ({ id, status: status === 'completed' ? 'ready' : status })),
   )
+  await assertMissingPrivateToken(appData)
   await writeFile(
     path.join(root, 'prepared-install-history.json'),
     JSON.stringify(
-      { before: before.store, jobs, installed, managed, original, neighbor },
+      { before: before.store, jobs, installed, managed, original, neighbor, walletMode },
       null,
       2,
     ) + '\n',
@@ -374,10 +399,8 @@ export async function runPackagedModelInstallHistory({
     (await modelApi(first.page, 'getInstallJobs')).sort((a, b) => a.id.localeCompare(b.id)),
     jobs,
   )
-  const catalog = await assertCatalog(first.page, installed)
-  const nativeKeyboardTrace = process.env.IMAGEGEN_CHOOSER_KWIN_PID
-    ? path.join(root, 'native-keyboard.ndjson')
-    : null
+  const catalog = await assertCatalog(first.page, installed, walletMode)
+  const nativeKeyboardTrace = nativeWayland ? path.join(root, 'native-keyboard.ndjson') : null
   let press = (key) => first.page.keyboard.press(key)
   if (nativeKeyboardTrace) {
     await writeFile(nativeKeyboardTrace, '', { flag: 'wx', mode: 0o600 })
@@ -411,7 +434,7 @@ export async function runPackagedModelInstallHistory({
   ).toBeVisible()
   await assertEmptyQueue(manager)
   assert.deepEqual(await modelApi(first.page, 'getInstallJobs'), [])
-  assert.deepEqual(await assertCatalog(first.page, installed), catalog)
+  assert.deepEqual(await assertCatalog(first.page, installed, walletMode), catalog)
   const back = manager.getByRole('button', { name: 'Back to models', exact: true })
   await focus.record('after-clear', back)
   await tabTo(press, back, 'Tab reaches Back to models from the empty queue.')
@@ -423,6 +446,7 @@ export async function runPackagedModelInstallHistory({
   await focus.record('after-manager-escape', homeModels)
   await closeNormally(first)
   assert.ok(first.normalPhysicalExit && !first.forcedCleanup)
+  await assertMissingPrivateToken(appData)
 
   const saved = await retainDatabase(storeArgs, 'after-clear')
   const expected = structuredClone(before.snapshot)
@@ -433,7 +457,7 @@ export async function runPackagedModelInstallHistory({
 
   const second = await launch('model-install-history-restarted')
   assert.deepEqual(await modelApi(second.page, 'getInstallJobs'), [])
-  assert.deepEqual(await assertCatalog(second.page, installed), catalog)
+  assert.deepEqual(await assertCatalog(second.page, installed, walletMode), catalog)
   const reopened = await openQueue(second.page)
   await assertEmptyQueue(reopened)
   assert.deepEqual(await modelApi(second.page, 'clearFinishedInstallJobs'), [])
@@ -455,6 +479,7 @@ export async function runPackagedModelInstallHistory({
   await reopened.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
   await closeNormally(second)
   assert.ok(second.normalPhysicalExit && !second.forcedCleanup)
+  await assertMissingPrivateToken(appData)
 
   const restarted = await retainDatabase(storeArgs, 'after-repeat')
   assert.deepEqual(restarted.snapshot, saved.snapshot)
@@ -485,6 +510,8 @@ export async function runPackagedModelInstallHistory({
       managed,
       original,
       neighbor,
+      tokenFileAbsent: true,
+      walletMode,
       keyboardFocus: focus.observations,
       ...(nativeKeyboardTrace ? { nativeKeyboardTrace } : {}),
     },

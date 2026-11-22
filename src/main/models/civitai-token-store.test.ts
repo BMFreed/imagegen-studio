@@ -74,6 +74,22 @@ async function withDataRoot(run: (root: string) => Promise<void>): Promise<void>
 
 const tokenPath = (root: string): string => path.join(root, 'secrets', 'civitai-token.bin')
 
+function holdAsyncAvailability(safeStorage: TestSafeStorage) {
+  let notify!: () => void
+  const requested = new Promise<'async availability requested'>((resolve) => {
+    notify = () => resolve('async availability requested')
+  })
+  let release!: (available: boolean) => void
+  const held = new Promise<boolean>((resolve) => {
+    release = resolve
+  })
+  safeStorage.isAsyncEncryptionAvailable = () => {
+    notify()
+    return held
+  }
+  return { release, requested }
+}
+
 test('basic_text and unknown backends refuse token use without creating a secret file', async () => {
   for (const backend of ['basic_text', 'unknown']) {
     await withDataRoot(async (root) => {
@@ -115,6 +131,82 @@ test('an unavailable async key store refuses persistence even with a named backe
     })
     assert.equal(safeStorage.encryptCalls, 0)
     await assert.rejects(stat(tokenPath(root)), { code: 'ENOENT' })
+  })
+})
+
+for (const directory of ['missing', 'existing'] as const) {
+  const state =
+    directory === 'missing' ? 'without a secrets directory' : 'with an empty secrets directory'
+  test(`token status returns missing ${state} without probing the wallet`, async () => {
+    await withDataRoot(async (root) => {
+      const safeStorage = new TestSafeStorage()
+      const wallet = holdAsyncAvailability(safeStorage)
+      if (directory === 'existing') {
+        await mkdir(path.dirname(tokenPath(root)), { mode: 0o700 })
+      }
+      const store = new CivitaiTokenStore(safeStorage, root)
+      const status = store.getStatus()
+      try {
+        assert.deepEqual(await Promise.race([status, wallet.requested]), {
+          backend: 'gnome_libsecret',
+          kind: 'missing',
+        })
+      } finally {
+        wallet.release(false)
+        await status
+      }
+    })
+  })
+}
+
+test('a backend lookup failure remains unavailable without probing the wallet', async () => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    safeStorage.getSelectedStorageBackend = () => {
+      throw new Error('simulated backend lookup failure')
+    }
+    const wallet = holdAsyncAvailability(safeStorage)
+    const status = new CivitaiTokenStore(safeStorage, root).getStatus()
+    try {
+      assert.deepEqual(await Promise.race([status, wallet.requested]), {
+        backend: undefined,
+        kind: 'unavailable',
+        reason: 'backend-error',
+      })
+    } finally {
+      wallet.release(false)
+      await status
+    }
+  })
+})
+
+test('token status waits for the wallet when ciphertext is present', async () => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    const store = new CivitaiTokenStore(safeStorage, root)
+    await store.saveToken('present-token-test-fixture')
+    const ciphertext = await readFile(tokenPath(root))
+    const wallet = holdAsyncAvailability(safeStorage)
+    let settled = false
+    const status = store.getStatus().then((result) => {
+      settled = true
+      return result
+    })
+    try {
+      assert.equal(await Promise.race([status, wallet.requested]), 'async availability requested')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(settled, false)
+    } finally {
+      wallet.release(false)
+      await status
+    }
+    assert.deepEqual(await status, {
+      backend: 'gnome_libsecret',
+      kind: 'unavailable',
+      reason: 'encryption-unavailable',
+    })
+    assert.equal(safeStorage.decryptCalls, 0)
+    assert.deepEqual(await readFile(tokenPath(root)), ciphertext)
   })
 })
 

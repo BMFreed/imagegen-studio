@@ -57,6 +57,14 @@ const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const modelInstallCrash = offlineProject === 'model-install-interruption'
 const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
+const defaultWalletMode = process.env.IMAGEGEN_LINUX_PACKAGE_KDE_DEFAULT_WALLET
+const kdeDefaultWallet = defaultWalletMode === '1'
+if (defaultWalletMode !== undefined) {
+  assert.ok(
+    kdeDefaultWallet && kdeChooser && modelInstallHistory,
+    'Use IMAGEGEN_LINUX_PACKAGE_KDE_DEFAULT_WALLET=1 with the private KDE Install Queue case.',
+  )
+}
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
@@ -1117,10 +1125,15 @@ async function launch(name, selectedAppImage = appImage) {
       '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
-      // The keyboard fixture exercises the unavailable secure-store state in private
-      // KWin. Electron's portal provider otherwise opens a fresh wallet dialog.
+      // Exercise unavailable secure storage by default. The opt-in uses the stock
+      // credential providers with the same private KWin and software graphics.
       ...(kdeChooser && modelInstallHistory
-        ? ['--disable-gpu', '--disable-features=DbusSecretPortal', '--password-store=basic']
+        ? [
+            '--disable-gpu',
+            ...(kdeDefaultWallet
+              ? []
+              : ['--disable-features=DbusSecretPortal', '--password-store=basic']),
+          ]
         : []),
     ],
     { cwd, env: launchEnvironment, stdio: ['ignore', 'pipe', 'pipe'] },
@@ -1651,7 +1664,7 @@ async function runOwnedProjectProfile() {
       return await fixture.runPackagedModelInstallStartup(args)
     }
     if (modelInstallHistory) {
-      return await fixture.runPackagedModelInstallHistory(args)
+      return await fixture.runPackagedModelInstallHistory({ ...args, kdeDefaultWallet })
     }
     if (modelInstallCrash) {
       return await fixture.runPackagedModelInstallInterruption({
