@@ -250,6 +250,11 @@ entries record the state at their checkpoint.
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project
    and file. [Packaged Trash](./phase-5-packaged-project-and-preset-research.md#home-trash)
+   In a separate startup case, the AppImage finished two committed
+   deletions. A different valid `.igs` at the old path stayed on disk
+   with a pending diagnostic and Restore refused. The ordinary Trash
+   entry and the active neighbor survived both cold starts.
+   [Packaged Trash startup recovery](./phase-5-packaged-project-trash-recovery-research.md)
    The stock AppImage exported visible content and the primary Generation BBox
    through the installed CPU worker and KDE SaveFile. Cancel left no file, and
    the repeated content PNG matched byte-for-byte after restart.

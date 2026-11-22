@@ -180,6 +180,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
     offlineProject === undefined ||
       ([
         'trash',
+        'trash-recovery',
         'result-preset',
         'home-recovery-keyboard',
         'queue-startup-recovery',
@@ -482,6 +483,7 @@ const componentHarness = componentAction
   : null
 const offlineProjectFixture = {
   trash: 'packaged-project-trash',
+  'trash-recovery': 'packaged-project-trash-recovery',
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
@@ -493,6 +495,8 @@ const offlineProjectFixture = {
 const offlineProjectScope = {
   trash:
     'Actual stock AppImage preserves closed Project Trash across restart and restores or permanently deletes the exact owned file.',
+  'trash-recovery':
+    'Stock AppImage finishes positively committed Project deletions and preserves a replacement and ordinary Trash across two cold starts.',
   'result-preset':
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
   'home-recovery-keyboard':
@@ -753,6 +757,29 @@ if (offlineProjectFixture)
     path.join(repo, 'scripts/fixtures', `${offlineProjectFixture}.mjs`),
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (offlineProject === 'trash-recovery')
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+      'src/main/db/database.ts',
+      'src/main/db/migrations/0027_project_file_lifecycle.sql',
+      'src/main/db/migrations/0028_project_relocation.sql',
+      'src/main/index.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-identity.ts',
+      'src/main/projects/project-index.ts',
+      'src/main/projects/project-path-lock.ts',
+      'src/main/projects/project-relocation-store.ts',
+      'src/main/projects/project-service.ts',
+      'src/main/projects/project-session.ts',
+      'src/main/projects/project-trash-store.ts',
+      'src/preload/index.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/HomeView.vue',
+      'src/renderer/components/ProjectTrashModal.vue',
+      'src/shared/api.ts',
+    ].map((file) => path.join(repo, file)),
   )
 if (offlineProject === 'home-recovery-keyboard')
   sourcePaths.push(
@@ -1604,6 +1631,9 @@ async function runOwnedProjectProfile() {
     if (offlineProject === 'trash') {
       const { saved, restarted, packagedProjectTrash } = await fixture.runPackagedProjectTrash(args)
       return { saved, restarted, offlineProjectResult: packagedProjectTrash }
+    }
+    if (offlineProject === 'trash-recovery') {
+      return await fixture.runPackagedProjectTrashRecovery(args)
     }
     if (offlineProject === 'home-recovery-keyboard') {
       return await fixture.runPackagedHomeRecoveryKeyboard(args)

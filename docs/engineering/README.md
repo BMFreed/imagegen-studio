@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Startup recovery of committed Project deletion
+
+[Packaged Trash recovery](./phase-5-packaged-project-trash-recovery-research.md)
+finished two committed deletions. A different valid `.igs` at the old
+path stayed on disk with a pending diagnostic, and the ordinary Trash
+entry and active neighbor survived a second cold start.
+
 ## Keyboard focus after clearing model installs
 
 [Model Manager queue keyboard check](./phase-5-model-install-queue-keyboard-research.md)
