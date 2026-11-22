@@ -175,9 +175,13 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   )
   assert.ok(
     offlineProject === undefined ||
-      (['trash', 'result-preset', 'home-recovery-keyboard', 'queue-startup-recovery'].includes(
-        offlineProject,
-      ) &&
+      ([
+        'trash',
+        'result-preset',
+        'home-recovery-keyboard',
+        'queue-startup-recovery',
+        'model-install-startup',
+      ].includes(offlineProject) &&
         portableChooser === undefined &&
         componentAction === undefined),
   )
@@ -474,6 +478,7 @@ const offlineProjectFixture = {
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
+  'model-install-startup': 'packaged-model-install-startup',
 }[offlineProject]
 const offlineProjectScope = {
   trash:
@@ -484,6 +489,8 @@ const offlineProjectScope = {
     'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
+  'model-install-startup':
+    'Stock AppImage reconciles persisted unfinished model installations and owned files once across two cold startups.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -754,6 +761,21 @@ if (offlineProject === 'queue-startup-recovery')
       'src/main/projects/igs-package.ts',
       'src/main/projects/project-identity.ts',
       'src/renderer/components/GenerationQueueManager.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (offlineProject === 'model-install-startup')
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+      'src/main/db/database.ts',
+      'src/main/index.ts',
+      'src/main/models/model-downloader.ts',
+      'src/main/models/model-install-coordinator.ts',
+      'src/main/models/model-repository.ts',
+      'src/main/models/model-service.ts',
+      'src/main/projects/project-index.ts',
+      'src/renderer/components/ModelManager.vue',
+      'src/renderer/App.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (componentRemove === 'queue')
@@ -1478,6 +1500,9 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)
+    }
+    if (offlineProject === 'model-install-startup') {
+      return await fixture.runPackagedModelInstallStartup(args)
     }
     const { assertOfflineProjectDesktop } =
       await import('./fixtures/packaged-noobai-import-chooser.mjs')

@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Cold startup after interrupted model installations
+
+[Packaged Model Manager startup](./phase-5-packaged-model-install-startup-research.md)
+settled four prepared unfinished jobs and removed their abandoned
+files. The verified embedding and terminal controls survived two
+normal closes. The two closed post-startup databases matched byte
+for byte.
+
 ## Keyboard Recovery on native KDE Wayland
 
 [Packaged Home and Recovery keyboard check](./phase-5-packaged-home-recovery-wayland-keyboard-research.md)

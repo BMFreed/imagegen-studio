@@ -263,10 +263,12 @@ entries record the state at their checkpoint.
    missing. Confirmed Repair restored the exact digest and local IDs, and
    the accepted Project reopened byte-identical without a provider token.
    [Packaged managed embedding Repair](./phase-5-packaged-noobai-component-repair-research.md)
-   Cold startup with an interrupted Model Manager install still needs a
-   stock AppImage check. Instrumented Electron covers the interruption
-   result through the existing install repository and shutdown owners.
-   [Model install shutdown](./phase-5-model-install-shutdown-research.md)
+   The stock AppImage settled a prepared matrix of four interrupted
+   Model Manager jobs. It removed staged and unreferenced files,
+   preserved the exact installed model and terminal jobs, and left the
+   same closed database bytes after the second startup.
+   [Packaged model install startup](./phase-5-packaged-model-install-startup-research.md),
+   [model install shutdown](./phase-5-model-install-shutdown-research.md).
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
