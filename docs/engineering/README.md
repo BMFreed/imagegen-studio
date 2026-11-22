@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Retry from the Model Manager queue
+
+[Install Queue Retry](./phase-5-model-install-queue-retry-research.md)
+opens a review of the failed job's exact file. The fresh AppImage
+installed it after confirmation, rejected the same-digest sibling,
+and preserved both queue entries across a cold reopen.
+
 ## Exact model reinstallation after an interrupted transfer
 
 [Packaged CivitAI reinstallation](./phase-5-packaged-model-install-retry-research.md)

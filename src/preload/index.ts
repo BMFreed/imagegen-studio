@@ -1375,6 +1375,13 @@ const api: StudioApi = {
     openSourceLink: (url) => invokeModel(ipcChannels.models.openSourceLink, [url], isVoid),
     previewImport: (url) =>
       invokeModel(ipcChannels.models.previewImport, [url], isModelImportPreview),
+    previewInstallRetry: (jobId) =>
+      invokeModel(
+        ipcChannels.models.previewInstallRetry,
+        [jobId],
+        (value): value is Extract<ModelImportPreview, { kind: 'select-file' }> =>
+          isModelImportPreview(value) && value.kind === 'select-file',
+      ),
     removeLocalResource: (token, cancelPending = false) =>
       isModelRemovalId(token) && typeof cancelPending === 'boolean'
         ? invokeModel(ipcChannels.models.removeLocalResource, [token, cancelPending], isVoid)

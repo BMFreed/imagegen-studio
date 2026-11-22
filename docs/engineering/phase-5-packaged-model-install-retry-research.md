@@ -89,3 +89,6 @@ Typecheck, app build and 238 focused model, repository, downloader,
 CivitAI, maintenance and shutdown tests passed. This evidence covers
 one CivitAI VAE and the explicit Add from CivitAI URL flow. Dedicated
 queue Retry, cross-provider and shipping matrix qualification remain open.
+
+The [Install Queue follow-up](./phase-5-model-install-queue-retry-research.md)
+covers the dedicated Retry action.

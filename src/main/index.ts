@@ -3508,6 +3508,12 @@ if (!gotInstanceLock) {
         modelService.previewImport(url as string),
       )
       registerModelHandler(
+        ipcChannels.models.previewInstallRetry,
+        oneString,
+        (jobId) => modelService.previewInstallRetry(jobId as string),
+        true,
+      )
+      registerModelHandler(
         ipcChannels.models.startInstall,
         (args) =>
           args.length === 3 &&

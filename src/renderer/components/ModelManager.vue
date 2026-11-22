@@ -179,6 +179,7 @@ const busy = ref<
   | 'preview'
   | 'remove-review'
   | 'remove'
+  | 'retry-preview'
   | 'token'
   | 'updates'
   | null
@@ -187,6 +188,7 @@ const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const importError = ref<string | null>(null)
 const importOpen = ref(false)
+const retryJobId = ref<string | null>(null)
 const tokenPopoverOpen = ref(false)
 const tokenInput = ref('')
 const urlInput = ref('')
@@ -770,12 +772,48 @@ function openImport(url = '') {
     return
   }
   urlInput.value = url
+  retryJobId.value = null
   preview.value = null
   selectedFileId.value = null
   preferredImportFileId.value = null
   acceptedAnimaLicense.value = false
   importError.value = null
   importOpen.value = true
+}
+
+async function openInstallRetry(jobId: string) {
+  if (busy.value || importOpen.value || removalReview.value) {
+    return
+  }
+  openImport()
+  retryJobId.value = jobId
+  if (isConnected.value) {
+    await previewRetry(jobId)
+  }
+}
+
+async function previewRetry(jobId: string) {
+  if (busy.value || !isConnected.value || !importOpen.value || retryJobId.value !== jobId) {
+    return
+  }
+  const isCurrent = readGuard.begin('retry-preview')
+  busy.value = 'retry-preview'
+  importError.value = null
+  preview.value = null
+  selectedFileId.value = null
+  acceptedAnimaLicense.value = false
+  await runApi(
+    () => requireApi().previewInstallRetry(jobId),
+    (nextPreview) => {
+      preview.value = nextPreview
+      selectedFileId.value = nextPreview.files[0]?.fileId ?? null
+    },
+    'import',
+    isCurrent,
+  )
+  if (isCurrent()) {
+    busy.value = null
+  }
 }
 
 async function previewUrl(url = urlInput.value) {
@@ -1060,6 +1098,20 @@ watch(show, (visible) => {
     tokenInput.value = ''
   }
 })
+
+watch(
+  importOpen,
+  (open) => {
+    if (!open && retryJobId.value !== null) {
+      readGuard.invalidate('retry-preview')
+      retryJobId.value = null
+      if (busy.value === 'retry-preview') {
+        busy.value = null
+      }
+    }
+  },
+  { flush: 'sync' },
+)
 
 watch(
   urlInput,
@@ -1415,6 +1467,7 @@ onBeforeUnmount(() => {
                       <NAlert v-if="job.error" type="error">{{ job.error.message }}</NAlert>
                       <NButton
                         v-if="jobCancelable(job)"
+                        key="cancel-install"
                         :disabled="busy !== null"
                         size="small"
                         tertiary
@@ -1422,6 +1475,16 @@ onBeforeUnmount(() => {
                         @click="cancelJob(job.id)"
                       >
                         Cancel
+                      </NButton>
+                      <NButton
+                        v-else-if="job.status === 'failed'"
+                        key="retry-install"
+                        :disabled="busy !== null || importOpen || Boolean(removalReview)"
+                        size="small"
+                        tertiary
+                        @click="openInstallRetry(job.id)"
+                      >
+                        Retry
                       </NButton>
                     </article>
                   </div>
@@ -1851,7 +1914,9 @@ onBeforeUnmount(() => {
     >
       <template v-slot:header>
         <div class="dialog-title">
-          <h2 id="model-import-title">Add from CivitAI URL</h2>
+          <h2 id="model-import-title">
+            {{ retryJobId === null ? 'Add from CivitAI URL' : 'Retry model installation' }}
+          </h2>
           <p>Review the exact version and file before downloading.</p>
         </div>
       </template>
@@ -1895,7 +1960,7 @@ onBeforeUnmount(() => {
             </NButton>
           </form>
         </section>
-        <label class="import-url-label">
+        <label v-if="retryJobId === null" class="import-url-label">
           Model URL
           <NInput
             v-model:value="urlInput"
@@ -1905,10 +1970,10 @@ onBeforeUnmount(() => {
           />
         </label>
         <NButton
-          :disabled="!isConnected || !urlInput.trim() || busy !== null"
-          :loading="busy === 'preview'"
+          :disabled="!isConnected || (retryJobId === null && !urlInput.trim()) || busy !== null"
+          :loading="busy === 'preview' || busy === 'retry-preview'"
           secondary
-          @click="previewUrl()"
+          @click="retryJobId === null ? previewUrl() : previewRetry(retryJobId)"
         >
           Fetch preview
         </NButton>
@@ -1946,7 +2011,11 @@ onBeforeUnmount(() => {
           <p v-if="filePreview.description" class="import-description">
             {{ filePreview.description }}
           </p>
-          <label class="file-choice">
+          <div v-if="retryJobId !== null && selectedFile" class="file-choice">
+            <span>File</span>
+            <strong>{{ importFileLabel(selectedFile) }}</strong>
+          </div>
+          <label v-else class="file-choice">
             File
             <NSelect
               v-model:value="selectedFileId"

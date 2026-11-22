@@ -66,7 +66,7 @@ export class ModelInstallCoordinator {
   private readonly listeners = new Set<(job: ModelInstallJobView) => void>()
   private readonly modelRoot: string
   private readonly preparationOperations = new Set<Promise<unknown>>()
-  private preparingInstalls = 0
+  private readonly preparingSources = new Set<string>()
   private readonly progressOwners = new Map<string, object>()
   private readonly progressWrites = new Map<string, Promise<void>>()
   private pumpFailure: unknown = null
@@ -107,7 +107,7 @@ export class ModelInstallCoordinator {
     return {
       activeJobCount: new Set([...this.controllers.keys(), ...this.terminalUpdates.keys()]).size,
       committingJobCount: this.committingJobs.size,
-      preparingInstallCount: this.preparingInstalls,
+      preparingInstallCount: this.preparingSources.size,
       storageMutationActive: this.storageMutation,
     }
   }
@@ -168,11 +168,26 @@ export class ModelInstallCoordinator {
         'Resource removal is in progress. Try again after it finishes.',
       )
     }
-    this.preparingInstalls += 1
+    if (!Number.isSafeInteger(fileId) || fileId <= 0) {
+      throw new ModelServiceError('MODEL_INVALID_FILE', 'Select a valid model file.')
+    }
+    const { preview } = this.modelService.getPreviewSession(previewId)
+    const file = preview.files.find((choice) => choice.fileId === fileId)
+    if (!file) {
+      throw new ModelServiceError('MODEL_INVALID_FILE', 'The selected file is not in the preview.')
+    }
+    const source = `${preview.modelId}:${preview.versionId}:${fileId}`
+    if (this.preparingSources.has(source)) {
+      throw new ModelServiceError(
+        'MODEL_INSTALL_IN_PROGRESS',
+        'This file is already in the install queue.',
+      )
+    }
+    this.preparingSources.add(source)
     const operation = Promise.resolve()
-      .then(() => this.startInstallPrepared(previewId, fileId, acceptedAnimaLicense))
+      .then(() => this.startInstallPrepared(previewId, preview, file, acceptedAnimaLicense))
       .finally(() => {
-        this.preparingInstalls -= 1
+        this.preparingSources.delete(source)
       })
     return await this.trackOperation(this.preparationOperations, operation)
   }
@@ -182,7 +197,7 @@ export class ModelInstallCoordinator {
     this.assertAcceptingWork()
     if (
       this.storageMutation ||
-      this.preparingInstalls ||
+      this.preparingSources.size ||
       this.running ||
       this.controllers.size ||
       this.queued.length
@@ -980,24 +995,34 @@ export class ModelInstallCoordinator {
 
   private async startInstallPrepared(
     previewId: string,
-    fileId: number,
+    preview: FilePreview,
+    file: CivitaiFileChoice,
     acceptedAnimaLicense: boolean,
   ): Promise<ModelInstallJobView> {
     this.assertAcceptingWork()
-    if (!Number.isSafeInteger(fileId) || fileId <= 0) {
-      throw new ModelServiceError('MODEL_INVALID_FILE', 'Select a valid model file.')
-    }
-    const { preview } = this.modelService.getPreviewSession(previewId)
-    const file = preview.files.find((choice) => choice.fileId === fileId)
-    if (!file) {
-      throw new ModelServiceError('MODEL_INVALID_FILE', 'The selected file is not in the preview.')
-    }
+    const { fileId } = file
     const needsAnimaCompanions =
       preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
     const isPinnedBase = needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
     const token = await this.modelService.requireToken()
     this.assertAcceptingWork()
     await this.modelService.civitai.validateToken(token)
+    // Check live attempts before the catalog so a concurrent publish cannot leave us with
+    // a stale catalog result and a completed job. The source claim prevents new admissions.
+    const inProgress = (await this.repository.listInstallJobs()).some(
+      (job) =>
+        ['downloading', 'verifying', 'waiting'].includes(job.status) &&
+        job.civitaiModelId === preview.modelId &&
+        job.civitaiVersionId === preview.versionId &&
+        job.civitaiFileId === fileId,
+    )
+    if (inProgress) {
+      throw new ModelServiceError(
+        'MODEL_INSTALL_IN_PROGRESS',
+        'This file is already in the install queue.',
+      )
+    }
+
     const duplicate = await this.repository.findExactFileDuplicate({
       civitai: { fileId, modelId: preview.modelId, versionId: preview.versionId },
     })
@@ -1035,20 +1060,6 @@ export class ModelInstallCoordinator {
         'This exact model file is already installed.',
       )
     }
-    const inProgress = (await this.repository.listInstallJobs()).some(
-      (job) =>
-        ['downloading', 'verifying', 'waiting'].includes(job.status) &&
-        job.civitaiModelId === preview.modelId &&
-        job.civitaiVersionId === preview.versionId &&
-        job.civitaiFileId === fileId,
-    )
-    if (inProgress) {
-      throw new ModelServiceError(
-        'MODEL_INSTALL_IN_PROGRESS',
-        'This file is already in the install queue.',
-      )
-    }
-
     const companions = needsAnimaCompanions ? [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE] : []
     this.assertAcceptingWork()
     const jobId = await this.repository.createInstallJob({

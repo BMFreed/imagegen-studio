@@ -1,4 +1,4 @@
-/** Explicit live installation from the closed profile recovered after the R4 Main-death cut. */
+/** Live Install Queue Retry from the closed profile recovered after the R4 Main-death cut. */
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
@@ -17,7 +17,6 @@ import {
   inspectSqlite,
   modelApi,
   openManager,
-  reviewLiveVaeInstall,
   waitForTerminal,
 } from './packaged-noobai-install-ui.mjs'
 
@@ -35,6 +34,15 @@ const model = {
   fileId: 1494323,
   sizeBytes: 334_640_988,
   sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+  resourceType: 'vae',
+  sourceBaseModel: 'NoobAI',
+  author: 'Euge_',
+  sizeLabel: '319.1 MB',
+  fileName: 'sdxlVaeAnimeTest_beta120000_1494323.safetensors',
+  sameBytesPrimary: {
+    fileId: 1494307,
+    fileName: 'sdxlVaeAnimeTest_beta120000_1494307.safetensors',
+  },
 }
 const oldJob = {
   id: oldJobId,
@@ -188,6 +196,90 @@ async function showQueue(page, manager, completed) {
       await expect(row.getByText(interrupted.message, { exact: true })).toBeVisible()
     }
     await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+    await expect(row.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(
+      status === 'failed' ? 1 : 0,
+    )
+  }
+}
+
+async function assertRetryAuthority(page) {
+  const providerPage = `https://civitai.com/models/${model.modelId}?modelVersionId=${model.versionId}`
+  const ordinary = await modelApi(page, 'previewImport', providerPage)
+  assert.equal(ordinary.kind, 'select-file')
+  const original = ordinary.files.find(({ fileId }) => fileId === model.fileId)
+  const sibling = ordinary.files.find(({ fileId }) => fileId === model.sameBytesPrimary.fileId)
+  assert.ok(original && sibling, 'The original and same-digest primary must both be offered.')
+  assert.deepEqual(
+    [original.primary, original.name, original.sha256, original.sizeEstimateBytes],
+    [false, model.fileName, model.sha256, model.sizeBytes],
+  )
+  assert.deepEqual(
+    [sibling.primary, sibling.name, sibling.sha256, sibling.sizeEstimateBytes],
+    [true, model.sameBytesPrimary.fileName, model.sha256, model.sizeBytes],
+  )
+
+  const retry = await modelApi(page, 'previewInstallRetry', oldJobId)
+  assert.equal(retry.kind, 'select-file')
+  assert.equal(retry.modelId, model.modelId)
+  assert.equal(retry.versionId, model.versionId)
+  assert.equal(retry.modelName, oldJob.modelName)
+  assert.equal(retry.versionName, oldJob.versionName)
+  assert.equal(retry.baseModel, model.sourceBaseModel)
+  assert.equal(retry.baseModelFamily, 'illustrious')
+  assert.equal(retry.author, model.author)
+  assert.equal(retry.resourceType, model.resourceType)
+  assert.deepEqual(retry.dependencies, [])
+  assert.deepEqual(retry.files, [original])
+  assert.equal(original.alreadyInstalled, false)
+  assert.equal(original.needsRepair, false)
+  assert.equal(original.reusesInstalledFile, false)
+  assert.equal(retry.totalAdditionalBytes, model.sizeBytes)
+  assert.deepEqual(retry.trainedWords, ordinary.trainedWords)
+
+  const alternateResult = await page.evaluate(
+    async ({ previewId, fileId }) => {
+      const result = await window.api.models.startInstall(previewId, fileId, false)
+      return result.ok ? null : result.error.code
+    },
+    { previewId: retry.previewId, fileId: model.sameBytesPrimary.fileId },
+  )
+  assert.equal(alternateResult, 'MODEL_INVALID_FILE')
+  return retry.trainedWords
+}
+
+async function reviewFailedJob(page, manager, trainedWords) {
+  const failed = manager
+    .locator('.job-row')
+    .filter({ has: page.getByText('failed', { exact: true }) })
+  await failed.getByRole('button', { name: 'Retry', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Retry model installation', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(
+    dialog.getByRole('button', { name: 'Open CivitAI source', exact: true }),
+  ).toBeVisible({ timeout: 30_000 })
+  const fileChoice = dialog.locator('.file-choice')
+  await expect(fileChoice).toHaveCount(1)
+  await expect(
+    fileChoice.getByText(`${model.fileName} · ${model.sizeLabel}`, { exact: true }),
+  ).toBeVisible()
+  await expect(dialog.getByText(model.sameBytesPrimary.fileName, { exact: false })).toHaveCount(0)
+  await expect(dialog.locator('.n-base-selection')).toHaveCount(0)
+  await expect(dialog.getByPlaceholder('https://civitai.com/models/…')).toHaveCount(0)
+  await expect(dialog.getByRole('heading', { name: oldJob.modelName, exact: true })).toBeVisible()
+  await expect(
+    dialog.getByText(`Estimated additional download: ${model.sizeLabel}`, { exact: true }),
+  ).toBeVisible()
+  await expect(dialog.getByText('SHA-256 will be verified', { exact: false })).toBeVisible()
+  const confirm = dialog.getByRole('button', { name: `Install ${oldJob.versionName}`, exact: true })
+  await expect(confirm).toBeEnabled()
+  return {
+    confirm,
+    dialog,
+    fileName: model.fileName,
+    modelName: oldJob.modelName,
+    sourceBaseModel: model.sourceBaseModel,
+    trainedWords,
+    versionName: oldJob.versionName,
   }
 }
 
@@ -259,6 +351,7 @@ export async function runPackagedModelInstallRetry({
   const timelinePath = path.join(root, 'model-install-progress.ndjson')
   await writeFile(timelinePath, '', { flag: 'wx', mode: 0o600 })
   const record = (event) => writeFile(timelinePath, `${JSON.stringify(event)}\n`, { flag: 'a' })
+  let manager
   let reviewed
   let installation
   let confirmationIssued = false
@@ -266,11 +359,21 @@ export async function runPackagedModelInstallRetry({
     await connectToken(page, liveToken)
     const tokenFile = await lstat(tokenPath)
     assert.ok(tokenFile.isFile() && tokenFile.size > 0 && (tokenFile.mode & 0o777) === 0o600)
-    const firstReview = await reviewLiveVaeInstall(page)
-    const { manager } = firstReview
-    for (const [field, expected] of Object.entries(model)) {
-      assert.equal(firstReview.artifactIdentity[field], expected, field)
-    }
+    manager = await openManager(page)
+    await expect(
+      manager.getByRole('button', { name: 'CivitAI connected', exact: true }),
+    ).toBeVisible({
+      timeout: 30_000,
+    })
+    await showQueue(page, manager, false)
+    const trainedWords = await assertRetryAuthority(page)
+    await assertUnchangedReview()
+    const firstReview = await reviewFailedJob(page, manager, trainedWords)
+    await assertUnchangedReview()
+    await page.screenshot({
+      path: path.join(root, 'retry-review.png'),
+      animations: 'disabled',
+    })
     await firstReview.dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(firstReview.dialog).toBeHidden()
     await assertUnchangedReview()
@@ -279,14 +382,15 @@ export async function runPackagedModelInstallRetry({
       path: path.join(root, 'after-cancel-queue.png'),
       animations: 'disabled',
     })
-    await manager.getByRole('button', { name: 'Back to models', exact: true }).click()
-    reviewed = await reviewLiveVaeInstall(page, manager)
-    assert.deepEqual(reviewed.artifactIdentity, firstReview.artifactIdentity)
-    assert.equal(reviewed.fileName, firstReview.fileName)
-    assert.equal(reviewed.modelName, oldJob.modelName)
-    assert.equal(reviewed.versionName, oldJob.versionName)
+    reviewed = await reviewFailedJob(page, manager, trainedWords)
     await assertUnchangedReview()
-    await record({ status: 'reviewed', canceledReviewPreserved: true, fileId: model.fileId })
+    await record({
+      status: 'reviewed',
+      entryPoint: 'install-queue-retry',
+      canceledReviewPreserved: true,
+      fileId: model.fileId,
+      rejectedAlternateFileId: model.sameBytesPrimary.fileId,
+    })
     const startedAt = Date.now()
     confirmationIssued = true
     await reviewed.confirm.click()
@@ -320,7 +424,7 @@ export async function runPackagedModelInstallRetry({
     }
   }
 
-  const artifactIdentity = reviewed.artifactIdentity
+  const artifactIdentity = model
   const installed = await assertCompletedSql(
     appData,
     artifactIdentity,
@@ -336,12 +440,12 @@ export async function runPackagedModelInstallRetry({
     installation.id,
     baseline,
   )
-  await showQueue(page, reviewed.manager, true)
+  await showQueue(page, manager, true)
   await page.screenshot({
     path: path.join(root, 'first-install-queue.png'),
     animations: 'disabled',
   })
-  await reviewed.manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
   await closeNormally(run)
   assert.ok(run.normalPhysicalExit && !run.forcedCleanup)
   const firstDb = path.join(root, 'after-install.sqlite')
@@ -369,14 +473,14 @@ export async function runPackagedModelInstallRetry({
     ),
     catalog,
   )
-  const manager = await openManager(reopened.page)
-  await showQueue(reopened.page, manager, true)
+  const reopenedManager = await openManager(reopened.page)
+  await showQueue(reopened.page, reopenedManager, true)
   await reopened.page.screenshot({
     path: path.join(root, 'reopened-install-queue.png'),
     animations: 'disabled',
   })
-  await manager.getByRole('button', { name: 'Back to models', exact: true }).click()
-  const resource = manager.locator('.resource-row')
+  await reopenedManager.getByRole('button', { name: 'Back to models', exact: true }).click()
+  const resource = reopenedManager.locator('.resource-row')
   await expect(resource).toHaveCount(1)
   await expect(resource.getByText(reviewed.modelName, { exact: true })).toBeVisible()
   await expect(resource.getByText('Installed', { exact: true })).toBeVisible()
@@ -384,7 +488,7 @@ export async function runPackagedModelInstallRetry({
     path: path.join(root, 'reopened-catalog.png'),
     animations: 'disabled',
   })
-  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await reopenedManager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
   await closeNormally(reopened)
   assert.ok(reopened.normalPhysicalExit && !reopened.forcedCleanup)
   const secondDb = path.join(root, 'after-repeat.sqlite')
@@ -406,7 +510,9 @@ export async function runPackagedModelInstallRetry({
       installation,
       published,
       catalog,
+      entryPoint: 'install-queue-retry',
       canceledReviewPreserved: true,
+      rejectedAlternateFileId: model.sameBytesPrimary.fileId,
     },
   }
 }

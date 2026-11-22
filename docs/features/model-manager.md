@@ -672,6 +672,13 @@ Bulk queue actions:
 
 MVP can implement only cancel/retry/clear if pause/resume adds too much risk, but the user flow should be designed around a queue, not one-off modal progress.
 
+**Retry** on a failed CivitAI job opens a fresh review of its recorded model,
+version and file. The file is fixed in the review. If a recorded digest is
+available, CivitAI must still advertise it for that file. The current review
+shows installation, repair or already-installed status and any required terms.
+Confirmation creates a separate installation attempt. Cancel leaves the
+original failed entry and the catalog intact.
+
 ```mermaid
 stateDiagram-v2
   [*] --> waiting
@@ -687,7 +694,7 @@ stateDiagram-v2
   verifying --> failed
   identifying --> failed
   downloading --> failed
-  failed --> waiting: retry
+  failed --> [*]
   completed --> [*]
   canceled --> [*]
 ```

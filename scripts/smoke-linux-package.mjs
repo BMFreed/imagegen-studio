@@ -501,7 +501,7 @@ const offlineProjectScope = {
   'model-install-interruption':
     'Stock AppImage recovers one live CivitAI installation interrupted by a Main-only process fault.',
   'model-install-retry':
-    'Stock AppImage explicitly installs the exact CivitAI file again after an interrupted transfer.',
+    'Stock AppImage retries the exact CivitAI file through Install Queue after an interrupted transfer.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -795,6 +795,9 @@ if (modelInstallRetry)
       'scripts/fixtures/packaged-noobai-install-ui.mjs',
       'src/main/models/civitai-client.ts',
       'src/main/models/civitai-token-store.ts',
+      'src/preload/index.ts',
+      'src/renderer/components/model-manager-read-guard.ts',
+      'src/shared/api.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (modelInstallCrash)

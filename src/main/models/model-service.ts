@@ -476,136 +476,49 @@ export class ModelService {
     }
     const token = await this.requireToken()
     const preview = await this.civitai.previewImport(url, token)
-    if (preview.kind === 'select-version') {
-      return preview
+    return preview.kind === 'select-version' ? preview : this.createFilePreview(preview)
+  }
+
+  async previewInstallRetry(
+    jobId: string,
+  ): Promise<Extract<ModelImportPreview, { kind: 'select-file' }>> {
+    const job = (await this.repository.listInstallJobs()).find(({ id }) => id === jobId)
+    const primary = job?.artifacts.find(({ role }) => role === 'primary')
+    if (
+      !job ||
+      job.status !== 'failed' ||
+      primary?.source.kind !== 'civitai_file' ||
+      primary.source.fileId !== job.civitaiFileId ||
+      ![job.civitaiModelId, job.civitaiVersionId, job.civitaiFileId].every(
+        (id) => Number.isSafeInteger(id) && id > 0,
+      )
+    ) {
+      throw new ModelServiceError(
+        'MODEL_RETRY_UNAVAILABLE',
+        'This failed installation cannot be retried.',
+      )
     }
 
-    const needsAnimaCompanions =
-      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
-    const files = preview.files
-    const installed = await this.repository.listInstalled()
-    const companionStatus = needsAnimaCompanions
-      ? await Promise.all(
-          [
-            { artifact: ANIMA_QWEN3_0_6B_ENCODER, role: 'qwen3_encoder' as const },
-            { artifact: ANIMA_QWEN_IMAGE_VAE, role: 'vae' as const },
-          ].map(async ({ artifact, role }) => ({
-            alreadyInstalled: (await this.findVerifiedFileByHash(artifact.sha256, role)) !== null,
-            name: artifact.path.split('/').at(-1) ?? artifact.path,
-            role,
-            sizeBytes: artifact.sizeBytes,
-          })),
-        )
-      : []
-    const fileChoices = await Promise.all(
-      files.map(async (file) => {
-        const exact = await this.repository.findExactFileDuplicate({
-          civitai: {
-            fileId: file.fileId,
-            modelId: preview.modelId,
-            versionId: preview.versionId,
-          },
-        })
-        const exactVersion = installed
-          .flatMap((resource) => resource.versions)
-          .find((version) => version.id === exact?.versionId)
-        const primaryReady = exactVersion ? await this.isVerifiedFile(exactVersion.file) : false
-        const dependenciesReady =
-          !needsAnimaCompanions ||
-          (exactVersion !== undefined &&
-            (
-              await Promise.all(
-                (['qwen3_encoder', 'vae'] as const).map(async (role) => {
-                  const dependencyId = exactVersion.dependencyVersionIds[role]
-                  const dependency = installed.find((resource) =>
-                    resource.versions.some((item) => item.id === dependencyId),
-                  )
-                  const dependencyVersion = dependency?.versions.find(
-                    (item) => item.id === dependencyId,
-                  )
-                  const expectedSha =
-                    role === 'qwen3_encoder'
-                      ? ANIMA_QWEN3_0_6B_ENCODER.sha256
-                      : ANIMA_QWEN_IMAGE_VAE.sha256
-                  return (
-                    dependency?.type === role &&
-                    dependency.source.kind === 'supported_dependency' &&
-                    dependencyVersion?.baseModelFamily === 'anima' &&
-                    dependencyVersion.file.sha256 === expectedSha &&
-                    (await this.isVerifiedFile(dependencyVersion.file))
-                  )
-                }),
-              )
-            ).every(Boolean))
-        const alreadyInstalled = primaryReady && dependenciesReady
-        const reusable =
-          !alreadyInstalled && (file.sha256 || exactVersion?.file.sha256)
-            ? await this.findVerifiedFileByHash(file.sha256 ?? exactVersion!.file.sha256)
-            : null
-        return {
-          alreadyInstalled,
-          fileId: file.fileId,
-          format: file.format,
-          license:
-            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
-              ? {
-                  name: 'CircleStone Non-Commercial License',
-                  summary: 'Anima Base 1.0 is only for non-commercial, non-production use.',
-                  url: ANIMA_SOURCE_LICENSE.url,
-                }
-              : null,
-          name: file.name,
-          needsRepair: !!exact && !alreadyInstalled,
-          primary: file.primary,
-          reusesInstalledFile: reusable !== null,
-          sha256: file.sha256,
-          sizeEstimateBytes:
-            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
-              ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
-              : (exactVersion?.file.sizeBytes ?? reusable?.sizeBytes ?? file.sizeEstimateBytes),
-        }
-      }),
-    )
-    const previewId = randomUUID()
-    this.prunePreviewSessions()
-    this.previews.set(previewId, {
-      expiresAt: Date.now() + PREVIEW_TTL_MS,
-      preview: { ...preview, files },
-    })
-    const selectedEstimate = fileChoices.find((file) => file.primary) ?? fileChoices[0]
-    const totalAdditionalBytes =
-      selectedEstimate && selectedEstimate.sizeEstimateBytes !== null
-        ? (selectedEstimate.alreadyInstalled || selectedEstimate.reusesInstalledFile
-            ? 0
-            : selectedEstimate.sizeEstimateBytes) +
-          (needsAnimaCompanions
-            ? companionStatus.reduce(
-                (sum, companion) => sum + (companion.alreadyInstalled ? 0 : companion.sizeBytes),
-                0,
-              )
-            : 0)
-        : null
-    const previewImageDataUrl =
-      (await this.resourcePreview(preview.previewImageUrl))?.previewDataUrl ?? null
-    return {
-      author: preview.author,
-      baseModel: preview.baseModel,
-      baseModelFamily: preview.baseModelFamily,
-      dependencies: needsAnimaCompanions ? companionStatus : [],
-      description: preview.description,
-      files: fileChoices,
-      kind: 'select-file',
-      license: selectedEstimate?.license ?? null,
-      modelId: preview.modelId,
-      modelName: preview.modelName,
-      previewId,
-      previewImageDataUrl,
-      resourceType: preview.resourceType,
-      totalAdditionalBytes,
-      trainedWords: preview.trainedWords,
-      versionId: preview.versionId,
-      versionName: preview.versionName,
+    const url = `https://civitai.com/models/${job.civitaiModelId}?modelVersionId=${job.civitaiVersionId}`
+    const preview = await this.civitai.previewImport(url, await this.requireToken())
+    const file =
+      preview.kind === 'select-file'
+        ? preview.files.find(({ fileId }) => fileId === job.civitaiFileId)
+        : undefined
+    if (
+      preview.kind !== 'select-file' ||
+      preview.resourceType !== job.resourceType ||
+      preview.baseModelFamily !== job.baseModelFamily ||
+      !file ||
+      (primary.expectedSha256 !== null && file.sha256 !== primary.expectedSha256)
+    ) {
+      throw new ModelServiceError(
+        'MODEL_SOURCE_CHANGED',
+        'The original CivitAI file could not be verified for retry. Review its current source in Model Manager.',
+      )
     }
+    // Both the public review and the session consumed by startInstall use this one choice.
+    return this.createFilePreview({ ...preview, files: [file] })
   }
 
   /** Call only with a file whose bytes were hashed by the installer or this service. */
@@ -1493,6 +1406,137 @@ export class ModelService {
     } catch (error) {
       this.fileStatusCache.delete(file.managedPath)
       return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'corrupt'
+    }
+  }
+
+  private async createFilePreview(
+    preview: PreviewSession['preview'],
+  ): Promise<Extract<ModelImportPreview, { kind: 'select-file' }>> {
+    const needsAnimaCompanions =
+      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
+    const files = preview.files
+    const installed = await this.repository.listInstalled()
+    const companionStatus = needsAnimaCompanions
+      ? await Promise.all(
+          [
+            { artifact: ANIMA_QWEN3_0_6B_ENCODER, role: 'qwen3_encoder' as const },
+            { artifact: ANIMA_QWEN_IMAGE_VAE, role: 'vae' as const },
+          ].map(async ({ artifact, role }) => ({
+            alreadyInstalled: (await this.findVerifiedFileByHash(artifact.sha256, role)) !== null,
+            name: artifact.path.split('/').at(-1) ?? artifact.path,
+            role,
+            sizeBytes: artifact.sizeBytes,
+          })),
+        )
+      : []
+    const fileChoices = await Promise.all(
+      files.map(async (file) => {
+        const exact = await this.repository.findExactFileDuplicate({
+          civitai: {
+            fileId: file.fileId,
+            modelId: preview.modelId,
+            versionId: preview.versionId,
+          },
+        })
+        const exactVersion = installed
+          .flatMap((resource) => resource.versions)
+          .find((version) => version.id === exact?.versionId)
+        const primaryReady = exactVersion ? await this.isVerifiedFile(exactVersion.file) : false
+        const dependenciesReady =
+          !needsAnimaCompanions ||
+          (exactVersion !== undefined &&
+            (
+              await Promise.all(
+                (['qwen3_encoder', 'vae'] as const).map(async (role) => {
+                  const dependencyId = exactVersion.dependencyVersionIds[role]
+                  const dependency = installed.find((resource) =>
+                    resource.versions.some((item) => item.id === dependencyId),
+                  )
+                  const dependencyVersion = dependency?.versions.find(
+                    (item) => item.id === dependencyId,
+                  )
+                  const expectedSha =
+                    role === 'qwen3_encoder'
+                      ? ANIMA_QWEN3_0_6B_ENCODER.sha256
+                      : ANIMA_QWEN_IMAGE_VAE.sha256
+                  return (
+                    dependency?.type === role &&
+                    dependency.source.kind === 'supported_dependency' &&
+                    dependencyVersion?.baseModelFamily === 'anima' &&
+                    dependencyVersion.file.sha256 === expectedSha &&
+                    (await this.isVerifiedFile(dependencyVersion.file))
+                  )
+                }),
+              )
+            ).every(Boolean))
+        const alreadyInstalled = primaryReady && dependenciesReady
+        const reusable =
+          !alreadyInstalled && (file.sha256 || exactVersion?.file.sha256)
+            ? await this.findVerifiedFileByHash(file.sha256 ?? exactVersion!.file.sha256)
+            : null
+        return {
+          alreadyInstalled,
+          fileId: file.fileId,
+          format: file.format,
+          license:
+            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
+              ? {
+                  name: 'CircleStone Non-Commercial License',
+                  summary: 'Anima Base 1.0 is only for non-commercial, non-production use.',
+                  url: ANIMA_SOURCE_LICENSE.url,
+                }
+              : null,
+          name: file.name,
+          needsRepair: !!exact && !alreadyInstalled,
+          primary: file.primary,
+          reusesInstalledFile: reusable !== null,
+          sha256: file.sha256,
+          sizeEstimateBytes:
+            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
+              ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+              : (exactVersion?.file.sizeBytes ?? reusable?.sizeBytes ?? file.sizeEstimateBytes),
+        }
+      }),
+    )
+    const previewId = randomUUID()
+    this.prunePreviewSessions()
+    this.previews.set(previewId, {
+      expiresAt: Date.now() + PREVIEW_TTL_MS,
+      preview: { ...preview, files },
+    })
+    const selectedEstimate = fileChoices.find((file) => file.primary) ?? fileChoices[0]
+    const totalAdditionalBytes =
+      selectedEstimate && selectedEstimate.sizeEstimateBytes !== null
+        ? (selectedEstimate.alreadyInstalled || selectedEstimate.reusesInstalledFile
+            ? 0
+            : selectedEstimate.sizeEstimateBytes) +
+          (needsAnimaCompanions
+            ? companionStatus.reduce(
+                (sum, companion) => sum + (companion.alreadyInstalled ? 0 : companion.sizeBytes),
+                0,
+              )
+            : 0)
+        : null
+    const previewImageDataUrl =
+      (await this.resourcePreview(preview.previewImageUrl))?.previewDataUrl ?? null
+    return {
+      author: preview.author,
+      baseModel: preview.baseModel,
+      baseModelFamily: preview.baseModelFamily,
+      dependencies: needsAnimaCompanions ? companionStatus : [],
+      description: preview.description,
+      files: fileChoices,
+      kind: 'select-file',
+      license: selectedEstimate?.license ?? null,
+      modelId: preview.modelId,
+      modelName: preview.modelName,
+      previewId,
+      previewImageDataUrl,
+      resourceType: preview.resourceType,
+      totalAdditionalBytes,
+      trainedWords: preview.trainedWords,
+      versionId: preview.versionId,
+      versionName: preview.versionName,
     }
   }
 

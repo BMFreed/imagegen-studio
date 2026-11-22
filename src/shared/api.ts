@@ -171,6 +171,7 @@ export const ipcChannels = {
     openModelFolder: 'models:open-model-folder',
     openSourceLink: 'models:open-source-link',
     previewImport: 'models:preview-import',
+    previewInstallRetry: 'models:preview-install-retry',
     removeLocalResource: 'models:remove-local-resource',
     removeToken: 'models:remove-token',
     reviewRemoval: 'models:review-removal',
@@ -1022,6 +1023,9 @@ export interface ModelApi {
   openModelFolder: () => Promise<ApiResult<void>>
   openSourceLink: (url: string) => Promise<ApiResult<void>>
   previewImport: (url: string) => Promise<ApiResult<ModelImportPreview>>
+  previewInstallRetry: (
+    jobId: string,
+  ) => Promise<ApiResult<Extract<ModelImportPreview, { kind: 'select-file' }>>>
   removeLocalResource: (token: string, cancelPending?: boolean) => Promise<ApiResult<void>>
   removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
   reviewRemoval: (resourceId: string) => Promise<ApiResult<ModelRemovalReview>>

@@ -229,6 +229,7 @@ function civitaiApi(options: {
   fileUrl?: string
   includeThirdVersion?: boolean
   omitSecondPublishedAt?: boolean
+  otherFileHash?: string | null
   previewImageUrl?: string
   requests: { authorization: string | null; pathname: string }[]
   secondVersionHash?: string
@@ -292,7 +293,17 @@ function civitaiApi(options: {
       pathname: url.pathname,
     })
     const files = version.files.map((file, index) =>
-      index === 0 ? { ...file, sizeKB: 'fileSizeKB' in options ? options.fileSizeKB : 1 } : file,
+      index === 0
+        ? { ...file, sizeKB: 'fileSizeKB' in options ? options.fileSizeKB : 1 }
+        : {
+            ...file,
+            hashes:
+              options.otherFileHash === undefined
+                ? file.hashes
+                : options.otherFileHash === null
+                  ? null
+                  : { SHA256: options.otherFileHash },
+          },
     )
     const body =
       url.pathname === '/api/v1/models/42'
@@ -2433,6 +2444,196 @@ test('a CivitAI hash mismatch leaves a failed job but no selectable model or sta
       } finally {
         await reopened.close()
       }
+    },
+  )
+})
+
+test('install Retry reviews the failed secondary file and concurrent confirmations admit it only once', async () => {
+  const expected = Buffer.from('exact retry VAE bytes')
+  const fileHash = sha256(expected)
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const downloads: string[] = []
+  let contents = Buffer.from('incorrect bytes for the first attempt')
+  let pausedDownload: Promise<void> | undefined
+  const provider = {
+    fileHash,
+    otherFileHash: fileHash as string | null,
+    requests,
+    type: 'VAE' as const,
+  }
+  const downloader = new ModelDownloader({
+    resolveAddresses: PUBLIC_ADDRESSES,
+    transport: async (url) => {
+      downloads.push(String(url))
+      await pausedDownload
+      return new Response(contents, { headers: { 'content-type': 'application/octet-stream' } })
+    },
+  })
+  await withModelHarness(civitaiApi(provider), downloader, async (harness) => {
+    const { coordinator, repository, root, service } = harness
+    const initial = selectedFilePreview(await service.previewImport(MODEL_URL))
+    assert.deepEqual(
+      initial.files.map(({ fileId, primary, sha256 }) => ({ fileId, primary, sha256 })),
+      [
+        { fileId: 701, primary: true, sha256: fileHash },
+        { fileId: 702, primary: false, sha256: fileHash },
+      ],
+    )
+    const failed = await waitForTerminalJob(coordinator, () =>
+      coordinator.startInstall(initial.previewId, 702, false),
+    )
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.error?.code, 'DOWNLOAD_HASH_MISMATCH')
+    const [original] = await repository.listInstallJobs()
+    assert.ok(original)
+    assert.equal(original.id, failed.id)
+    assert.deepEqual(downloads, [OTHER_FILE_URL])
+
+    // Leave the same-digest primary available while the exact secondary changes.
+    for (const changedHash of ['d'.repeat(64), null]) {
+      provider.otherFileHash = changedHash
+      await assert.rejects(service.previewInstallRetry(failed.id), { code: 'MODEL_SOURCE_CHANGED' })
+    }
+    provider.otherFileHash = fileHash
+    const requestCount = requests.length
+    const retry = await service.previewInstallRetry(failed.id)
+    assert.deepEqual(
+      requests.slice(requestCount).map(({ pathname }) => pathname),
+      ['/api/v1/models/42', '/api/v1/model-versions/7'],
+    )
+    assert.deepEqual([retry.modelId, retry.versionId], [42, 7])
+    assert.deepEqual(
+      retry.files.map(({ fileId, sha256 }) => ({ fileId, sha256 })),
+      [{ fileId: 702, sha256: fileHash }],
+    )
+    assert.equal(retry.totalAdditionalBytes, 2048)
+    await assert.rejects(coordinator.startInstall(retry.previewId, 701, false), {
+      code: 'MODEL_INVALID_FILE',
+    })
+    const secondReview = await service.previewInstallRetry(failed.id)
+    assert.deepEqual(await repository.listInstallJobs(), [original])
+    assert.deepEqual(await repository.listInstalled(), [])
+    assert.deepEqual(await readdir(path.join(root, 'models', '.staging')), [])
+    assert.deepEqual(downloads, [OTHER_FILE_URL])
+
+    contents = expected
+    let markAdmitted!: () => void
+    let releaseDownload!: () => void
+    const admitted = new Promise<void>((resolve) => {
+      markAdmitted = resolve
+    })
+    pausedDownload = new Promise<void>((resolve) => {
+      releaseDownload = resolve
+    })
+    const createJob = repository.createInstallJob.bind(repository)
+    let markCreationStarted!: () => void
+    let releaseCreation!: () => void
+    const creationStarted = new Promise<void>((resolve) => {
+      markCreationStarted = resolve
+    })
+    const creationReleased = new Promise<void>((resolve) => {
+      releaseCreation = resolve
+    })
+    let firstCreation = true
+    repository.createInstallJob = async (input) => {
+      if (firstCreation) {
+        firstCreation = false
+        markCreationStarted()
+        await creationReleased
+      }
+      return createJob(input)
+    }
+    const completion = waitForTerminalJob(coordinator, async () => {
+      const first = coordinator.startInstall(retry.previewId, 702, false)
+      try {
+        await Promise.race([creationStarted, first])
+        await assert.rejects(coordinator.startInstall(secondReview.previewId, 702, false), {
+          code: 'MODEL_INSTALL_IN_PROGRESS',
+        })
+      } finally {
+        releaseCreation()
+        await first
+      }
+      markAdmitted()
+      return first
+    })
+    const findDuplicate = repository.findExactFileDuplicate.bind(repository)
+    try {
+      await Promise.race([admitted, completion])
+      repository.findExactFileDuplicate = async (source) => {
+        // A catalog read made while the original attempt is active can go stale before admission.
+        const result = await findDuplicate(source)
+        releaseDownload()
+        await completion
+        return result
+      }
+      await assert.rejects(coordinator.startInstall(secondReview.previewId, 702, false), {
+        code: 'MODEL_INSTALL_IN_PROGRESS',
+      })
+    } finally {
+      repository.findExactFileDuplicate = findDuplicate
+      releaseDownload()
+      await completion
+    }
+    const completed = await completion
+    await assert.rejects(coordinator.startInstall(secondReview.previewId, 702, false), {
+      code: 'MODEL_ALREADY_INSTALLED',
+    })
+    assert.equal(completed.status, 'completed', completed.error?.message ?? 'Retry failed')
+    assert.notEqual(completed.id, failed.id)
+    assert.deepEqual(downloads, [OTHER_FILE_URL, OTHER_FILE_URL])
+    const jobs = await repository.listInstallJobs()
+    assert.equal(jobs.length, 2)
+    assert.deepEqual(
+      jobs.find(({ id }) => id === failed.id),
+      original,
+    )
+    const fresh = jobs.find(({ id }) => id === completed.id)
+    assert.ok(fresh)
+    assert.deepEqual(
+      [fresh.civitaiModelId, fresh.civitaiVersionId, fresh.civitaiFileId],
+      [42, 7, 702],
+    )
+    const installed = await repository.listInstalled()
+    assert.equal(installed.length, 1)
+    const version = installed[0]?.versions[0]
+    assert.ok(version)
+    assert.equal(installed[0]?.versions.length, 1)
+    assert.equal(version.civitaiFileId, 702)
+    assert.equal(version.file.sha256, fileHash)
+    assert.deepEqual(await readFile(version.file.managedPath), expected)
+    assert.deepEqual(await readdir(path.join(root, 'models', '.staging')), [])
+  })
+})
+
+test('install Retry refuses active, canceled and unknown jobs without reading CivitAI', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  await withModelHarness(
+    civitaiApi({ requests, type: 'VAE' }),
+    new ModelDownloader({ resolveAddresses: PUBLIC_ADDRESSES }),
+    async ({ repository, service }) => {
+      const job = await repository.createInstallJob({
+        artifacts: [{ role: 'primary', source: { fileId: 702, kind: 'civitai_file' } }],
+        baseModelFamily: 'illustrious',
+        civitaiFileId: 702,
+        civitaiModelId: 42,
+        civitaiVersionId: 7,
+        displayName: 'Portrait Model',
+        resourceType: 'vae',
+        versionName: 'v1',
+      })
+      const requestCount = requests.length
+      const waiting = await repository.listInstallJobs()
+      for (const id of [randomUUID(), job]) {
+        await assert.rejects(service.previewInstallRetry(id), { code: 'MODEL_RETRY_UNAVAILABLE' })
+      }
+      assert.deepEqual(await repository.listInstallJobs(), waiting)
+      await repository.updateInstallJob(job, { status: 'canceled' })
+      const canceled = await repository.listInstallJobs()
+      await assert.rejects(service.previewInstallRetry(job), { code: 'MODEL_RETRY_UNAVAILABLE' })
+      assert.deepEqual(await repository.listInstallJobs(), canceled)
+      assert.equal(requests.length, requestCount)
+      assert.deepEqual(await repository.listInstalled(), [])
     },
   )
 })

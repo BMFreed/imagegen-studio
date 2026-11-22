@@ -3,6 +3,7 @@ export const MODEL_MANAGER_READ_KINDS = [
   'jobs',
   'refresh',
   'removal',
+  'retry-preview',
   'storage',
   'token',
 ] as const

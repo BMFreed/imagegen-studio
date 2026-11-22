@@ -277,8 +277,13 @@ entries record the state at their checkpoint.
    Starting from that failed job, the stock AppImage preserved the empty
    catalog on review Cancel. A fresh confirmed review installed the exact
    VAE. The failed and completed jobs and the verified file survived a cold
-   reopen. The Install Queue still needs its dedicated Retry action.
+   reopen.
    [Explicit CivitAI reinstallation](./phase-5-packaged-model-install-retry-research.md)
+   A subsequent AppImage used **Retry** on the failed row. Cancel kept
+   the failed job and empty catalog. Main refused the same-digest
+   sibling, and confirmation installed just the original file. Both
+   jobs and the verified bytes survived a cold reopen.
+   [Install Queue Retry](./phase-5-model-install-queue-retry-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
