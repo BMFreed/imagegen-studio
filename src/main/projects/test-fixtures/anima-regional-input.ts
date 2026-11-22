@@ -88,6 +88,24 @@ const MASK_IDS = [
   '00000000-0000-4000-8000-000000000202',
 ] as const
 const REGIONAL_TEXTS = ['(red scarf)1.5, one white cat', '(blue scarf)0.75, one white cat'] as const
+const INSTALLED_VISUAL_SCENES = {
+  'countertop-scene': {
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
+    regionalTexts: [
+      'a red apple with a small green leaf on a continuous pale wooden tabletop in front of a plain light blue wall',
+      'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
+    ],
+  },
+  'festival-stall': {
+    globalPositive:
+      'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot',
+    regionalTexts: [
+      'a red paper lantern with curved ribs and a small tassel',
+      'a white fox festival mask with pointed ears and red markings',
+    ],
+  },
+} as const
 const digest = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex')
 const prompt = (text: string): GenerationPrompt => ({ embeddingRefs: [], text })
@@ -159,7 +177,7 @@ export async function produceAnimaRegionalInputFixture(
     installedVisual?: {
       pythonExecutable: string
       runtimeRoot: string
-      scene?: 'festival-stall'
+      scene?: keyof typeof INSTALLED_VISUAL_SCENES
       useCase: (input: InstalledVisualInput) => Promise<unknown>
     }
     regionalNegativeTexts?: readonly [string, string]
@@ -185,19 +203,19 @@ export async function produceAnimaRegionalInputFixture(
     options.trainedBundle === undefined ? undefined : captureTrainedBundle(options.trainedBundle)
   assert.ok(VARIANTS.includes(variant), 'The fixture variant must be explicitly supported')
   const { installedVisual, uncoveredBackground = false } = options
-  const festivalStall = installedVisual?.scene === 'festival-stall'
+  const scene = installedVisual?.scene && INSTALLED_VISUAL_SCENES[installedVisual.scene]
   if (installedVisual) {
     assert.ok(trainedBundle)
-    assert.ok(installedVisual.scene === undefined || festivalStall)
+    assert.ok(
+      installedVisual.scene === undefined ||
+        Object.hasOwn(INSTALLED_VISUAL_SCENES, installedVisual.scene),
+    )
     assert.ok(variant === 'ordinary' || variant === 'base' || variant === 'swapped')
     assert.deepEqual([width, height, steps, guidanceScale], [512, 512, 20, 4])
-    if (festivalStall) {
+    if (scene) {
       assert.ok(seed === 123 || seed === 124)
       assert.ok(!uncoveredBackground)
-      assert.deepEqual(regionalTexts, [
-        'a red paper lantern with curved ribs and a small tassel',
-        'a white fox festival mask with pointed ears and red markings',
-      ])
+      assert.deepEqual(regionalTexts, scene.regionalTexts)
     } else {
       assert.equal(seed, 123)
       assert.equal(regionalTexts[0], REGIONAL_TEXTS[0])
@@ -284,14 +302,14 @@ export async function produceAnimaRegionalInputFixture(
     const maskPaths: string[] = []
     const middle = Math.floor(width / 2)
     const regions: IgsRegionalGuidanceV1[] = []
-    const maskY = uncoveredBackground || festivalStall ? 64 : 0
-    const maskHeight = uncoveredBackground || festivalStall ? 288 : height
+    const maskY = uncoveredBackground || scene ? 64 : 0
+    const maskHeight = uncoveredBackground || scene ? 288 : height
     const activeOwners = variant === 'ordinary' ? [] : ([0, 1] as const)
     for (const index of activeOwners) {
-      const firstX = festivalStall ? 32 + index * 256 : index === 0 ? 0 : middle - 2
-      const maskWidth = festivalStall ? 192 : (index === 0 ? middle + 2 : width) - firstX
+      const firstX = scene ? 32 + index * 256 : index === 0 ? 0 : middle - 2
+      const maskWidth = scene ? 192 : (index === 0 ? middle + 2 : width) - firstX
       const alpha = Uint8Array.from({ length: maskWidth * maskHeight }, (_, sample) => {
-        if (festivalStall) {
+        if (scene) {
           return 255
         }
         const x = firstX + (sample % maskWidth)
@@ -366,11 +384,7 @@ export async function produceAnimaRegionalInputFixture(
           versionName: 'Synthetic identity; no installed weight claim',
         },
         negativePrompt: prompt(variant === 'inherited' ? '' : '(blur)0.75, noise'),
-        positivePrompt: prompt(
-          festivalStall
-            ? 'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot'
-            : '(two white cats)1.25 on one bench',
-        ),
+        positivePrompt: prompt(scene?.globalPositive ?? '(two white cats)1.25 on one bench'),
         sampling: {
           ...current.generationDraft.sampling,
           animaMethod: 'euler',

@@ -146,6 +146,12 @@ entries record the state at their checkpoint.
    four regional images preserved the readable stall and both assigned
    subjects. The two-seed assignment and swap criterion remains open.
    [Anima festival stall](./phase-4-anima-festival-stall-research.md)
+   The next Anima TXT trial repeated the same tabletop and wall context
+   in both locals. Both ordinary controls and all four regional backgrounds
+   passed. Two regional images placed the apple and mug on the assigned
+   sides. One centered and overlapped the pair, and one omitted the apple.
+   The two-seed visual gate and local negative remain open.
+   [Anima tabletop placement](./phase-4-anima-countertop-scene-research.md)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

@@ -57,8 +57,8 @@ const cases = [
   { label: 'inset-swapped', uncoveredBackground: true, variant: 'swapped' },
 ] as const
 const seed = 123
-const festivalSeeds = [123, 124] as const
-const festivalCases = festivalSeeds.flatMap(
+const sceneSeeds = [123, 124] as const
+const sceneCases = sceneSeeds.flatMap(
   (seed) =>
     [
       { label: `seed-${seed}-ordinary`, seed, uncoveredBackground: false, variant: 'ordinary' },
@@ -66,13 +66,26 @@ const festivalCases = festivalSeeds.flatMap(
       { label: `seed-${seed}-swapped`, seed, uncoveredBackground: false, variant: 'swapped' },
     ] as const,
 )
-const festivalPositive =
-  'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot'
-const festivalPositives = {
-  lantern: 'a red paper lantern with curved ribs and a small tassel',
-  mask: 'a white fox festival mask with pointed ears and red markings',
-}
-const festivalMasks = [
+const scenePrompts = {
+  'countertop-scene': {
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
+    regionalPositives: {
+      apple:
+        'a red apple with a small green leaf on a continuous pale wooden tabletop in front of a plain light blue wall',
+      mug: 'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
+    },
+  },
+  'festival-stall': {
+    globalPositive:
+      'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot',
+    regionalPositives: {
+      lantern: 'a red paper lantern with curved ribs and a small tassel',
+      mask: 'a white fox festival mask with pointed ears and red markings',
+    },
+  },
+} as const
+const sceneMasks = [
   { height: 288, width: 192, x: 32, y: 64 },
   { height: 288, width: 192, x: 288, y: 64 },
 ] as const
@@ -114,11 +127,6 @@ const plainPrompt = (text: string) => ({
   spans: [{ end: text.length, start: 0, weight: 1 }],
   version: 'anima-prompt-weighting-v1',
 })
-const festivalGlobalCompiled = [
-  { ...globalCompiled[0], prompt: plainPrompt(festivalPositive), text: festivalPositive },
-  globalCompiled[1],
-]
-
 interface SourceFile extends FilePin {
   role: keyof AnimaRegionalTrainedBundle
   stat: {
@@ -198,19 +206,21 @@ function regionalInputs(
   })
 }
 
-function festivalRegionalInputs(
-  testCase: (typeof festivalCases)[number],
+function sceneRegionalInputs(
+  testCase: (typeof sceneCases)[number],
   recipe: CurrentCanvasRegionalRecipe,
+  positive: string,
+  regionalTexts: readonly [string, string],
 ) {
   const texts =
     testCase.variant === 'ordinary'
       ? []
       : testCase.variant === 'swapped'
-        ? [festivalPositives.mask, festivalPositives.lantern]
-        : [festivalPositives.lantern, festivalPositives.mask]
+        ? [regionalTexts[1], regionalTexts[0]]
+        : regionalTexts
   assert.equal(recipe.family, 'anima')
   assert.deepEqual(recipe.bbox, bbox)
-  assert.deepEqual(recipe.item.prompts, { negative: globalNegative, positive: festivalPositive })
+  assert.deepEqual(recipe.item.prompts, { negative: globalNegative, positive })
   assert.equal(recipe.item.seed, testCase.seed)
   assert.equal(recipe.regions.length, texts.length)
   return recipe.regions.map((region, index) => {
@@ -225,7 +235,7 @@ function festivalRegionalInputs(
     })
     assert.equal(region.coverage.kind, 'covered')
     assert.deepEqual(region.coverage.bounds, bbox)
-    const { height, width, x, y } = festivalMasks[index]
+    const { height, width, x, y } = sceneMasks[index]
     assert.deepEqual(region.coverage.intersection, { height, width, x: bbox.x + x, y: bbox.y + y })
     const { alpha, ...coverage } = region.coverage
     const expected = Buffer.alloc(512 ** 2)
@@ -246,7 +256,7 @@ function festivalRegionalInputs(
 }
 
 function sampledSupport(
-  testCase: (typeof cases)[number] | (typeof festivalCases)[number],
+  testCase: (typeof cases)[number] | (typeof sceneCases)[number],
   recipe: CurrentCanvasRegionalRecipe,
 ) {
   if (testCase.variant === 'ordinary') {
@@ -408,20 +418,35 @@ async function main() {
   assert.equal(flag, '--run')
   assert.ok(run && extra.length === 0)
   const equalWeight = path.dirname(run) === path.join(artifactRoot, 'runs/anima-equal-scarf-weight')
-  const festivalStall = path.dirname(run) === path.join(artifactRoot, 'runs/anima-festival-stall')
-  const profile = festivalStall
-    ? 'anima-festival-stall'
+  const sceneName = (Object.keys(scenePrompts) as (keyof typeof scenePrompts)[]).find(
+    (name) => path.dirname(run) === path.join(artifactRoot, 'runs', `anima-${name}`),
+  )
+  const scene = sceneName && scenePrompts[sceneName]
+  const profile = sceneName
+    ? `anima-${sceneName}`
     : equalWeight
       ? 'anima-equal-scarf-weight'
       : 'anima-background-visual'
   assert.equal(path.dirname(run), path.join(artifactRoot, 'runs', profile))
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
   assert.equal(await realpath(run), run)
-  const selectedCases = festivalStall ? festivalCases : equalWeight ? cases.slice(2) : cases
-  const selectedPositives = equalWeight
-    ? { ...regionalPositives, blue: equalBluePositive }
-    : regionalPositives
-  const selectedGlobalCompiled = festivalStall ? festivalGlobalCompiled : globalCompiled
+  const selectedCases = scene ? sceneCases : equalWeight ? cases.slice(2) : cases
+  const selectedPositives =
+    scene?.regionalPositives ??
+    (equalWeight ? { ...regionalPositives, blue: equalBluePositive } : regionalPositives)
+  const selectedGlobalPositive = scene?.globalPositive ?? globalPositive
+  const [firstRegionalText, secondRegionalText] = Object.values(selectedPositives)
+  const regionalTexts = [firstRegionalText, secondRegionalText] as const
+  const selectedGlobalCompiled = scene
+    ? [
+        {
+          ...globalCompiled[0],
+          prompt: plainPrompt(selectedGlobalPositive),
+          text: selectedGlobalPositive,
+        },
+        globalCompiled[1],
+      ]
+    : globalCompiled
   const write = (name: string, value: unknown) => writeJson(name, value, run)
 
   const start = Date.now()
@@ -451,22 +476,22 @@ async function main() {
       contract.globalPositive,
       contract.globalNegative,
       contract.regionalPositives,
-      festivalStall ? contract.seeds : contract.seed,
+      scene ? contract.seeds : contract.seed,
       contract.sampling,
       contract.cases,
     ],
     [
       bbox,
-      festivalStall ? festivalPositive : globalPositive,
+      selectedGlobalPositive,
       globalNegative,
-      festivalStall ? festivalPositives : selectedPositives,
-      festivalStall ? festivalSeeds : seed,
+      selectedPositives,
+      scene ? sceneSeeds : seed,
       sampling,
       selectedCases,
     ],
   )
-  if (festivalStall) {
-    assert.deepEqual(contract.regionalMasks, festivalMasks)
+  if (scene) {
+    assert.deepEqual(contract.regionalMasks, sceneMasks)
     assert.equal(contract.compositionProfile, ANIMA_REGIONAL_COMPOSITION_PROFILE)
   }
   if (equalWeight) {
@@ -596,7 +621,7 @@ async function main() {
         installedVisual: {
           pythonExecutable: install.pythonExecutable,
           runtimeRoot: install.runtimeDir,
-          ...(festivalStall ? { scene: 'festival-stall' as const } : {}),
+          ...(sceneName ? { scene: sceneName } : {}),
           async useCase({ compiledPrompts, models, prepared, recipe }) {
             assert.equal(prepared.context.mode, 'txt2img')
             assert.deepEqual(prepared.context.bbox, bbox)
@@ -615,7 +640,7 @@ async function main() {
             assert.equal(prepared.context.target.sha256, targetSha)
             const regional =
               'seed' in testCase
-                ? festivalRegionalInputs(testCase, recipe)
+                ? sceneRegionalInputs(testCase, recipe, selectedGlobalPositive, regionalTexts)
                 : regionalInputs(testCase, recipe, equalWeight ? 1.5 : 0.75)
             const support = sampledSupport(testCase, recipe)
             assert.deepEqual(compiledPrompts, [
@@ -876,9 +901,7 @@ async function main() {
             }
           },
         },
-        regionalTexts: festivalStall
-          ? [festivalPositives.lantern, festivalPositives.mask]
-          : [selectedPositives.red, selectedPositives.blue],
+        regionalTexts,
         seed: caseSeed,
         steps: sampling.nominalSteps,
         trainedBundle,

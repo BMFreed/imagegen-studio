@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Anima tabletop placement with shared scene context
+
+[Tabletop placement](./phase-4-anima-countertop-scene-research.md) passed all
+six signed requests. Both ordinary controls and all four regional frames
+retained the tabletop and wall. Two regional frames met the joint placement
+criterion. The two-seed placement gate remains open.
+
 ## Startup recovery of committed Project deletion
 
 [Packaged Trash recovery](./phase-5-packaged-project-trash-recovery-research.md)
