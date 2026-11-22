@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Exact model reinstallation after an interrupted transfer
+
+[Packaged CivitAI reinstallation](./phase-5-packaged-model-install-retry-research.md)
+started with the recovered failed job. Cancel preserved the empty catalog.
+Confirming a fresh review installed the exact VAE, and both queue entries
+and the installed bytes survived a cold reopen.
+
 ## Live CivitAI transfer interrupted in packaged Main
 
 [Packaged model install interruption](./phase-5-packaged-model-install-interruption-research.md)

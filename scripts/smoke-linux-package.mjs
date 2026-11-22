@@ -55,6 +55,7 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const modelInstallCrash = offlineProject === 'model-install-interruption'
+const modelInstallRetry = offlineProject === 'model-install-retry'
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
@@ -183,6 +184,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-interruption',
+        'model-install-retry',
       ].includes(offlineProject) &&
         portableChooser === undefined &&
         componentAction === undefined),
@@ -226,7 +228,8 @@ assert.ok(
 )
 assert.equal(
   noobaiTokenFile !== undefined,
-  noobaiPreviewMode === 'live' || Boolean(noobaiInstall || componentRepair || modelInstallCrash),
+  noobaiPreviewMode === 'live' ||
+    Boolean(noobaiInstall || componentRepair || modelInstallCrash || modelInstallRetry),
 )
 assert.ok(
   runtimeSetupControl === undefined ||
@@ -482,6 +485,7 @@ const offlineProjectFixture = {
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-interruption': 'packaged-model-install-interruption',
+  'model-install-retry': 'packaged-model-install-retry',
 }[offlineProject]
 const offlineProjectScope = {
   trash:
@@ -496,6 +500,8 @@ const offlineProjectScope = {
     'Stock AppImage reconciles persisted unfinished model installations and owned files once across two cold startups.',
   'model-install-interruption':
     'Stock AppImage recovers one live CivitAI installation interrupted by a Main-only process fault.',
+  'model-install-retry':
+    'Stock AppImage explicitly installs the exact CivitAI file again after an interrupted transfer.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -768,7 +774,7 @@ if (offlineProject === 'queue-startup-recovery')
       'src/renderer/components/GenerationQueueManager.vue',
     ].map((file) => path.join(repo, file)),
   )
-if (offlineProject === 'model-install-startup' || modelInstallCrash)
+if (offlineProject === 'model-install-startup' || modelInstallCrash || modelInstallRetry)
   sourcePaths.push(
     ...[
       'scripts/fixtures/application-state-upgrade-fixture.mjs',
@@ -781,6 +787,14 @@ if (offlineProject === 'model-install-startup' || modelInstallCrash)
       'src/main/projects/project-index.ts',
       'src/renderer/components/ModelManager.vue',
       'src/renderer/App.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (modelInstallRetry)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-noobai-install-ui.mjs',
+      'src/main/models/civitai-client.ts',
+      'src/main/models/civitai-token-store.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (modelInstallCrash)
@@ -1581,6 +1595,12 @@ async function runOwnedProjectProfile() {
         ...args,
         liveToken: await readNoobaiCredential(),
         crashForRecovery,
+      })
+    }
+    if (modelInstallRetry) {
+      return await fixture.runPackagedModelInstallRetry({
+        ...args,
+        liveToken: await readNoobaiCredential(),
       })
     }
     const { assertOfflineProjectDesktop } =

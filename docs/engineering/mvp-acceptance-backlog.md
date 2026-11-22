@@ -274,6 +274,11 @@ entries record the state at their checkpoint.
    the same job became interrupted, the part disappeared, and a second
    normal close produced the same SQLite bytes.
    [Live model install interruption](./phase-5-packaged-model-install-interruption-research.md)
+   Starting from that failed job, the stock AppImage preserved the empty
+   catalog on review Cancel. A fresh confirmed review installed the exact
+   VAE. The failed and completed jobs and the verified file survived a cold
+   reopen. The Install Queue still needs its dedicated Retry action.
+   [Explicit CivitAI reinstallation](./phase-5-packaged-model-install-retry-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

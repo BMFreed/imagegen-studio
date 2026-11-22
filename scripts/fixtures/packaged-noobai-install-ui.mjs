@@ -86,7 +86,7 @@ function safeCode(value) {
   return typeof value === 'string' && /^[A-Z0-9_]{1,80}$/.test(value) ? value : null
 }
 
-async function modelApi(page, method, ...args) {
+export async function modelApi(page, method, ...args) {
   const result = await page.evaluate(({ method, args }) => window.api.models[method](...args), {
     method,
     args,
@@ -158,14 +158,19 @@ function assertSqliteIntegrity(snapshot) {
   assert.deepEqual(snapshot.foreignKeys, [])
 }
 
-function assertSqliteCounts(sql, resourceCount, versionCount) {
+function assertSqliteCounts(
+  sql,
+  resourceCount,
+  versionCount,
+  { jobCount = versionCount, artifactCount = versionCount } = {},
+) {
   assert.deepEqual(
     [sql.resourceCount, sql.versionCount, sql.fileCount, sql.dependencyCount],
     [resourceCount, versionCount, versionCount, 0],
   )
   assert.deepEqual(
     [sql.catalog.length, sql.jobs.length, sql.artifacts.length],
-    [versionCount, versionCount, versionCount],
+    [versionCount, jobCount, artifactCount],
   )
 }
 
@@ -207,7 +212,7 @@ async function inspectBaseline(page, appData, profile) {
   return { sql, jobs, checkpoints }
 }
 
-async function openManager(page) {
+export async function openManager(page) {
   await page
     .getByRole('region', { name: 'Home', exact: true })
     .getByRole('complementary', { name: 'Workspace navigation', exact: true })
@@ -319,10 +324,10 @@ async function reviewExactFile(page, manager, providerPage, identity) {
   }
 }
 
-export async function reviewLiveVaeInstall(page) {
+export async function reviewLiveVaeInstall(page, manager) {
   const artifactIdentity = profiles.vae
   const providerPage = `https://civitai.com/models/${artifactIdentity.modelId}?modelVersionId=${artifactIdentity.versionId}`
-  const manager = await openManager(page)
+  manager ??= await openManager(page)
   const reviewed = await reviewExactFile(page, manager, providerPage, artifactIdentity)
   return { ...reviewed, manager, artifactIdentity }
 }
@@ -341,7 +346,7 @@ function newJobs(jobs, baselineJobs) {
   return jobs.filter(({ id }) => !baselineJobs.some((job) => job.id === id))
 }
 
-async function waitForTerminal(page, reviewed, startedAt, timeout, record, baselineJobs) {
+export async function waitForTerminal(page, reviewed, startedAt, timeout, record, baselineJobs) {
   const deadline = Date.now() + timeout
   let id
   let maxProgress = 0
@@ -490,11 +495,14 @@ function assertSqliteInstall(sql, appData, identity, jobId, sibling) {
   return row
 }
 
-async function assertCompletedSql(appData, identity, jobId, baseline) {
+export async function assertCompletedSql(appData, identity, jobId, baseline) {
   const sql = inspectSqlite(appData)
   assertSqliteIntegrity(sql)
   const sibling = baseline.catalog.find(({ modelId }) => modelId === identity.modelId)
-  assertSqliteCounts(sql, baseline.resourceCount + (sibling ? 0 : 1), baseline.versionCount + 1)
+  assertSqliteCounts(sql, baseline.resourceCount + (sibling ? 0 : 1), baseline.versionCount + 1, {
+    jobCount: baseline.jobs.length + 1,
+    artifactCount: baseline.artifacts.length + 1,
+  })
   assert.deepEqual(
     sql.catalog.filter((row) => !isExactSource(row, identity)),
     baseline.catalog,
@@ -623,7 +631,7 @@ async function assertStorageSummary(page, sql) {
   })
 }
 
-async function assertInstalledCatalog(page, installed, identity, reviewed, jobId, baseline) {
+export async function assertInstalledCatalog(page, installed, identity, reviewed, jobId, baseline) {
   const { sql, row, component } = installed
   if (identity.resourceType) {
     assert.deepEqual(component, {
