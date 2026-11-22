@@ -152,6 +152,12 @@ entries record the state at their checkpoint.
    sides. One centered and overlapped the pair, and one omitted the apple.
    The two-seed visual gate and local negative remain open.
    [Anima tabletop placement](./phase-4-anima-countertop-scene-research.md)
+   The red-apple IMG follow-up has a frozen baseline, a treatment over
+   the apple and a spatial control over the mug. CPU preparation verified
+   all three saved Projects, exact decoded source pixels and local
+   negative owners. The three CUDA calls and blind visual scores are the
+   remaining checks for this one-seed trial.
+   [Anima red-apple negative](./phase-4-anima-apple-negative-research.md)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

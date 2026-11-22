@@ -589,9 +589,12 @@ export interface AnimaRegionalNegativeVisualUseCase {
 }
 
 /**
- * InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1: addRegionalGuidance.ts sends masked negatives
- * to the negative collector. anima_denoise.py and the Anima regional prompting and transformer
- * patch apply independent signed masks on even blocks.
+ * InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1:
+ * frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts pairs negative text
+ * with its mask. app/invocations/anima/anima_denoise.py calls backend/anima/scheduler_driver.py and
+ * applies the signed masks using backend/anima/{regional_prompting,anima_transformer_patch}.py. The
+ * webv1 buildAnimaGraph.ts and addImageToImage.ts pass the canvas composite to
+ * app/invocations/vae/anima_image_to_latents.py, which converts its input before encoding.
  */
 export async function produceAnimaRegionalNegativeVisualProbe(options: {
   pythonExecutable: string
@@ -604,14 +607,19 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
   const { pythonExecutable, run, runtimeRoot, useCase } = options
   const trainedBundle = captureTrainedBundle(options.trainedBundle)
   const sourceImage = structuredClone(options.sourceImage)
-  const runParent = path.join(
-    os.homedir(),
-    '.codex/artifacts/imagegen-studio/runs/anima-negative-visual',
-  )
-  assert.equal(path.dirname(run), runParent)
-  assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+  const runs = path.join(os.homedir(), '.codex/artifacts/imagegen-studio/runs')
+  const appleProfile = path.dirname(run) === path.join(runs, 'anima-apple-negative')
+  if (appleProfile) {
+    assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
+  } else {
+    assert.equal(path.dirname(run), path.join(runs, 'anima-negative-visual'))
+    assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+  }
   assert.equal(await realpath(run), run)
-  assert.equal(sourceImage.path, path.join(run, 'cat-scarves-source.png'))
+  assert.equal(
+    sourceImage.path,
+    path.join(run, appleProfile ? 'apple-mug-source.png' : 'cat-scarves-source.png'),
+  )
   assert.equal(await realpath(sourceImage.path), sourceImage.path)
   const sourceStat = await lstat(sourceImage.path)
   assert.ok(sourceStat.isFile() && sourceStat.size > 0 && sourceStat.size <= 2 * 1024 ** 2)
@@ -619,7 +627,10 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
   assert.equal(source.length, sourceImage.byteSize)
   assert.equal(digest(source), sourceImage.sha256)
   const bbox: IgsRectV1 = { height: 512, width: 512, x: 0, y: 0 }
-  assert.equal(classifyTargetPngAlpha(source, bbox.width, bbox.height), 'img2img')
+  // The native apple source is RGB. Raster import converts it before canvas target validation.
+  if (!appleProfile) {
+    assert.equal(classifyTargetPngAlpha(source, bbox.width, bbox.height), 'img2img')
+  }
 
   const data = path.join(run, 'anima-main-payload')
   const scratch = path.join(data, 'scratch')
@@ -680,8 +691,13 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
     const initial = structuredClone(owner().document)
     assert.deepEqual(initial.primaryBbox, bbox)
     assert.equal(initial.layers.length, 1)
-    const positive = 'one white cat wearing a scarf'
-    const negative = '(red scarf)1.5'
+    const positive = appleProfile
+      ? 'a pale wooden tabletop against a plain light blue wall, even lighting'
+      : 'one white cat wearing a scarf'
+    const negative = appleProfile ? '(red apple)2.0' : '(red scarf)1.5'
+    const globalPositive = appleProfile
+      ? 'anime still life illustration, a continuous pale wooden tabletop against a plain light blue wall, front view, even lighting'
+      : 'two white cats wearing scarves, illustration, plain light background'
     const maskPng = encodeProjectMaskPng(new Uint8Array(256 * 512).fill(255), 256, 512)
     const maskHash = digest(maskPng)
     const sources: Record<string, { bytes: Buffer }> = {}
@@ -719,7 +735,7 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
         id: REGION_IDS[index],
         locked: false,
         mask: masks[index],
-        name: `${side} cat`,
+        name: `${side} ${appleProfile ? 'tabletop' : 'cat'}`,
         overlayOpacity: 0,
         prompts: {
           negative: prompt(testCase.negativeSide === side ? negative : ''),
@@ -735,13 +751,11 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
           loras: [],
           model: reference,
           negativePrompt: prompt('(blur)0.75, noise'),
-          positivePrompt: prompt(
-            'two white cats wearing scarves, illustration, plain light background',
-          ),
+          positivePrompt: prompt(globalPositive),
           sampling: {
             animaMethod: 'heun',
             cfgScale: 4,
-            denoisingStrength: 0.5,
+            denoisingStrength: appleProfile ? 0.65 : 0.5,
             sampler: null,
             scheduler: null,
             steps: 20,

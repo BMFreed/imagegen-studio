@@ -5,7 +5,9 @@ import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../src/shared/projects/regio
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { prepareAnimaGenerationBatch } from '../src/main/projects/anima-generation-batch.js'
@@ -18,7 +20,6 @@ import {
 } from '../src/main/projects/test-fixtures/anima-regional-input.js'
 import {
   artifactRoot,
-  assertRuntimeIdle,
   assertUpgradeBounds,
   bytesAt,
   children,
@@ -27,6 +28,7 @@ import {
   observeGpu,
   readEngine,
   regular,
+  runtimeIdle,
   sha,
   verify,
   verifyFixtureFile,
@@ -35,29 +37,62 @@ import {
 } from './qualify-installed-reference-img-utility.mjs'
 
 const repository = path.resolve(import.meta.dirname, '..')
+const invokeRepository = path.resolve(repository, '../sources/InvokeAI')
 const [flag, run, ...extra] = process.argv.slice(2)
 assert.equal(flag, '--run')
 assert.ok(run && extra.length === 0)
-assert.equal(path.dirname(run), path.join(artifactRoot, 'runs/anima-negative-visual'))
-assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+const appleRunParent = path.join(artifactRoot, 'runs/anima-apple-negative')
+const appleProfile = path.dirname(run) === appleRunParent
+if (appleProfile) {
+  assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
+} else {
+  assert.equal(path.dirname(run), path.join(artifactRoot, 'runs/anima-negative-visual'))
+  assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+}
 assert.equal(await realpath(run), run)
 const write = (name: string, value: unknown) => writeJson(name, value, run)
 
 const bbox = { height: 512, width: 512, x: 0, y: 0 }
-const globalPositive = 'two white cats wearing scarves, illustration, plain light background'
+// These literals are independent of the authoring fixture and the sampling/prompt compilers.
+const profile = appleProfile
+  ? {
+      beginIndex: 14,
+      denoisingStrength: 0.65,
+      expectedActualSteps: 25,
+      globalPositive:
+        'anime still life illustration, a continuous pale wooden tabletop against a plain light blue wall, front view, even lighting',
+      regionalNegative: '(red apple)2.0',
+      regionalNegativeCleaned: 'red apple',
+      regionalNegativeWeight: 2,
+      regionalPositive: 'a pale wooden tabletop against a plain light blue wall, even lighting',
+      schema: 'anima-apple-negative-v1',
+      sourceFilename: 'apple-mug-source.png',
+      startStep: 7,
+    }
+  : {
+      beginIndex: 20,
+      denoisingStrength: 0.5,
+      expectedActualSteps: 19,
+      globalPositive: 'two white cats wearing scarves, illustration, plain light background',
+      regionalNegative: '(red scarf)1.5',
+      regionalNegativeCleaned: 'red scarf',
+      regionalNegativeWeight: 1.5,
+      regionalPositive: 'one white cat wearing a scarf',
+      schema: 'anima-negative-visual-v1',
+      sourceFilename: 'cat-scarves-source.png',
+      startStep: 10,
+    }
+const { expectedActualSteps, globalPositive, regionalNegative, regionalPositive } = profile
 const globalNegative = '(blur)0.75, noise'
-const regionalPositive = 'one white cat wearing a scarf'
-const regionalNegative = '(red scarf)1.5'
 const cases = [
   { label: 'baseline', negativeSide: null },
   { label: 'negative-left', negativeSide: 'left' },
   { label: 'negative-right', negativeSide: 'right' },
 ] as const
 const seed = 123
-const expectedActualSteps = 19
 const sampling = {
   cfgScale: 4,
-  denoisingStrength: 0.5,
+  denoisingStrength: profile.denoisingStrength,
   expectedActualSteps,
   nominalSteps: 20,
   sampler: 'Heun',
@@ -95,32 +130,95 @@ async function readPrior<T>(name: keyof typeof priorHashes): Promise<T> {
   assert.equal(sha(bytes), priorHashes[name])
   return JSON.parse(bytes.toString()) as T
 }
+async function currentSourceStat(filename: string): Promise<SourceFile['stat']> {
+  const { ctime, mtime, size, ...identity } = await regular(filename)
+  return { ...identity, ctimeNs: ctime, mtimeNs: mtime, size: String(size) }
+}
+
+async function revalidateSourceFiles(files: SourceFile[]): Promise<SourceFile[]> {
+  const verified: SourceFile[] = []
+  for (const file of files) {
+    const current = await currentSourceStat(file.path)
+    // The same model store can receive a different device number when remounted.
+    assert.deepEqual(current, { ...file.stat, dev: current.dev })
+    assert.equal(current.size, String(file.byteSize))
+    const reader = await open(
+      file.path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    )
+    const statReader = async (): Promise<SourceFile['stat']> => {
+      const stat = await reader.stat({ bigint: true })
+      assert.ok(stat.isFile())
+      return {
+        ctimeNs: String(stat.ctimeNs),
+        dev: String(stat.dev),
+        ino: String(stat.ino),
+        mode: String(stat.mode),
+        mtimeNs: String(stat.mtimeNs),
+        nlink: String(stat.nlink),
+        size: String(stat.size),
+      }
+    }
+    try {
+      assert.deepEqual(await statReader(), current)
+      const digest = createHash('sha256')
+      for await (const chunk of reader.createReadStream({ autoClose: false })) {
+        digest.update(chunk)
+      }
+      assert.equal(digest.digest('hex'), file.sha256, file.path)
+      assert.deepEqual(await statReader(), current)
+      assert.deepEqual(await currentSourceStat(file.path), current)
+    } finally {
+      await reader.close()
+    }
+    verified.push({ ...file, stat: current })
+  }
+  return verified
+}
+
 async function assertSourceFiles(files: SourceFile[]) {
-  for (const { byteSize, path: filename, stat } of files) {
-    const { ctime, mtime, size, ...identity } = await regular(filename)
-    assert.equal(size, byteSize)
-    assert.deepEqual({ ...identity, ctimeNs: ctime, mtimeNs: mtime, size: String(size) }, stat)
+  for (const file of files) {
+    assert.deepEqual(await currentSourceStat(file.path), file.stat)
   }
 }
 
 const start = Date.now()
 const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
 assert.ok(bounds.unit.endsWith('.service'))
-const fixture = JSON.parse((await bytesAt(path.join(run, 'fixture.json'))).toString()) as {
+const fixturePath = path.join(run, 'fixture.json')
+const fixtureBytes = await bytesAt(fixturePath)
+const fixture = JSON.parse(fixtureBytes.toString()) as {
   contract: FilePin
   sourceImage: FilePin
 }
 assert.deepEqual(Object.keys(fixture).sort(), ['contract', 'sourceImage'])
 assert.equal(fixture.contract.path, path.join(run, 'experiment-contract.json'))
-assert.equal(fixture.sourceImage.path, path.join(run, 'cat-scarves-source.png'))
+assert.equal(fixture.sourceImage.path, path.join(run, profile.sourceFilename))
+if (appleProfile) {
+  assert.deepEqual(fixture.sourceImage, {
+    byteSize: 144_401,
+    path: path.join(run, 'apple-mug-source.png'),
+    sha256: 'db013bc05f95c01b6a4cc5442560fe1d31b37876d834cc4061d33580fbb26af7',
+  })
+}
 for (const descriptor of Object.values(fixture)) {
   await verifyFixtureFile(descriptor)
 }
-const contract = JSON.parse((await bytesAt(fixture.contract.path)).toString())
+const contractBytes = await bytesAt(fixture.contract.path)
+assert.equal(contractBytes.length, fixture.contract.byteSize)
+assert.equal(sha(contractBytes), fixture.contract.sha256)
+const contract = JSON.parse(contractBytes.toString())
+if (appleProfile) {
+  assert.equal(contract.iccSha256, IGS_SRGB_ICC_SHA256)
+  assert.equal(
+    contract.sourceRgbaSha256,
+    'b0a5c5733d2cf3b294bf9901b462fe35b4d4ba6bcdd30df549e6e129a4d9507b',
+  )
+}
 const revision = (cwd: string) =>
   execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 10_000 }).trim()
 const applicationRevision = revision(repository)
-const invokeRevision = revision(path.resolve(repository, '../sources/InvokeAI'))
+const invokeRevision = revision(invokeRepository)
 assert.deepEqual(
   [
     contract.schema,
@@ -128,7 +226,7 @@ assert.deepEqual(
     contract.invokeRevision,
     contract.nativeRequestCeiling,
   ],
-  ['anima-negative-visual-v1', applicationRevision, invokeRevision, cases.length],
+  [profile.schema, applicationRevision, invokeRevision, cases.length],
 )
 assert.deepEqual(
   [
@@ -179,7 +277,7 @@ assert.deepEqual(
 )
 assert.deepEqual(prior.files, proof.trainedGeneration.modelInputs)
 assert.deepEqual(prior.files, preserved.files)
-await assertSourceFiles(prior.files)
+const liveSourceFiles = await revalidateSourceFiles(prior.files)
 const trainedBundle = Object.fromEntries(
   prior.files.map(({ byteSize, path: filename, role, sha256 }) => [
     role,
@@ -187,8 +285,8 @@ const trainedBundle = Object.fromEntries(
   ]),
 ) as unknown as AnimaRegionalTrainedBundle
 
-const idle = () => assertRuntimeIdle(install.appDataDir, install.basePrefix)
-await idle()
+const idle = () => runtimeIdle(install)
+const bootstrapStorage = await idle()
 const outputRoot = path.join(run, 'native-outputs')
 const scratchBasePath = path.join(run, 'native-scratch')
 const hfHome = path.join(run, 'native-hf-home')
@@ -199,21 +297,40 @@ const ownerFiles = [
   'scripts/qualify-installed-anima-negative-visual.mts',
   'scripts/qualify-installed-reference-img-utility.mts',
   'src/main/projects/test-fixtures/anima-regional-input.ts',
+  'src/main/projects/project-current-canvas-anima-regional-input.ts',
+  'src/main/projects/anima-generation-request.ts',
+  'src/shared/projects/anima-euler-plan.ts',
+  'src/shared/projects/anima-sampling-plan.ts',
+  'worker-python/src/imagegen_worker/anima_regional.py',
 ]
-const sourceWitness = () =>
+const invokeFiles = [
+  'invokeai/frontend/webv1/src/features/nodes/util/graph/generation/buildAnimaGraph.ts',
+  'invokeai/frontend/webv1/src/features/nodes/util/graph/generation/addImageToImage.ts',
+  'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
+  'invokeai/app/invocations/anima/anima_denoise.py',
+  'invokeai/backend/anima/scheduler_driver.py',
+  'invokeai/backend/anima/regional_prompting.py',
+  'invokeai/backend/anima/anima_transformer_patch.py',
+  'invokeai/backend/flux/schedulers.py',
+]
+const sourceWitness = (root: string, names: string[]) =>
   Promise.all(
-    ownerFiles.map(async (name) => ({
+    names.map(async (name) => ({
       name,
-      sha256: sha(await bytesAt(path.join(repository, name))),
+      sha256: sha(await bytesAt(path.join(root, name))),
     })),
   )
-const source = await sourceWitness()
+const source = await sourceWitness(repository, ownerFiles)
+const invokeSource = await sourceWitness(invokeRepository, invokeFiles)
 await write('native-start.json', {
   applicationRevision,
+  bootstrapStorage,
   bounds,
   fixture,
   installation: install,
   invokeRevision,
+  invokeSource,
+  modelSourceIdentity: { current: liveSourceFiles, historical: prior.files },
   priorHashes,
   sampling,
   source,
@@ -224,6 +341,7 @@ let attempted = 0
 let submitted = 0
 let targetSha: string | undefined
 const observations: unknown[] = []
+const outputPins: FilePin[] = []
 let failure: unknown
 try {
   await produceAnimaRegionalNegativeVisualProbe({
@@ -279,7 +397,10 @@ try {
           : [
               {
                 polarity: 'negative',
-                prompt: literalPrompt('red scarf', 1.5),
+                prompt: literalPrompt(
+                  profile.regionalNegativeCleaned,
+                  profile.regionalNegativeWeight,
+                ),
                 sourceId: regionId(testCase.negativeSide),
                 text: regionalNegative,
               },
@@ -300,8 +421,8 @@ try {
         )
       }
 
-      await idle()
-      await assertSourceFiles(prior.files)
+      assert.deepEqual(await idle(), bootstrapStorage)
+      await assertSourceFiles(liveSourceFiles)
       const previousChildren = new Set(await children())
       const remaining = 600_000 - (Date.now() - start)
       assert.ok(remaining > 0)
@@ -375,7 +496,17 @@ try {
                 strength,
                 totalSteps,
               ],
-              [20, 4, (seed ^ 0x9e_37_79_b9) >>> 0, 'heun', seed, 10, 20, 0.5, expectedActualSteps],
+              [
+                profile.beginIndex,
+                4,
+                (seed ^ 0x9e_37_79_b9) >>> 0,
+                'heun',
+                seed,
+                profile.startStep,
+                20,
+                profile.denoisingStrength,
+                expectedActualSteps,
+              ],
             )
             assert.deepEqual(request.job.prompts, {
               negative: global.prompt,
@@ -431,6 +562,7 @@ try {
             }
           },
         })
+        outputPins.push(output)
         return output
       } catch (error) {
         caseError = error
@@ -467,14 +599,21 @@ try {
 
 let preservationError: unknown
 try {
-  await idle()
-  await assertSourceFiles(prior.files)
+  assert.deepEqual(await idle(), bootstrapStorage)
+  await assertSourceFiles(liveSourceFiles)
   for (const pin of enginePins) {
     await verify(pin)
   }
-  assert.deepEqual(await sourceWitness(), source)
+  assert.deepEqual(await sourceWitness(repository, ownerFiles), source)
+  assert.deepEqual(await sourceWitness(invokeRepository, invokeFiles), invokeSource)
+  assert.equal(revision(repository), applicationRevision)
+  assert.equal(revision(invokeRepository), invokeRevision)
+  assert.deepEqual(await bytesAt(fixturePath), fixtureBytes)
   for (const descriptor of Object.values(fixture)) {
     await verifyFixtureFile(descriptor)
+  }
+  for (const pin of outputPins) {
+    await verifyFixtureFile(pin)
   }
 } catch (error) {
   preservationError = error

@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Anima red-apple negative preparation
+
+[Red-apple IMG preparation](./phase-4-anima-apple-negative-research.md)
+verified the same source pixels, saved Projects and frozen prompt owners
+for the baseline, left treatment and right spatial control. CUDA and
+blind visual review remain open.
+
 ## Anima tabletop placement with shared scene context
 
 [Tabletop placement](./phase-4-anima-countertop-scene-research.md) passed all
