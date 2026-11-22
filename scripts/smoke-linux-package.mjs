@@ -54,6 +54,7 @@ const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMO
 const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPAIR
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
+const modelInstallCrash = offlineProject === 'model-install-interruption'
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
@@ -181,6 +182,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'home-recovery-keyboard',
         'queue-startup-recovery',
         'model-install-startup',
+        'model-install-interruption',
       ].includes(offlineProject) &&
         portableChooser === undefined &&
         componentAction === undefined),
@@ -224,7 +226,7 @@ assert.ok(
 )
 assert.equal(
   noobaiTokenFile !== undefined,
-  noobaiPreviewMode === 'live' || Boolean(noobaiInstall || componentRepair),
+  noobaiPreviewMode === 'live' || Boolean(noobaiInstall || componentRepair || modelInstallCrash),
 )
 assert.ok(
   runtimeSetupControl === undefined ||
@@ -479,6 +481,7 @@ const offlineProjectFixture = {
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
+  'model-install-interruption': 'packaged-model-install-interruption',
 }[offlineProject]
 const offlineProjectScope = {
   trash:
@@ -491,6 +494,8 @@ const offlineProjectScope = {
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
     'Stock AppImage reconciles persisted unfinished model installations and owned files once across two cold startups.',
+  'model-install-interruption':
+    'Stock AppImage recovers one live CivitAI installation interrupted by a Main-only process fault.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -763,7 +768,7 @@ if (offlineProject === 'queue-startup-recovery')
       'src/renderer/components/GenerationQueueManager.vue',
     ].map((file) => path.join(repo, file)),
   )
-if (offlineProject === 'model-install-startup')
+if (offlineProject === 'model-install-startup' || modelInstallCrash)
   sourcePaths.push(
     ...[
       'scripts/fixtures/application-state-upgrade-fixture.mjs',
@@ -776,6 +781,15 @@ if (offlineProject === 'model-install-startup')
       'src/main/projects/project-index.ts',
       'src/renderer/components/ModelManager.vue',
       'src/renderer/App.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (modelInstallCrash)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-model-install-fault.py',
+      'scripts/fixtures/packaged-noobai-install-ui.mjs',
+      'src/main/models/civitai-client.ts',
+      'src/main/models/civitai-token-store.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (componentRemove === 'queue')
@@ -1073,6 +1087,10 @@ async function launch(name, selectedAppImage = appImage) {
     state.aggregateLimits = assertAggregate(state.checks)
   }
   await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
+  if (modelInstallCrash && state.name === 'first') {
+    const [check] = state.checks
+    state.modelInstallFaultAuthority = await privateInstallMainFault(state, check, 'verify')
+  }
   records.push({
     name: `${name}: packaged Home loads with real preload and IPC`,
     rendererUrl: page.url(),
@@ -1191,8 +1209,47 @@ async function retainLifetimeResources(state) {
   }
 }
 
+async function privateInstallMainFault(state, check, action) {
+  const group = check.groups.find(({ pids }) => pids.includes(state.mainPid))?.group
+  const file = path.join(appData, 'database/app.sqlite')
+  const stat = await lstat(file, { bigint: true })
+  assert.ok(stat.isFile() && stat.nlink === 1n)
+  const { stdout } = await execute(
+    '/usr/bin/python3',
+    [
+      '-I',
+      '-B',
+      path.join(repo, 'scripts/fixtures/packaged-model-install-fault.py'),
+      action,
+      String(state.mainPid),
+      String(state.wrapperPid),
+      String(process.pid),
+      check.nativeIdentity.start,
+      group,
+      file,
+      environment.TMPDIR,
+    ],
+    { timeout: 5_000 },
+  )
+  const { ancestry, ...proof } = JSON.parse(stdout)
+  assert.deepEqual(proof, {
+    signalRequested: action === 'kill',
+    pidfd: true,
+    pid: state.mainPid,
+    start: check.nativeIdentity.start,
+    group,
+    signal: action === 'kill' ? 'SIGKILL' : null,
+    database: { path: file, device: String(stat.dev), inode: String(stat.ino) },
+  })
+  assert.equal(ancestry[0], state.mainPid)
+  assert.equal(ancestry.at(-1), state.wrapperPid)
+  assert.ok(ancestry.length <= 8 && ancestry.every((pid) => Number.isSafeInteger(pid) && pid > 1))
+  assert.equal(new Set(ancestry).size, ancestry.length)
+  return { ...proof, ancestry }
+}
+
 async function crashForRecovery(state, beforeSignal) {
-  assert.ok(trainedCrash)
+  assert.ok(trainedCrash || modelInstallCrash)
   assert.equal(lifetimes.length, 1)
   assert.equal(lifetimes[0], state)
   assert.equal(state.name, 'first')
@@ -1203,21 +1260,32 @@ async function crashForRecovery(state, beforeSignal) {
   const current = await boundQualificationProcess(state.mainPid, {
     deadlineSeconds: nativeDeadlineSeconds,
     execute: boundedExecute,
-    surviveMainDeath: true,
-    refreshMainDeathProof: true,
+    surviveMainDeath: Boolean(trainedCrash),
+    refreshMainDeathProof: Boolean(trainedCrash),
   })
   assert.deepEqual(current.nativeIdentity, original?.nativeIdentity)
-  const scope = current.groups.find(
-    ({ ownedScope, pids }) => ownedScope && pids.includes(state.mainPid),
-  )
-  assert.ok(scope?.scopeProof, 'Project recovery needs a captured, owned native scope.')
+  const scope = current.groups.find(({ pids }) => pids.includes(state.mainPid))
+  assert.ok(scope)
+  if (modelInstallCrash) {
+    const group = (await readFile('/proc/self/cgroup', 'utf8')).trim()
+    assert.equal(group, `0::${scope.group}`)
+    assert.match(
+      path.basename(scope.group),
+      /^igs-model-install-interruption-\d{8}-r[1-9]\d*\.scope$/,
+    )
+    assert.ok(!scope.ownedScope)
+  } else {
+    assert.ok(scope.scopeProof, 'Project recovery needs a captured, owned native scope.')
+  }
   state.checks.push(current)
   state.aggregateLimits = assertAggregate(state.checks)
   await retainLifetimeResources(state)
   const intent = {
     expectedSignal: 'SIGKILL',
     mainOnly: true,
-    scopeProof: scope.scopeProof,
+    ...(modelInstallCrash
+      ? { sharedPrivateScope: scope.group, nativeIdentity: current.nativeIdentity }
+      : { scopeProof: scope.scopeProof }),
   }
   await writeFile(
     path.join(root, `${state.name}.crash-intent.json`),
@@ -1226,13 +1294,17 @@ async function crashForRecovery(state, beforeSignal) {
   )
   await beforeSignal?.()
   state.crashIntent = intent
-  state.crashSignal = await signalQualificationMain(
-    { ...current.nativeIdentity, group: scope.group },
-    { execute: boundedExecute },
-  )
+  if (modelInstallCrash) {
+    state.crashSignal = await privateInstallMainFault(state, current, 'kill')
+  } else {
+    state.crashSignal = await signalQualificationMain(
+      { ...current.nativeIdentity, group: scope.group },
+      { execute: boundedExecute },
+    )
+  }
   state.scopeExit = await confirmQualificationProcessExit(state.checks, { execute: boundedExecute })
   assert.ok(state.scopeExit.confirmed)
-  assert.ok(state.scopeExit.confirmedOwnedScopeExit.includes(scope.group))
+  if (!modelInstallCrash) assert.ok(state.scopeExit.confirmedOwnedScopeExit.includes(scope.group))
   const closed = await bounded(state.closePromise, 15_000, 'Injected packaged crash settlement')
   if (state.wrapperPid === state.mainPid) {
     assert.deepEqual(closed, { code: null, signal: 'SIGKILL' })
@@ -1503,6 +1575,13 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'model-install-startup') {
       return await fixture.runPackagedModelInstallStartup(args)
+    }
+    if (modelInstallCrash) {
+      return await fixture.runPackagedModelInstallInterruption({
+        ...args,
+        liveToken: await readNoobaiCredential(),
+        crashForRecovery,
+      })
     }
     const { assertOfflineProjectDesktop } =
       await import('./fixtures/packaged-noobai-import-chooser.mjs')
@@ -1923,9 +2002,17 @@ try {
     }
   }
   if (protocolHarness || legacyHarness || privateDesktop || projectExport || continuity) {
-    assert.equal(lifetimes.length, portableLocate || offlineProject === 'trash' ? 3 : 2)
+    assert.equal(
+      lifetimes.length,
+      portableLocate || offlineProject === 'trash' || modelInstallCrash ? 3 : 2,
+    )
     for (const state of lifetimes) {
-      assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
+      if (modelInstallCrash && state === lifetimes[0]) {
+        assert.equal(state.name, 'first')
+        assert.ok(state.crashPhysicalExit && !state.normalPhysicalExit && !state.forcedCleanup)
+      } else {
+        assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
+      }
       assert.ok(
         state.memoryBeforeClose.every(
           ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
@@ -2070,7 +2157,7 @@ try {
   for (const state of lifetimes) {
     if (state.crashIntent && !state.crashPhysicalExit) {
       try {
-        if (!state.scopeExit?.confirmed) {
+        if (!state.scopeExit?.confirmed && state.crashIntent.scopeProof) {
           // A failed crash run stays failed. Only the captured test scope can
           // be signaled if the first Main-only fault left anything alive.
           state.forcedCleanup = true

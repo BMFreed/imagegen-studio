@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Live CivitAI transfer interrupted in packaged Main
+
+[Packaged model install interruption](./phase-5-packaged-model-install-interruption-research.md)
+stopped Main with the exact VAE transfer active. The next startup removed
+the incomplete file and settled the same job. Two normal closes left
+identical SQLite bytes.
+
 ## Cold startup after interrupted model installations
 
 [Packaged Model Manager startup](./phase-5-packaged-model-install-startup-research.md)

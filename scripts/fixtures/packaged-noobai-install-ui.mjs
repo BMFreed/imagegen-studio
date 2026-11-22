@@ -227,12 +227,17 @@ export async function connectToken(page, liveToken) {
   try {
     status = await page.evaluate(async (token) => {
       const result = await window.api.models.saveToken(token)
-      return result.ok ? result.value.kind : 'failed'
+      if (result.ok) return result.value.kind
+      const code = result.error?.code
+      return typeof code === 'string' && /^[A-Z0-9_]{1,80}$/.test(code) ? code : 'failed'
     }, liveToken)
   } catch {
     throw new Error('Live token setup failed in the isolated packaged profile.')
   }
-  assert.ok(status === 'connected', 'The live CivitAI token must validate before installation.')
+  assert.ok(
+    status === 'connected',
+    `The live CivitAI token must validate before installation (${status}).`,
+  )
 }
 
 async function reviewExactFile(page, manager, providerPage, identity) {
@@ -312,6 +317,14 @@ async function reviewExactFile(page, manager, providerPage, identity) {
     versionName: preview.versionName,
     ...(identity.resourceType && { sourceBaseModel, trainedWords: preview.trainedWords }),
   }
+}
+
+export async function reviewLiveVaeInstall(page) {
+  const artifactIdentity = profiles.vae
+  const providerPage = `https://civitai.com/models/${artifactIdentity.modelId}?modelVersionId=${artifactIdentity.versionId}`
+  const manager = await openManager(page)
+  const reviewed = await reviewExactFile(page, manager, providerPage, artifactIdentity)
+  return { ...reviewed, manager, artifactIdentity }
 }
 
 function jobMatches(job, reviewed) {

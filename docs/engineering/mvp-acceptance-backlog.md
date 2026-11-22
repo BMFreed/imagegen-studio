@@ -269,6 +269,11 @@ entries record the state at their checkpoint.
    same closed database bytes after the second startup.
    [Packaged model install startup](./phase-5-packaged-model-install-startup-research.md),
    [model install shutdown](./phase-5-model-install-shutdown-research.md).
+   A live CivitAI VAE transfer also passed the stock Main-death check.
+   The captured WAL kept the job downloading before recovery. On restart
+   the same job became interrupted, the part disappeared, and a second
+   normal close produced the same SQLite bytes.
+   [Live model install interruption](./phase-5-packaged-model-install-interruption-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
