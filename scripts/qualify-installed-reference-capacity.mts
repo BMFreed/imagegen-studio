@@ -58,7 +58,9 @@ const revision = (cwd: string) =>
   execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 10_000 }).trim()
 const invoke = path.resolve(repository, '../sources/InvokeAI')
 const originalBoundaries = fixture.schema === 'regional-reference-original-capacity-v1'
-const exactStoredBytes = fixture.schema === 'regional-reference-exact-stored-bytes-v1'
+const jointLimits = fixture.schema === 'regional-reference-joint-capacity-v1'
+const exactStoredBytes =
+  jointLimits || fixture.schema === 'regional-reference-exact-stored-bytes-v1'
 assert.ok(
   originalBoundaries || exactStoredBytes || fixture.schema === 'regional-reference-capacity-v1',
 )
@@ -94,6 +96,11 @@ assert.deepEqual(fixture.model, {
   name: 'Illustrious XL v0.1',
   sha256: '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9',
 })
+const pngDimensions = (bytes: Buffer) => {
+  assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+  assert.equal(bytes.toString('ascii', 12, 16), 'IHDR')
+  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)]
+}
 const imagePins = [
   fixture.sourceImage,
   ...fixture.referenceImages,
@@ -128,19 +135,14 @@ if (fixture.boundaries) {
   const oversized = fixture.boundaries.normalized[3].bytes
   assert.ok(oversized > byteLimit && oversized <= byteLimit + 256 * 1024)
   const dimensionRefusals = await Promise.all(
-    fixture.boundaries.dimensionRefusals.map(async (pin) => {
-      const header = await bytesAt(pin.path)
-      assert.equal(header.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
-      assert.equal(header.toString('ascii', 12, 16), 'IHDR')
-      return [header.readUInt32BE(16), header.readUInt32BE(20)]
-    }),
+    fixture.boundaries.dimensionRefusals.map(async (pin) => pngDimensions(await bytesAt(pin.path))),
   )
   assert.deepEqual(dimensionRefusals, [
     [16_385, 1],
     [1, 16_385],
     [5213, 12_277],
   ])
-} else {
+} else if (!jointLimits) {
   assert.equal(
     fixture.referenceImages.slice(0, 3).reduce((sum, image) => sum + image.byteSize, 0),
     14_750,
@@ -158,6 +160,25 @@ if (fixture.storedReferences) {
   )
   assert.deepEqual(fixture.storedReferences.accepted[2], fixture.storedReferences.refused[2])
 }
+const jointDimensions = new Map<string, readonly [number, number]>()
+if (jointLimits) {
+  assert.ok(fixture.storedReferences)
+  const shapes = [
+    [8000, 8000],
+    [16_384, 3906],
+    [6400, 10_000],
+  ] as const
+  for (const pins of [
+    fixture.referenceImages,
+    fixture.storedReferences.accepted,
+    fixture.storedReferences.refused,
+  ]) {
+    for (const [index, pin] of pins.entries()) {
+      jointDimensions.set(pin.path, shapes[index])
+    }
+  }
+  assert.equal(jointDimensions.size, 8)
+}
 const verifyImagePin = async (pin: FilePin) => {
   assert.ok(
     pin.byteSize < (originalBoundaries || exactStoredBytes ? 36 : 1) * 1024 ** 2 &&
@@ -167,6 +188,10 @@ const verifyImagePin = async (pin: FilePin) => {
   const bytes = await bytesAt(pin.path, 32 * 1024 ** 2 + (exactStoredBytes ? 1 : 0))
   assert.equal(bytes.length, pin.byteSize, pin.path)
   assert.equal(sha(bytes), pin.sha256, pin.path)
+  const dimensions = jointDimensions.get(pin.path)
+  if (dimensions) {
+    assert.deepEqual(pngDimensions(bytes), dimensions, pin.path)
+  }
 }
 for (const pin of imagePins) {
   await verifyImagePin(pin)
