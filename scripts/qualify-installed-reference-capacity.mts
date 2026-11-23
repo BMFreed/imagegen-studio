@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import {
   type CapacityOriginalBoundaries,
+  type CapacityStoredReferences,
   withRegionalReferenceCapacityProject,
 } from '../src/main/projects/test-fixtures/regional-reference-capacity-project.js'
 import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.js'
@@ -47,17 +48,22 @@ const fixture = JSON.parse(fixtureBytes.toString()) as {
   geometry: object
   invokeRevision: string
   model: { byteSize: number; name: string; sha256: string }
-  referenceImages: readonly [FilePin, FilePin, FilePin, FilePin]
+  referenceImages: readonly FilePin[]
   sampling: object
   schema: string
   sourceImage: FilePin
+  storedReferences?: CapacityStoredReferences
 }
 const revision = (cwd: string) =>
   execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 10_000 }).trim()
 const invoke = path.resolve(repository, '../sources/InvokeAI')
 const originalBoundaries = fixture.schema === 'regional-reference-original-capacity-v1'
-assert.ok(originalBoundaries || fixture.schema === 'regional-reference-capacity-v1')
+const exactStoredBytes = fixture.schema === 'regional-reference-exact-stored-bytes-v1'
+assert.ok(
+  originalBoundaries || exactStoredBytes || fixture.schema === 'regional-reference-capacity-v1',
+)
 assert.equal(Boolean(fixture.boundaries), originalBoundaries)
+assert.equal(Boolean(fixture.storedReferences), exactStoredBytes)
 assert.equal(revision(repository), fixture.applicationBase)
 assert.equal(revision(invoke), fixture.invokeRevision)
 assert.equal(fixture.invokeRevision, '4875d96531ca6712b288f6e660fcbb34143408c1')
@@ -92,9 +98,18 @@ const imagePins = [
   fixture.sourceImage,
   ...fixture.referenceImages,
   ...(fixture.boundaries?.dimensionRefusals ?? []),
+  ...new Map(
+    [
+      ...(fixture.storedReferences?.accepted ?? []),
+      ...(fixture.storedReferences?.refused ?? []),
+    ].map((pin) => [pin.path, pin]),
+  ).values(),
 ]
-assert.equal(fixture.referenceImages.length, 4)
-assert.equal(new Set(fixture.referenceImages.map((image) => image.sha256)).size, 4)
+assert.equal(fixture.referenceImages.length, exactStoredBytes ? 3 : 4)
+assert.equal(
+  new Set(fixture.referenceImages.map((image) => image.sha256)).size,
+  fixture.referenceImages.length,
+)
 if (fixture.boundaries) {
   const byteLimit = 32 * 1024 ** 2
   assert.equal(fixture.boundaries.dimensionRefusals.length, 3)
@@ -131,9 +146,21 @@ if (fixture.boundaries) {
     14_750,
   )
 }
+if (fixture.storedReferences) {
+  const limit = 32 * 1024 ** 2
+  assert.deepEqual(
+    fixture.storedReferences.accepted.map(({ byteSize }) => byteSize),
+    [limit, limit, limit],
+  )
+  assert.deepEqual(
+    fixture.storedReferences.refused.map(({ byteSize }) => byteSize),
+    [limit + 1, limit - 1, limit],
+  )
+  assert.deepEqual(fixture.storedReferences.accepted[2], fixture.storedReferences.refused[2])
+}
 for (const pin of imagePins) {
   assert.ok(
-    pin.byteSize < (originalBoundaries ? 36 : 1) * 1024 ** 2 &&
+    pin.byteSize < (originalBoundaries || exactStoredBytes ? 36 : 1) * 1024 ** 2 &&
       pin.path.startsWith(path.join(artifactRoot, 'runs') + path.sep),
   )
   await verify({ path: pin.path, sha256: pin.sha256, sizeBytes: pin.byteSize })
@@ -228,9 +255,11 @@ try {
     referenceImages: fixture.referenceImages,
     run,
     sourceImage: fixture.sourceImage,
+    storedReferences: fixture.storedReferences,
     use: (context) =>
       runRegionalReferenceCapacityMain(context, {
         assertIdle,
+        exactStoredBytes,
         install,
         observeGpu,
         originalBoundaries,

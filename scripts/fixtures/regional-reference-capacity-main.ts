@@ -47,6 +47,7 @@ interface CapacityProject {
 
 interface CapacityOptions {
   assertIdle: () => Promise<unknown>
+  exactStoredBytes?: boolean
   install: {
     configDir: string
     exactPython: string
@@ -109,6 +110,8 @@ export async function runRegionalReferenceCapacityMain(
   } = context
   const { assertIdle, install, observeGpu, resources, run } = options
   const originalBoundaries = options.originalBoundaries === true
+  const exactStoredBytes = options.exactStoredBytes === true
+  const byteCase = originalBoundaries || exactStoredBytes
   const artifactRoot = path.join(run, 'native')
   const end = Date.now() + (options.timeoutMs ?? 420_000)
   assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -357,9 +360,9 @@ export async function runRegionalReferenceCapacityMain(
     const before = await snapshot()
     assert.deepEqual(before.document.primaryBbox, bbox)
     const refusedReferences = authoredReferences(before.document)
-    assert.equal(refusedReferences.length, originalBoundaries ? 3 : 4)
-    const rejection = originalBoundaries ? maxReferenceBytesRefusal : maxReferenceRefusal
-    if (originalBoundaries) {
+    assert.equal(refusedReferences.length, byteCase ? 3 : 4)
+    const rejection = byteCase ? maxReferenceBytesRefusal : maxReferenceRefusal
+    if (byteCase) {
       assert.ok(
         refusedReferences.reduce((total, { asset }) => total + asset.bytes, 0) <= 96 * 1024 ** 2,
       )
@@ -368,6 +371,13 @@ export async function runRegionalReferenceCapacityMain(
           .filter(({ asset }) => asset.bytes > 32 * 1024 ** 2)
           .map(({ referenceId }) => referenceId),
         [referenceIds.refused],
+      )
+    }
+    if (exactStoredBytes) {
+      const limit = 32 * 1024 ** 2
+      assert.deepEqual(
+        refusedReferences.map(({ asset }) => asset.bytes),
+        [limit + 1, limit - 1, limit],
       )
     }
     await assert.rejects(
@@ -403,10 +413,18 @@ export async function runRegionalReferenceCapacityMain(
     if (originalBoundaries) {
       assert.ok(!beforeIds.includes(legalIds[0]))
     }
-    assert.deepEqual(
-      originalBoundaries ? legalIds.slice(1) : legalIds,
-      beforeIds.filter((id) => id !== referenceIds.refused),
-    )
+    if (exactStoredBytes) {
+      assert.deepEqual(legalIds, beforeIds)
+      assert.deepEqual(
+        authoredReferences(savedDocument).map(({ asset }) => asset.bytes),
+        Array.from({ length: 3 }).fill(32 * 1024 ** 2),
+      )
+    } else {
+      assert.deepEqual(
+        originalBoundaries ? legalIds.slice(1) : legalIds,
+        beforeIds.filter((id) => id !== referenceIds.refused),
+      )
+    }
     assert.deepEqual(legalIds, referenceIds.originals)
     allowed = true
     const admission = await actions.generate(tabId, {

@@ -19,7 +19,7 @@ import { CivitaiClient } from '../../models/civitai-client.js'
 import { CivitaiTokenStore } from '../../models/civitai-token-store.js'
 import { ModelRepository } from '../../models/model-repository.js'
 import { ModelService } from '../../models/model-service.js'
-import { readIgsPackage } from '../igs-package.js'
+import { type IgsAssetSource, readIgsPackage } from '../igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from '../project-autosave.js'
 import { ProjectIndexRepository } from '../project-index.js'
 import { decodeProjectMaskPng } from '../project-mask.js'
@@ -54,6 +54,11 @@ export interface CapacityOriginalBoundaries {
   normalized: readonly { bytes: number; height: number; sha256: string; width: number }[]
 }
 
+export interface CapacityStoredReferences {
+  accepted: readonly [FilePin, FilePin, FilePin]
+  refused: readonly [FilePin, FilePin, FilePin]
+}
+
 interface FilePin {
   byteSize: number
   path: string
@@ -77,12 +82,13 @@ const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex
 export async function withRegionalReferenceCapacityProject<T>(options: {
   boundaries?: CapacityOriginalBoundaries
   install: { pythonExecutable: string; runtimeDir: string }
-  referenceImages: readonly [FilePin, FilePin, FilePin, FilePin]
+  referenceImages: readonly FilePin[]
   run: string
   sourceImage: FilePin
+  storedReferences?: CapacityStoredReferences
   use: (project: CapacityProject) => Promise<T>
 }): Promise<T> {
-  const { boundaries, install, referenceImages, run, sourceImage, use } = options
+  const { boundaries, install, referenceImages, run, sourceImage, storedReferences, use } = options
   assert.equal(path.dirname(run), path.join(ARTIFACT_ROOT, 'runs/regional-reference-capacity'))
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/u)
   assert.equal(await realpath(run), run)
@@ -94,7 +100,10 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
   const scratch = path.join(root, 'scratch')
   await mkdir(scratch, { mode: 0o700 })
   assert.equal(classifyTargetPngAlpha(await verifyImage(sourceImage), 512, 512), 'img2img')
-  assert.equal(new Set(referenceImages.map(({ sha256: hash }) => hash)).size, 4)
+  assert.equal(
+    new Set(referenceImages.map(({ sha256: hash }) => hash)).size,
+    storedReferences ? 3 : 4,
+  )
   for (const image of [...referenceImages, ...(boundaries?.dimensionRefusals ?? [])]) {
     await verifyImage(image, boundaries ? 36 : 32)
   }
@@ -268,12 +277,17 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
           { flag: 'wx', mode: 0o600 },
         )
       }
-      for (const index of boundaries ? [3, 1, 2] : [0, 1, 2, 3]) {
+      const importOrder = boundaries ? [3, 1, 2] : [0, 1, 2]
+      if (!boundaries && !storedReferences) {
+        importOrder.push(3)
+      }
+      for (const index of importOrder) {
         await importReference(worker, index)
       }
     })
 
-    const [, second, third, refused] = imported
+    const [, second, third] = imported
+    const refused = imported[storedReferences ? 0 : 3]
     const referenceIds = {
       get originals() {
         return imported.slice(0, 3)
@@ -312,14 +326,60 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
       return packageData.project
     }
 
+    const applyStoredReferences = async (files: CapacityStoredReferences['accepted']) => {
+      const session = current()
+      const { document, documentEpoch } = session
+      const sources: Record<string, IgsAssetSource> = {}
+      const regionalGuidance = document.regionalGuidance!.map((region, index) => {
+        const [reference] = region.referenceImages!
+        const image = files[index]
+        const asset = {
+          ...reference.asset,
+          bytes: image.byteSize,
+          path: `assets/regional-references/${reference.id}/${image.sha256}.png`,
+          sha256: image.sha256,
+        }
+        if (asset.sha256 !== reference.asset.sha256) {
+          sources[asset.path] = { sourcePath: image.path }
+        }
+        return { ...region, referenceImages: [{ ...reference, asset }] }
+      })
+      await session.applyDocument({ ...document, regionalGuidance }, sources, {
+        expectedDocumentEpoch: documentEpoch,
+        expectedDocumentRevision: document.documentRevision,
+      })
+      return regionalGuidance
+    }
+    if (storedReferences) {
+      await applyStoredReferences(storedReferences.refused)
+    }
+    const byteCase = Boolean(boundaries || storedReferences)
     const before = await retainPackage(
-      boundaries ? 'oversized-reference.igs' : 'four-references.igs',
-      [boundaries ? [refused] : [imported[0], refused], [second], [third]],
+      byteCase ? 'oversized-reference.igs' : 'four-references.igs',
+      [byteCase ? [refused] : [imported[0], refused], [second], [third]],
     )
+    if (storedReferences) {
+      assert.deepEqual(
+        before.regionalGuidance!.map((region) => region.referenceImages![0].asset.sha256),
+        storedReferences.refused.map((image) => image.sha256),
+      )
+    }
     const prepareAccepted = async () => {
       // Compare with the authored snapshot after the public refusal. The caller
       // controls the refusal test and cannot silently change the input for the admitted job.
       assert.deepEqual(current().document, before)
+      if (storedReferences) {
+        const expected = await applyStoredReferences(storedReferences.accepted)
+        const after = await retainPackage(
+          'three-references.igs',
+          imported.map((id) => [id]),
+        )
+        assert.deepEqual(after.regionalGuidance, expected)
+        assert.deepEqual(after.layers, before.layers)
+        assert.deepEqual(after.generationDraft, before.generationDraft)
+        assert.equal(after.lastActualSeedSnapshot, before.lastActualSeedSnapshot)
+        return tabId
+      }
       const regionId = before.regionalGuidance![0].id
       await projects.updateRegionalGuidanceReferenceImage(
         tabId,
