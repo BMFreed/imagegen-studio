@@ -188,6 +188,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
       ([
         'trash',
         'trash-recovery',
+        'sqlite-manual-recovery',
         'result-preset',
         'home-recovery-keyboard',
         'queue-startup-recovery',
@@ -491,6 +492,7 @@ const componentHarness = componentAction
 const offlineProjectFixture = {
   trash: 'packaged-project-trash',
   'trash-recovery': 'packaged-project-trash-recovery',
+  'sqlite-manual-recovery': 'packaged-sqlite-manual-recovery',
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
@@ -504,6 +506,8 @@ const offlineProjectScope = {
     'Actual stock AppImage preserves closed Project Trash across restart and restores or permanently deletes the exact owned file.',
   'trash-recovery':
     'Stock AppImage finishes positively committed Project deletions and preserves a replacement and ordinary Trash across two cold starts.',
+  'sqlite-manual-recovery':
+    'Stock AppImage upgrades twice around a manual selected SQLite backup restore, preserving the current WAL and the saved Project.',
   'result-preset':
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
   'home-recovery-keyboard':
@@ -788,6 +792,25 @@ if (offlineProject === 'trash-recovery')
       'src/shared/api.ts',
     ].map((file) => path.join(repo, file)),
   )
+if (offlineProject === 'sqlite-manual-recovery') {
+  const migrations = path.dirname(migrationFile)
+  const migrationNames = (await readdir(migrations)).filter((name) => /^\d{4}_.+\.sql$/.test(name))
+  sourcePaths.push(
+    ...migrationNames.sort().map((name) => path.join(migrations, name)),
+    ...[
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+      'scripts/fixtures/application-state-upgrade-native.mjs',
+      'src/main/db/database.ts',
+      'src/main/index.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/placeholders/empty.png',
+      'src/main/projects/placeholders/empty.webp',
+      'src/main/projects/project-index.ts',
+      'src/main/projects/project-placeholders.ts',
+      'src/main/projects/project-session.ts',
+    ].map((name) => path.join(repo, name)),
+  )
+}
 if (offlineProject === 'home-recovery-keyboard')
   sourcePaths.push(
     ...[
@@ -1653,6 +1676,9 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'trash-recovery') {
       return await fixture.runPackagedProjectTrashRecovery(args)
+    }
+    if (offlineProject === 'sqlite-manual-recovery') {
+      return await fixture.runPackagedSqliteManualRecovery(args)
     }
     if (offlineProject === 'home-recovery-keyboard') {
       return await fixture.runPackagedHomeRecoveryKeyboard(args)

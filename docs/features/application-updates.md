@@ -627,3 +627,8 @@ exercised the actual 29→30 backup and migration on the first Linux/NVIDIA host
 The same AppImage used the installed CPU worker to render a nonempty historical
 Project on explicit Save and reopened it after normal close. The trained-model,
 interrupted-update and shipping checks remain separate.
+
+[Packaged manual recovery](../engineering/phase-5-packaged-sqlite-manual-recovery-research.md)
+exercised a second migration from 29 to 30 after copying the explicitly selected
+backup. The current AppImage showed the saved Project in Home. The selected
+backup, set-aside database with its WAL and SHM, and `.igs` kept their bytes.

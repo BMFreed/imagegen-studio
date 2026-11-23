@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Manual SQLite recovery through stock startup
+
+[Packaged manual recovery](./phase-5-packaged-sqlite-manual-recovery-research.md)
+copied an explicitly chosen schema 29 backup and cold-started the
+current AppImage. The previous database and committed WAL marker,
+both backup copies and the saved Project remained available.
+
 ## Existing PNG selected through KDE SaveFile
 
 [Native export collision](./phase-5-packaged-project-image-export-research.md#existing-png-selected-through-the-kde-overwrite-prompt)

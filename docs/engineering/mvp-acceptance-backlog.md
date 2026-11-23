@@ -239,6 +239,11 @@ entries record the state at their checkpoint.
    Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.
+   A separate manual SQLite control copied a specifically selected
+   schema 29 backup and re-migrated it in the current AppImage. The
+   set-aside main/WAL/SHM trio kept the later committed marker, and
+   the saved `.igs` and original backup survived.
+   [Packaged manual SQLite recovery](./phase-5-packaged-sqlite-manual-recovery-research.md)
    [Updates recovery](./phase-5-public-appimage-recovery-research.md),
    [Signed relaunch with installed runtime](./phase-5-signed-appimage-installed-runtime-research.md),
    [CUDA across signed relaunch](./phase-5-signed-appimage-cuda-research.md),
