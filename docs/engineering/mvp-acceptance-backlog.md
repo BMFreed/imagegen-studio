@@ -438,6 +438,11 @@ entries record the state at their checkpoint.
    Two KWin runs and an X11 regression preserved the Project bytes and
    recovery on both keyboard dismissals.
    [KDE Wayland Home and Recovery keyboard](./phase-5-packaged-home-recovery-wayland-keyboard-research.md)
+   Stock AppImage Home completed the owned 32- and 512-project catalog
+   baseline on KDE Wayland. At 512, an indexed restart took about 11.2 seconds
+   to render all cards and Refresh took 6.85 seconds. Small synthetic Projects
+   and the current host define this baseline.
+   [Home catalog performance](./phase-5-packaged-home-scale-research.md)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

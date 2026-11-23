@@ -100,7 +100,7 @@ def start_private_session(command):
     keyboard = os.environ.get('IMAGEGEN_WAYLAND_KEYBOARD_HELPER')
     scenario = os.environ.get('IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT')
     if keyboard is not None:
-        if scenario not in ('home-recovery-keyboard', 'model-install-history', 'trash'):
+        if scenario not in ('home-recovery-keyboard', 'model-install-history', 'trash', 'home-scale'):
             raise RuntimeError('The private keyboard belongs to a supported keyboard test.')
         binary = Path(keyboard)
         if (not re.fullmatch(r'/[A-Za-z0-9/_.-]+', keyboard)

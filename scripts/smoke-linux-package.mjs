@@ -54,6 +54,7 @@ const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMO
 const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPAIR
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
+const homeScale = offlineProject === 'home-scale'
 const modelInstallCrash = offlineProject === 'model-install-interruption'
 const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
@@ -70,7 +71,10 @@ const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
 const nativeWaylandKeyboard =
   kdeChooser &&
-  (offlineProject === 'home-recovery-keyboard' || offlineProject === 'trash' || modelInstallHistory)
+  (offlineProject === 'home-recovery-keyboard' ||
+    offlineProject === 'trash' ||
+    modelInstallHistory ||
+    homeScale)
 assert.ok(
   !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard,
   'The private Wayland launcher requires a supported packaged case.',
@@ -192,6 +196,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'sqlite-manual-recovery',
         'result-preset',
         'home-recovery-keyboard',
+        'home-scale',
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-history',
@@ -496,6 +501,7 @@ const offlineProjectFixture = {
   'sqlite-manual-recovery': 'packaged-sqlite-manual-recovery',
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
+  'home-scale': 'packaged-home-scale',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-history': 'packaged-model-install-history',
@@ -513,6 +519,8 @@ const offlineProjectScope = {
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
   'home-recovery-keyboard':
     'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
+  'home-scale':
+    'Stock AppImage measures rendering and Home interactions over an owned indexed Project catalog.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
@@ -818,6 +826,19 @@ if (offlineProject === 'home-recovery-keyboard')
       'src/main/projects/igs-package.ts',
       'src/main/projects/project-identity.ts',
       'src/main/projects/project-shadow.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/HomeView.vue',
+      'src/shared/projects/project-schema.ts',
+    ].map((file) => path.join(repo, file)),
+  )
+if (homeScale)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
+      'src/main/index.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-index.ts',
+      'src/main/projects/project-service.ts',
       'src/renderer/App.vue',
       'src/renderer/components/HomeView.vue',
       'src/shared/projects/project-schema.ts',
@@ -1142,6 +1163,7 @@ async function launch(name, selectedAppImage = appImage) {
   } else {
     delete launchEnvironment.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG
   }
+  if (homeScale) state.spawnedAt = performance.now()
   state.child = spawn(
     selectedAppImage,
     [
@@ -1195,6 +1217,7 @@ async function launch(name, selectedAppImage = appImage) {
     state.aggregateLimits = assertAggregate(state.checks)
   }
   await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
+  if (homeScale) state.homeVisibleAt = performance.now()
   if (modelInstallCrash && state.name === 'first') {
     const [check] = state.checks
     state.modelInstallFaultAuthority = await privateInstallMainFault(state, check, 'verify')
@@ -1683,6 +1706,9 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'home-recovery-keyboard') {
       return await fixture.runPackagedHomeRecoveryKeyboard(args)
+    }
+    if (homeScale) {
+      return { offlineProjectResult: await fixture.runPackagedHomeScale(args) }
     }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)
