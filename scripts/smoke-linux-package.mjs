@@ -2,9 +2,9 @@
  * Actual unsigned Linux AppImage -> fused packaged Main -> sandboxed preload -> SQLite/Project.
  * Invoke launcher c267bdb439519216b277a7a8c6ad408b9d79efce supplies AppImage packaging; Studio's
  * existing Main owns storage, explicit Create, runtime refusal and normal close. Chromium CDP does
- * not enable the fused-off Node inspector. Extract-and-run is an explicit local qualification mode:
- * this does not qualify FUSE installation, shipping trust, updates, native ML or full MVP
- * acceptance. All persistent files belong to this fresh owned fixture.
+ * not enable the fused-off Node inspector. The launch mode is extract-and-run by default. Opt-in
+ * FUSE qualification observes the live mount and its ordinary release locally. All persistent files
+ * belong to this fresh owned fixture.
  */
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
@@ -57,6 +57,9 @@ const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
 const workspaceChooser = offlineProject === 'workspace-chooser'
 const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
+const savedResults = offlineProject === 'saved-results'
+const fuseMode = process.env.IMAGEGEN_LINUX_PACKAGE_FUSE
+const appImageFuse = fuseMode === '1'
 const modelInstallCrash = offlineProject === 'model-install-interruption'
 const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
@@ -83,13 +86,18 @@ assert.ok(
     projectExport ||
     nativeWaylandKeyboard ||
     workspaceChooser ||
-    runtimeInstallationRecovery,
+    runtimeInstallationRecovery ||
+    savedResults,
   'The private Wayland launcher requires a supported packaged case.',
 )
 assert.ok(!workspaceChooser || kdeChooser, 'Use a private KDE Wayland session for folder choice.')
 assert.ok(
   !runtimeInstallationRecovery || kdeChooser,
   'Use a private KDE Wayland session for runtime recovery.',
+)
+assert.ok(
+  fuseMode === undefined || (appImageFuse && kdeChooser && (workspaceChooser || savedResults)),
+  'Use IMAGEGEN_LINUX_PACKAGE_FUSE=1 for the private KDE workspace chooser or saved-results case.',
 )
 assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
@@ -211,6 +219,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'home-scale',
         'workspace-chooser',
         'runtime-installation-recovery',
+        'saved-results',
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-history',
@@ -518,6 +527,7 @@ const offlineProjectFixture = {
   'home-scale': 'packaged-home-scale',
   'workspace-chooser': 'packaged-workspace-chooser',
   'runtime-installation-recovery': 'packaged-runtime-installation-recovery',
+  'saved-results': 'packaged-saved-results',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-history': 'packaged-model-install-history',
@@ -541,6 +551,8 @@ const offlineProjectScope = {
     'Stock AppImage registers and locates a saved workspace through the native KDE folder picker.',
   'runtime-installation-recovery':
     'Stock AppImage inspects an interrupted runtime installation and preserves its owned data.',
+  'saved-results':
+    'Stock AppImage navigates to exact saved results in owned Projects without changing their contents.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
@@ -607,6 +619,9 @@ const environment = {
   XDG_CONFIG_HOME: path.join(root, 'config'),
   XDG_DATA_HOME: path.dirname(appData),
   XDG_CACHE_HOME: path.join(root, 'cache'),
+}
+if (appImageFuse) {
+  for (const key of ['APPIMAGE_EXTRACT_AND_RUN', 'APPIMAGE', 'APPDIR']) delete environment[key]
 }
 for (const key of [
   'ELECTRON_RUN_AS_NODE',
@@ -760,6 +775,8 @@ if (kdeChooser)
       'packaged-kde-chooser-atspi.py',
     ].map((file) => path.join(repo, 'scripts/fixtures', file)),
   )
+const fuseObserver = appImageFuse ? await import('./fixtures/packaged-appimage-fuse.mjs') : null
+if (fuseObserver) sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-appimage-fuse.mjs'))
 if (projectExport)
   sourcePaths.push(
     path.join(repo, 'scripts/qualify-packaged-installed-upgrade.mjs'),
@@ -811,6 +828,18 @@ if (workspaceChooser)
       'src/renderer/App.vue',
       'src/renderer/components/AddWorkspaceModal.vue',
       'src/renderer/components/HomeView.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (savedResults)
+  sourcePaths.push(
+    ...[
+      'src/main/index.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-index.ts',
+      'src/main/projects/project-service.ts',
+      'src/preload/index.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/AcceptedResultsBrowser.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (runtimeInstallationRecovery)
@@ -996,6 +1025,14 @@ if (noobaiMatrix) {
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const recoveryPublication = await readRecoveryPublication()
 const packageBefore = recoveryPublication?.original.bytes ?? (await identity(appImage))
+const fusePackageProof = appImageFuse
+  ? JSON.parse(await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'))
+  : null
+if (fusePackageProof) {
+  assert.equal(fusePackageProof.schemaVersion, 1)
+  assert.deepEqual(fusePackageProof.package, packageBefore)
+  assert.match(fusePackageProof.asarSha256 ?? '', /^[0-9a-f]{64}$/)
+}
 const projectTitle = 'Package qualification'
 const records = []
 const lifetimes = []
@@ -1267,6 +1304,14 @@ async function launch(name, selectedAppImage = appImage) {
     state.aggregateLimits = assertAggregate(state.checks)
   }
   await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
+  if (fuseObserver) {
+    state.appImageMount = await fuseObserver.captureAppImageFuse({
+      mainPid: state.mainPid,
+      wrapperPid: state.wrapperPid,
+      appImage: selectedAppImage,
+      asarSha256: fusePackageProof.asarSha256,
+    })
+  }
   if (homeScale) state.homeVisibleAt = performance.now()
   if (modelInstallCrash && state.name === 'first') {
     const [check] = state.checks
@@ -1529,6 +1574,9 @@ async function closeNormally(state) {
   state.scopeExit = await confirmQualificationProcessExit(state.checks, { execute: boundedExecute })
   assert.equal(state.scopeExit.confirmed, true)
   assert.deepEqual(state.pageErrors, [])
+  if (state.appImageMount) {
+    state.appImageUnmount = await fuseObserver.assertAppImageFuseUnmounted(state.appImageMount)
+  }
   state.normalPhysicalExit = true
   await state.browser?.close()
   records.push({
@@ -1765,6 +1813,9 @@ async function runOwnedProjectProfile() {
     }
     if (runtimeInstallationRecovery) {
       return { offlineProjectResult: await fixture.runPackagedRuntimeInstallationRecovery(args) }
+    }
+    if (savedResults) {
+      return { offlineProjectResult: await fixture.runPackagedSavedResults(args) }
     }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)
@@ -2275,9 +2326,12 @@ try {
                             : engine
                               ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
                               : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
-    mode: kdeChooser
-      ? 'APPIMAGE_EXTRACT_AND_RUN=1; native Wayland on private virtual KWin; Chromium CDP loopback.'
-      : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
+    mode: appImageFuse
+      ? 'Direct FUSE AppImage; native Wayland on private virtual KWin; Chromium CDP loopback.'
+      : kdeChooser
+        ? 'APPIMAGE_EXTRACT_AND_RUN=1; native Wayland on private virtual KWin; Chromium CDP loopback.'
+        : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
+    ...(appImageFuse && { appImageLaunchMode: 'fuse' }),
     packageBefore,
     packageAfter: await identity(appImage),
     sourceBefore,
@@ -2453,6 +2507,8 @@ try {
       gpuObserverError: state.gpuObserverError,
       failedTrainedProjectSettlement: state.failedTrainedProjectSettlement,
       scopeExit: state.scopeExit,
+      ...(state.appImageMount && { appImageMount: state.appImageMount }),
+      ...(state.appImageUnmount && { appImageUnmount: state.appImageUnmount }),
     })
   }
   if (applicationUpdateSmoke) {

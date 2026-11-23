@@ -913,6 +913,12 @@ the scoped native Compare qualification passes all 18 checks. Worker-produced pe
 optimization remains open. History native and automated evidence is tracked
 separately in its research note.
 
+The [stock AppImage checkpoint](../../../engineering/phase-5-stock-appimage-fuse-research.md#saved-generations)
+opens the exact Raster and inactive Smart Patch variant across Projects with
+shared document and layer IDs. Both direct FUSE and extract-and-run on the
+current KDE Wayland host keep the Projects and all 34 saved results intact
+through close and reopen.
+
 ## Installed Anima image cap32 acceptance evidence
 
 [Anima image cap32/prefix](../../../engineering/phase-2c-anima-image-batch-cap-research.md) verifies32/6 temporary candidates before explicit Add. Two confirmed33 refusals retain32 candidates and the imported source without new queue/receipt/seed/Project effects. Explicit multi-Add and Save/reopen preserve76 accepted layers across four packages with source-plus-accepted stacks33/7 and immutable provenance/owning comparisons. Two OUT previews preserve111104 source pixels. Interrupted32/11/21 remains a separate recovery observation. Smart Patch/masks/regions, quality/fullMVP/release and PP-008 public readiness remain open.

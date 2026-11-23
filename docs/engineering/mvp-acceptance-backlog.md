@@ -308,6 +308,13 @@ entries record the state at their checkpoint.
    the original folder. Both Project keys and bytes survived, and a Project
    reopened from the new path after restart.
    [Native workspace folder chooser](./phase-5-packaged-workspace-chooser-research.md)
+   The current stock AppImage repeated that folder flow through direct Type 2
+   FUSE launch. The same package also passed Saved generations in FUSE and
+   extract-and-run mode. It opened the exact seed-zero Raster and focused an
+   inactive Smart Patch variant in the other Project. Both saved Projects and
+   all 34 history results survived reopen. All five FUSE mounts released on
+   ordinary close. Clean-machine setup and the shipping host matrix remain open.
+   [Stock FUSE and Saved generations](./phase-5-stock-appimage-fuse-research.md)
    Stock AppImage Home blocks Trash while the Project is open. After close it
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project

@@ -170,8 +170,10 @@ Final Root execution:
   archive audits are distinct self-verification.
 
 Known package limits include the default Electron external icon and unqualified
-Linux desktop association; in-app approved artwork is unchanged. Signing,
-publisher discovery, clean-machine/FUSE installation, manual app updates,
+Linux desktop association; in-app approved artwork is unchanged. The later
+[stock FUSE checkpoint](./phase-5-stock-appimage-fuse-research.md) observed
+direct Type 2 mounts and ordinary unmounts on the current KDE Wayland host.
+Signing, publisher discovery, clean-machine setup, manual app updates,
 interrupted replacement/recovery, release protocol/NoobAI/visual matrices and
 full MVP acceptance remain open. No promise status is promoted.
 
