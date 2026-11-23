@@ -20,6 +20,10 @@ test('Linux package admits built app consumers, not checkout, runtime or model p
   assert.ok(config.asarUnpack.includes('**/*.node'))
   assert.equal(config.extraFiles, undefined)
   assert.equal(config.extraResources, undefined)
+  assert.equal(config.linux.extraFiles, undefined)
+  assert.deepEqual(config.linux.extraResources, [
+    { from: 'dist/native/igs-wallet-bootstrap', to: 'igs-wallet-bootstrap' },
+  ])
   assert.equal(config.directories.app, undefined)
   assert.equal(config.electronDist, undefined)
 })

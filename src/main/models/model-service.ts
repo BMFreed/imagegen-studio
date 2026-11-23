@@ -57,11 +57,7 @@ import {
   ANIMA_SOURCE_LICENSE,
   isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
-import {
-  CIVITAI_STORAGE_TIMEOUT_DETAIL,
-  CivitaiTokenStoreError,
-  validateCivitaiToken,
-} from './civitai-token-store.js'
+import { CIVITAI_STORAGE_TIMEOUT_DETAIL, CivitaiTokenStoreError } from './civitai-token-store.js'
 import { qualifyIllustriousEmbedding } from './illustrious-embedding-qualification.js'
 import { qualifyIllustriousLora } from './illustrious-lora-qualification.js'
 import { qualifyIllustriousVae } from './illustrious-vae-qualification.js'
@@ -1141,19 +1137,7 @@ export class ModelService {
   }
 
   async saveToken(token: string): Promise<CivitaiTokenStatus> {
-    validateCivitaiToken(token)
-    const availability = await this.tokenStore.getAvailability()
-    if (!availability.available) {
-      if (availability.reason === 'encryption-timeout') {
-        throw new CivitaiTokenStoreError('TOKEN_SECURE_STORAGE_TIMEOUT')
-      }
-      throw new ModelServiceError(
-        'TOKEN_SECURE_STORAGE_UNAVAILABLE',
-        'Secure CivitAI token storage is unavailable on this system.',
-      )
-    }
-    await this.civitai.validateToken(token)
-    await this.tokenStore.saveToken(token)
+    await this.tokenStore.saveToken(token, (value) => this.civitai.validateToken(value))
     return { detail: 'CivitAI token is connected.', kind: 'connected' }
   }
 

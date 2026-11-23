@@ -155,6 +155,7 @@ import { initializeAppDatabase, readAppliedSqlMigrations } from './db/database.j
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
 import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './models/civitai-client.js'
 import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-token-store.js'
+import { bootstrapKWallet } from './models/kwallet-bootstrap.js'
 import { ModelDownloader, ModelDownloadError } from './models/model-downloader.js'
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelPreviewCache } from './models/model-preview-cache.js'
@@ -421,6 +422,8 @@ if (!gotInstanceLock) {
   let generationShutdown: GenerationAppShutdown | null = null
   let exitReady = false
   let exitInProgress = false
+  const walletSetupAbort = new AbortController()
+  let walletSetup: ReturnType<typeof bootstrapKWallet> | undefined
 
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -446,6 +449,8 @@ if (!gotInstanceLock) {
     }
     exitInProgress = true
     void (async () => {
+      walletSetupAbort.abort()
+      await walletSetup
       if (generationShutdown) {
         await generationShutdown.finalize()
       } else if (closeDatabase) {
@@ -712,6 +717,16 @@ if (!gotInstanceLock) {
       }
       const modelRepository = new ModelRepository(database.db)
       const civitaiClient = new CivitaiClient()
+      const prepareKWallet =
+        process.platform === 'linux'
+          ? () => {
+              const executable = app.isPackaged
+                ? path.join(process.resourcesPath, 'igs-wallet-bootstrap')
+                : path.join(moduleDir, '../native/igs-wallet-bootstrap')
+              walletSetup = bootstrapKWallet(executable, walletSetupAbort.signal)
+              return walletSetup
+            }
+          : undefined
       const resourcePreviews = new ModelPreviewCache({
         cacheRoot: paths.cacheRoot,
         canBuild: async () => Boolean(await resolveProjectImageWorker()),
@@ -722,7 +737,7 @@ if (!gotInstanceLock) {
       const modelService = new ModelService(
         modelRepository,
         civitaiClient,
-        new CivitaiTokenStore(safeStorage, paths.dataRoot),
+        new CivitaiTokenStore(safeStorage, paths.dataRoot, undefined, prepareKWallet),
         paths.cacheRoot,
         undefined,
         undefined,
@@ -1547,6 +1562,8 @@ if (!gotInstanceLock) {
               sealedApplicationUpdateAdmission = applicationInstallation.admission
             }
             appDataSealed = true
+            walletSetupAbort.abort()
+            await walletSetup
             await appShutdown.finalize()
             dataFinalized = true
             if (applicationInstallation) {

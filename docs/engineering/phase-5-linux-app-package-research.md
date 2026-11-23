@@ -47,6 +47,11 @@ Studio owners. Missing signing/publisher and clean-machine recovery guarantees
 were reported before adaptation. No custom installer, sampler, runtime, queue
 or acceptance wrapper is introduced.
 
+The Linux build also compiles the KWallet setup helper with a C compiler,
+`pkg-config`, and the GIO 2.56 API. On Ubuntu and Debian the development headers
+come from `libglib2.0-dev`. Electron Builder includes the executable in the
+Linux application resources. [KWallet Save integration](./phase-5-civitai-token-presence-research.md#integrating-setup-into-save)
+
 ## Boundary and parameters
 
 The pinned builder is `26.17.0` from the launcher version range, with exact

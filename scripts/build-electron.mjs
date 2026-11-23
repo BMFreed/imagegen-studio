@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { build } from 'esbuild';
@@ -40,3 +41,36 @@ await mkdir(placeholdersOutDir, { recursive: true });
 await cp('src/main/projects/placeholders', placeholdersOutDir, {
   recursive: true,
 });
+
+if (process.platform === 'linux') {
+  const nativeOutDir = path.join(outDir, 'native');
+  const walletBootstrap = path.join(nativeOutDir, 'igs-wallet-bootstrap');
+  await mkdir(nativeOutDir, { recursive: true });
+  await rm(walletBootstrap, { force: true });
+
+  const gioFlags = execFileSync('pkg-config', ['--cflags', '--libs', 'gio-2.0 >= 2.56'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+    .trim()
+    .split(/\s+/);
+
+  execFileSync(
+    'cc',
+    [
+      '-std=c11',
+      '-O2',
+      '-Wall',
+      '-Wextra',
+      '-Wpedantic',
+      '-Werror',
+      '-DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_56',
+      '-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_56',
+      '-o',
+      walletBootstrap,
+      'src/main/native/kwallet-bootstrap.c',
+      ...gioFlags,
+    ],
+    { stdio: 'inherit' },
+  );
+}

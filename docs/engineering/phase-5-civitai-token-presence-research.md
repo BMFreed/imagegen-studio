@@ -341,10 +341,6 @@ the wallet and token files.
 [Secret Service creation and prompt protocol](https://specifications.freedesktop.org/secret-service/latest/org.freedesktop.Secret.Service.html#org.freedesktop.Secret.Service.CreateCollection),
 [KDE prompt implementation](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletfreedesktopprompt.cpp#L34-L108).
 
-Production integration of wallet creation remains open. It requires a
-packaged Secret Service client, an explicit Save owner for the dialog,
-and concurrent default-alias ownership controls.
-
 The token store now checks for a stored file before requesting the
 asynchronous provider during a token-dependent read. Backend selection
 still refuses insecure and unavailable selectors. Both absent-file
@@ -369,3 +365,98 @@ The run receipts cover 26 normal AppImage closes and 234 enrolled
 process exits. Cleanup reclaimed 1,605,885,952 allocated bytes.
 The receipts are under `runs/civitai-portal-encryption/20261123` and
 `runs/civitai-missing-token-read/20261123` in the local artifact root.
+
+### Integrating setup into Save
+
+The implementation pass rechecked InvokeAI at
+`4875d96531ca6712b288f6e660fcbb34143408c1`. In
+`invokeai/frontend/webv2/src/features/models/` it read `data/apiKeys.ts`,
+`ui/credentials/ApiKeysSection.tsx`, `ui/add-models/useInstallActions.ts`,
+`ui/install-queue/useInstallJobActions.ts` and `data/api.ts`. It followed
+the install requests into `invokeai/app/api/routers/model_manager.py` and
+`invokeai/app/services/model_install/model_install_default.py`. InvokeAI
+uses account-scoped browser storage. KDE supplies the native setup step.
+The Linux package follows the Invoke launcher resource layout at
+`c267bdb439519216b277a7a8c6ad408b9d79efce`. The consulted paths were
+`electron-builder.config.ts`, `src/main/util.ts`,
+`src/main/install-manager.ts` and `.github/workflows/build.yml`.
+
+The first explicit Save on the `kwallet6` backend can prepare the wallet
+before Electron requests its key. Studio serializes Save with reads and
+removal and rejects a second Save while the first is running. If KDE
+cancels the setup, Studio can retry in the same process. Provider validation
+and encryption start only after setup and availability succeed. Both
+normal application close and the quit fallback stop the helper and await
+its process close. Electron continues to encrypt and decrypt the token.
+[Token store](../../src/main/models/civitai-token-store.ts),
+[helper supervision](../../src/main/models/kwallet-bootstrap.ts),
+[native client](../../src/main/native/kwallet-bootstrap.c).
+
+The packaged client receives the session bus address. It passes neither a
+CivitAI credential nor a KDE password. It checks the local bus and daemon
+UIDs and pins the KDE Secret Service owner. For an empty service, it checks
+the effective local wallet name before making a creation request and again
+before prompting. The request carries an empty alias. A successful prompt
+must return the exact canonical collection, which must be the single
+collection and current default when read back.
+[Secret Service protocol](https://specifications.freedesktop.org/secret-service/latest/org.freedesktop.Secret.Service.html#org.freedesktop.Secret.Service.CreateCollection),
+[KDE 6.29 prompt and unique collection name](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletfreedesktopprompt.cpp#L38-L108).
+
+If the KDE Secret Service name is absent, an already running same-user
+`kwalletd6` can qualify through a read-only check for its configured default
+in its wallet list. This covers the legacy path before a disabled KSecretD
+can register its bus name during startup and then exit. In KWallet 6.24 the
+native creation check verifies both effective local and network names. In
+6.29 it verifies the local name and uses the final alias to establish the
+actual default after KDE completes the prompt.
+[KDE 6.24 local and network settings](https://github.com/KDE/kwallet/blob/v6.24.0/src/api/KWallet/kwallet.cpp#L57-L84),
+[KDE 6.29 effective local name](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletbackend.cc#L66-L81),
+[KDE 6.29 disabled startup](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/main.cpp#L174-L181).
+
+KDE can write its default setting before showing the prompt if the first
+requested wallet differs from the effective local wallet. The standard
+name check limits that case. KDE owns its configuration and the native
+dialog. The readbacks have no atomic lock against other desktop clients.
+On timeout or quit the helper makes a best-effort request to dismiss its
+D-Bus prompt. KDE may keep an already started native transaction or dialog
+alive.
+[KDE 6.24 first-use handling](https://github.com/KDE/kwallet/blob/v6.24.0/src/runtime/ksecretd/ksecretd.cpp#L486-L500),
+[KDE 6.29 first-use handling](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/ksecretd.cpp#L391-L405),
+[KDE Dismiss handling](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletfreedesktopprompt.cpp#L38-L51).
+
+The development AppImage ran in private KDE Wayland profiles on host
+KWallet `6.24.0-0ubuntu1` and a separate Ubuntu KWallet 6.29 package closure.
+The Model Manager **Save token** button opened KDE's two-field password
+dialog. Both versions completed live CivitAI validation and saved a 51-byte
+`v11` file in mode `0600` in the same process. Cold unlock preserved the
+bytes. Remove, cold missing with the wallet still locked, and a new Save
+into the existing locked wallet also passed. The D-Bus metadata puts the
+successful creation prompt before Electron's first `openAsync`.
+
+On 6.29, cancel left wallet and token files absent, released the controls,
+and allowed an explicit Save retry in the same process. An empty profile
+with a custom local wallet kept its settings byte for byte and made zero
+`CreateCollection` calls. A normal close during a visible system dialog
+sent D-Bus `Dismiss` and physically exited the enrolled packaged helper.
+The four runs covered eight normal AppImage closes and seventeen enrolled
+process exits. The alternative legacy provider and competing ownership were
+tested against private D-Bus peers. Twenty-two peer cases used the exact
+production code. A separate shortened-deadline case exercised timeout.
+
+Typecheck, focused ESLint, 526 focused tests and AppImage packaging passed.
+The AppImage SHA-256 was
+`b5e4d2e1da4e739c5387c2d57d03ae7eb5b514e7a944d85dfda5a70a0f677e82`.
+The helper read directly from AppImage matched the build output. Its direct
+glibc symbol requirement reached `GLIBC_2.34` on this build host. The whole
+AppImage digest covers the helper. The current running-directory signature
+check covers the ASAR and Electron executable. Release-host compatibility
+remains part of the shipping matrix.
+
+The same AppImage repeated the native Wayland Install Queue keyboard case
+on a default-wallet profile without a saved token. Clear finished removed
+the fixture rows, and the installed embedding and empty queue survived a
+cold reopen. The normal keyboard focus transitions also passed.
+
+Compact receipts and qualification sources are in the local artifact root
+under `runs/civitai-native-wallet-save/20261123` and
+`runs/packaged-model-install-history/20261123-r8`.

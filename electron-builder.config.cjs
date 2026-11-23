@@ -31,6 +31,7 @@ module.exports = {
     target: [{ target: 'AppImage', arch: ['x64'] }],
     category: 'Graphics',
     artifactName: '${name}-${version}-${arch}.${ext}',
+    extraResources: [{ from: 'dist/native/igs-wallet-bootstrap', to: 'igs-wallet-bootstrap' }],
   },
   publish: null,
   electronFuses: {

@@ -13,7 +13,8 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [mug reconstruction before denoising](./phase-4-ordinary-img-mug-vae-research.md),
 [ordinary mug trajectory](./phase-4-ordinary-img-mug-trajectory-research.md),
 [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md), and
-[mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md).
+[mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md) and
+[native first CivitAI Save](./phase-5-civitai-token-presence-research.md#integrating-setup-into-save).
 The next
 [two-plinth regional placement trial](./phase-4-regional-reference-placement-research.md)
 passes native execution and leaves visual regional utility open.
@@ -365,20 +366,15 @@ entries record the state at their checkpoint.
    [Fresh KDE token status](./phase-5-civitai-token-presence-research.md)
    With a provisioned, locked KDE wallet, the stock AppImage passed
    live CivitAI Save, cold unlock and revalidation, Remove and cold
-   missing. With an empty KWallet 6.24 profile, Save now reports a
-   timeout after the creation dialog and releases the controls.
-   Chromium's Linux fixed-key fallback is refused, and existing
-   fallback files can be removed from Model Manager. Isolated Ubuntu
-   KWallet 6.29 created the first wallet. Studio refused the first Save.
-   Closing Studio and opening it again in the same profile restored
-   secure Save with live CivitAI. An isolated test helper also created
-   an empty wallet before the first Electron key request. Stock Save
-   then wrote `v11` in the same process on KWallet 6.24 and 6.29.
-   The Secret Portal alternative wrote `v12`. Its read failed when the
-   named desktop entry disappeared and recovered when it returned.
-   One-action setup requires integrating the wallet creation step into
-   the existing Save owner.
-   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#first-save-without-restarting-studio)
+   missing. On a fresh standard KDE profile, the Model Manager Save button
+   now completes native wallet creation and writes `v11` in the same process
+   on KWallet 6.24 and 6.29. On 6.29, cancel and explicit retry passed. A custom
+   empty profile preserved its settings, and a normal close during setup
+   exited the helper. Chromium's Linux fixed-key fallback is refused.
+   Existing fallback files can be removed explicitly. The same AppImage
+   repeated the native Install Queue keyboard transitions and Clear finished.
+   Repeat on the shipping candidate across the supported desktop matrix.
+   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#integrating-setup-into-save)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

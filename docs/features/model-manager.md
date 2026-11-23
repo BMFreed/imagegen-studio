@@ -257,22 +257,22 @@ The CivitAI token status pill is the persistent entry point for token management
 - click opens a compact popover with `Change token`, `Remove token` and `Check connection`;
 - if the user clicks `Add from CivitAI URL` without a valid token, the same token setup flow is shown before URL preview.
 
-The token is encrypted/decrypted only in Electron main process through
-`safeStorage`. With an eligible storage backend and an absent token file,
-the passive status read and token-dependent requests report that a token is
-needed without requesting the wallet. Explicit Save waits up to 60 seconds for
-the secure-storage provider before validating with CivitAI. If the provider
-does not respond, Model Manager shows how to reopen the system keyring and
-retry. A late response does not
-resume a timed-out Save. The app refuses the Linux `basic_text` backend and
-rejects Linux ciphertext made with Chromium's fixed-key fallback. A failed
-check of a saved token allows explicit Remove even when the token cannot be
-used. Token-dependent import requires a securely stored, usable token.
+The Electron main process encrypts and decrypts the token through `safeStorage`.
+With an eligible backend and no token file, passive status and token-dependent
+requests report that a token is needed without requesting the wallet.
 
-If the first Save created a KDE wallet and Studio then reported that secure
-storage was unavailable, close and reopen Studio before retrying Save.
-This recovery was verified with KWallet 6.29. Follow the KDE unlock prompt if
-it appears.
+On KDE with KWallet 6 and standard first-use settings, **Save token** opens the
+system password dialog for the first wallet. Completing the dialog continues
+the same Save. Cancel returns to Model Manager so the user can retry. If Studio
+asks for manual setup, open or create the default wallet in KDE Wallet Manager
+and then retry Save. An existing locked wallet can show KDE's unlock prompt.
+
+Save waits for secure storage before sending the token to CivitAI for validation.
+If secure storage times out, follow the instructions in Model Manager. A late
+response does not resume the Save. Studio refuses the Linux `basic_text` backend
+and ciphertext made with Chromium's fixed-key fallback. **Remove token** stays
+available for a saved token that cannot be used. Import requires a securely
+stored, usable token.
 
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 

@@ -3,6 +3,8 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { KWalletBootstrapResult } from './kwallet-bootstrap.js'
+
 /** The Electron methods used here, separated so the filesystem boundary can be tested. */
 export interface SafeStorageAdapter {
   decryptStringAsync: (encrypted: Buffer) => Promise<{ result: string; shouldReEncrypt: boolean }>
@@ -24,22 +26,41 @@ export type CivitaiTokenStoreStatus =
 
 export type CivitaiTokenStoreErrorCode =
   | 'TOKEN_INVALID'
+  | 'TOKEN_SAVE_IN_PROGRESS'
   | 'TOKEN_SECURE_STORAGE_TIMEOUT'
   | 'TOKEN_SECURE_STORAGE_UNAVAILABLE'
   | 'TOKEN_STORAGE_FAILED'
   | 'TOKEN_TOO_LONG'
   | 'TOKEN_UNREADABLE'
+  | 'TOKEN_WALLET_SETUP_CANCELED'
+  | 'TOKEN_WALLET_SETUP_TIMEOUT'
+  | 'TOKEN_WALLET_SETUP_UNAVAILABLE'
 
 export const CIVITAI_STORAGE_TIMEOUT_DETAIL =
   'Secure storage did not respond. Open or unlock your system keyring, then restart ImageGen Studio before retrying.'
 
 const errorMessages: Record<CivitaiTokenStoreErrorCode, string> = {
   TOKEN_INVALID: 'The CivitAI token is empty or malformed.',
+  TOKEN_SAVE_IN_PROGRESS: 'A CivitAI token save is already in progress.',
   TOKEN_SECURE_STORAGE_TIMEOUT: CIVITAI_STORAGE_TIMEOUT_DETAIL,
   TOKEN_SECURE_STORAGE_UNAVAILABLE: 'Secure CivitAI token storage is unavailable.',
   TOKEN_STORAGE_FAILED: 'The CivitAI token could not be saved or removed.',
   TOKEN_TOO_LONG: 'The CivitAI token is too long.',
   TOKEN_UNREADABLE: 'The saved CivitAI token could not be read.',
+  TOKEN_WALLET_SETUP_CANCELED: 'KWallet setup was canceled. Save again to retry.',
+  TOKEN_WALLET_SETUP_TIMEOUT:
+    'KWallet setup timed out. Close the system dialog if it is still open, then Save again.',
+  TOKEN_WALLET_SETUP_UNAVAILABLE:
+    'Studio could not prepare KWallet. Open or create your default wallet in KDE Wallet Manager, then retry Save.',
+}
+
+const walletSetupErrors: Record<
+  Exclude<KWalletBootstrapResult, 'ready'>,
+  CivitaiTokenStoreErrorCode
+> = {
+  canceled: 'TOKEN_WALLET_SETUP_CANCELED',
+  timeout: 'TOKEN_WALLET_SETUP_TIMEOUT',
+  unavailable: 'TOKEN_WALLET_SETUP_UNAVAILABLE',
 }
 
 export class CivitaiTokenStoreError extends Error {
@@ -60,19 +81,22 @@ const LINUX_FIXED_KEY_PREFIX = Buffer.from('v10')
 type AtomicRename = (from: string, to: string) => Promise<void>
 
 /**
- * Main-process-only local ciphertext storage. The caller validates the token with CivitAI before
- * saveToken; this class deliberately has no network access.
+ * Main-process-only local ciphertext storage. The caller supplies CivitAI validation to the
+ * serialized Save; this class deliberately has no network access of its own.
  */
 export class CivitaiTokenStore {
   private availabilityProbe?: Promise<boolean | 'timeout'>
   private readonly directory: string
   private readonly filePath: string
+  private nativeAvailabilityRequested = false
   private pending: Promise<void> = Promise.resolve()
+  private saving = false
 
   constructor(
     private readonly safeStorage: SafeStorageAdapter,
     appDataRoot: string,
     private readonly atomicRename: AtomicRename = rename,
+    private readonly prepareKWallet?: () => Promise<KWalletBootstrapResult>,
   ) {
     this.directory = path.join(appDataRoot, 'secrets')
     this.filePath = path.join(this.directory, 'civitai-token.bin')
@@ -156,10 +180,19 @@ export class CivitaiTokenStore {
     })
   }
 
-  saveToken(token: string): Promise<void> {
+  saveToken(token: string, validateWithProvider?: (token: string) => Promise<void>): Promise<void> {
+    if (this.saving) {
+      return Promise.reject(new CivitaiTokenStoreError('TOKEN_SAVE_IN_PROGRESS'))
+    }
+    this.saving = true
     return this.enqueue(async () => {
       validateCivitaiToken(token)
+      await this.prepareWalletForSave()
       await this.requireSecureStorage()
+      if (validateWithProvider) {
+        await validateWithProvider(token)
+        await this.requireSecureStorage()
+      }
       let ciphertext: Buffer
       try {
         ciphertext = await this.safeStorage.encryptStringAsync(token)
@@ -175,6 +208,8 @@ export class CivitaiTokenStore {
       }
       await this.requireSecureStorage()
       await this.writeCiphertext(ciphertext)
+    }).finally(() => {
+      this.saving = false
     })
   }
 
@@ -246,10 +281,29 @@ export class CivitaiTokenStore {
     }
   }
 
+  private async prepareWalletForSave(): Promise<void> {
+    if (!this.prepareKWallet || this.nativeAvailabilityRequested) {
+      return
+    }
+    const selected = this.getSelectedBackendAvailability()
+    if (
+      !selected.available ||
+      selected.backend !== 'kwallet6' ||
+      !(await this.isTokenFileAbsent())
+    ) {
+      return
+    }
+    const result = await this.prepareKWallet()
+    if (result !== 'ready') {
+      throw new CivitaiTokenStoreError(walletSetupErrors[result])
+    }
+  }
+
   private probeAsyncAvailability(): Promise<boolean | 'timeout'> {
     if (this.availabilityProbe) {
       return this.availabilityProbe
     }
+    this.nativeAvailabilityRequested = true
     const native = Promise.resolve()
       .then(() => this.safeStorage.isAsyncEncryptionAvailable())
       .catch(() => false)

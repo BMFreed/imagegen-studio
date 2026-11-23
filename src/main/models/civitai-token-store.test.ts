@@ -92,6 +92,124 @@ function holdAsyncAvailability(safeStorage: TestSafeStorage) {
   return { release, requested }
 }
 
+test('first explicit KDE Save bootstraps before probing or validating', async () => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    safeStorage.backend = 'kwallet6'
+    const calls: string[] = []
+    safeStorage.isAsyncEncryptionAvailable = async () => {
+      calls.push('safeStorage')
+      return true
+    }
+    const store = new CivitaiTokenStore(safeStorage, root, undefined, async () => {
+      calls.push('bootstrap')
+      return 'ready'
+    })
+
+    assert.equal((await store.getStatus()).kind, 'missing')
+    assert.equal(await store.readToken(), null)
+    assert.equal(calls.length, 0)
+    await store.saveToken('first-fixture-token', async (token) => {
+      assert.equal(token, 'first-fixture-token')
+      calls.push('validate')
+    })
+    assert.deepEqual(calls.slice(0, 3), ['bootstrap', 'safeStorage', 'validate'])
+    assert.equal(safeStorage.encryptCalls, 1)
+    assert.equal((await readFile(tokenPath(root))).subarray(0, 3).toString(), 'v11')
+
+    const reopened = new CivitaiTokenStore(safeStorage, root, undefined, async () => {
+      assert.fail('Save with existing ciphertext must skip wallet setup')
+    })
+    assert.equal(await store.readToken(), 'first-fixture-token')
+    await reopened.saveToken('replacement-fixture-token')
+    assert.equal(await reopened.readToken(), 'replacement-fixture-token')
+  })
+})
+
+test('unverified or timed-out KWallet setup stops before requesting keys or sending a token', async () => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    safeStorage.backend = 'kwallet6'
+    safeStorage.isAsyncEncryptionAvailable = async () => {
+      assert.fail('wallet setup must precede the first native request')
+    }
+    for (const [outcome, code] of [
+      ['unavailable', 'TOKEN_WALLET_SETUP_UNAVAILABLE'],
+      ['timeout', 'TOKEN_WALLET_SETUP_TIMEOUT'],
+    ] as const) {
+      const store = new CivitaiTokenStore(safeStorage, root, undefined, async () => outcome)
+      await assert.rejects(
+        store.saveToken('first-fixture-token', async () => {
+          assert.fail('provider validation must wait for secure storage')
+        }),
+        { code },
+      )
+      assert.equal(safeStorage.encryptCalls, 0)
+      await assert.rejects(stat(tokenPath(root)), { code: 'ENOENT' })
+    }
+  })
+})
+
+test('KWallet cancellation leaves a retryable first Save and serializes Remove', async () => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    safeStorage.backend = 'kwallet6'
+    let cancel!: (value: 'canceled') => void
+    const wallet = new Promise<'canceled'>((resolve) => {
+      cancel = resolve
+    })
+    let notifyRequested!: () => void
+    const requested = new Promise<void>((resolve) => {
+      notifyRequested = resolve
+    })
+    let attempts = 0
+    let validations = 0
+    let secureRequests = 0
+    safeStorage.isAsyncEncryptionAvailable = async () => {
+      secureRequests += 1
+      return true
+    }
+    const store = new CivitaiTokenStore(safeStorage, root, undefined, async () => {
+      attempts += 1
+      if (attempts === 1) {
+        notifyRequested()
+        return wallet
+      }
+      return 'ready'
+    })
+    const validate = async () => {
+      validations += 1
+    }
+    const rejected = assert.rejects(store.saveToken('first-fixture-token', validate), {
+      code: 'TOKEN_WALLET_SETUP_CANCELED',
+    })
+    await requested
+    let removed = false
+    const removal = store.removeToken().then(() => {
+      removed = true
+    })
+    try {
+      await assert.rejects(store.saveToken('duplicate-fixture-token', validate), {
+        code: 'TOKEN_SAVE_IN_PROGRESS',
+      })
+      assert.equal(removed, false)
+    } finally {
+      cancel('canceled')
+      await Promise.all([rejected, removal])
+    }
+    assert.equal(attempts, 1)
+    assert.equal(validations, 0)
+    assert.equal(secureRequests, 0)
+    assert.equal(safeStorage.encryptCalls, 0)
+    await assert.rejects(stat(tokenPath(root)), { code: 'ENOENT' })
+
+    await store.saveToken('retry-fixture-token', validate)
+    assert.equal(attempts, 2)
+    assert.equal(validations, 1)
+    assert.equal(await store.readToken(), 'retry-fixture-token')
+  })
+})
+
 test('basic_text and unknown backends refuse token use without creating a secret file', async () => {
   for (const backend of ['basic_text', 'unknown']) {
     await withDataRoot(async (root) => {
