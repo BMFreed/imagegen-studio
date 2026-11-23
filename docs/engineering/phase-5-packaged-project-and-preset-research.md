@@ -161,3 +161,54 @@ closed snapshots and exit receipts under `runs/packaged-project-trash/20261123-r
 and `runs/packaged-project-trash/20261123-r3` in the local artifact root.
 The AppImage builds, private profiles and scratch were removed after physical
 exit and dependency checks, reclaiming 1,087,827,968 allocated bytes.
+
+## Enter on Home project cards
+
+The Home card used to consume Enter even when the action could neither open nor
+switch to the project. In the packed KDE Wayland baseline at 900×620, the grid
+and list cards in Trash kept visible focus but stayed unselected and left the
+Inspector empty. The same keyboard path opened the restored available project
+in the current tab.
+
+Home now consumes Enter only when its existing open eligibility check succeeds.
+In other states the Naive button uses native activation, which selects the card
+for inspection through the same handler as Space. The Vue prototype shares its
+open eligibility between both card layouts, the Inspector and the open request.
+It preserves the existing decisions for Trash, project health and current
+workspace availability. Recovery still uses the existing decision dialog.
+[Production Home](../../src/renderer/components/HomeView.vue),
+[prototype eligibility](../prototype-app/src/prototypes/home/home.utils.ts).
+
+The AppImage fixture found both cards unselected on the original build and
+both selected with the correction. The final native trace
+records trusted Enter, visible focus, selected state and the visible Inspector
+in Grid and List, with Home still active in each observation. The ready-project
+control replaced Home with the expected tab and preserved the project revision
+and accepted Raster provenance. Restore, Escape and Cancel, intentional deletion
+and cold reopen ran in the same fixture. The native coverage uses the private KWin
+session and owned copies of the existing Project fixtures.
+
+Independent readback matched both AppImage hashes and all six common fixture
+pins. Each run recorded 70 trusted key events, three normal AppImage closes
+and 30 confirmed process exits. The SQLite snapshots and closed `.igs` files
+preserved the neighbor and reflected the selected target's retirement.
+
+The focused prototype cases used the same test bytes on the original and updated
+prototype. The original failed for both layouts across a missing file in an
+unavailable workspace, corrupt and unsupported projects, and a trashed project.
+The cases also exercise Recovery and distinguish Space selection from an
+available project's Enter open.
+
+All 365 prototype tests passed. The final helper formatting moved its private
+function and wrapped a signature. The two focused tests passed again on those
+exact bytes. Typecheck, scoped lint and AppImage packaging passed.
+
+The original AppImage SHA-256 was
+`1761f76a8a0a2cae262046b4ed402a898a33480c0781044e8b879790b0782654`.
+The final AppImage SHA-256 was
+`01f3e206eeac0b74542bb4881c12e9bdda3aee675b98819d0f42617cf8796dd7`.
+The evidence directories under the local artifact root are
+`runs/packaged-project-trash/20261123-r4` and
+`runs/packaged-project-trash/20261123-r5`.
+Guarded cleanup removed both packages, private profiles, browser scratch and
+redundant temporary output. It reclaimed 1,108,357,120 allocated bytes.

@@ -29,7 +29,7 @@ defineEmits<{
       :selected="project.id === selectedId"
       :showWorkspace
       :trashView
-      :workspaceName="workspaces.find((item) => item.id === project.workspaceId)?.name ?? 'Unknown'"
+      :workspace="workspaces.find((item) => item.id === project.workspaceId)"
       @action="$emit('action', $event)"
       @open="$emit('open', $event)"
       @select="$emit('select', $event)"

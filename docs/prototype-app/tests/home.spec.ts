@@ -117,6 +117,74 @@ test.describe('Home prototype', () => {
     await expect(page.getByRole('button', { name: 'Close Sample Project B.igs' })).toBeVisible()
   })
 
+  for (const layout of ['Grid', 'List']) {
+    test(`uses Enter to select unavailable and trashed projects in ${layout.toLowerCase()} view`, async ({
+      page,
+    }) => {
+      await openHome(page, '?prototype=home&scenario=problems')
+      await page.getByRole('button', { exact: true, name: `${layout} view` }).click()
+      const projects = page.getByLabel(`Project ${layout.toLowerCase()}`, { exact: true })
+      const inspector = page.getByLabel('Project inspector', { exact: true })
+      const homeTab = page.getByRole('tab', { exact: true, name: 'Home' })
+      const selectButton = (name: string) =>
+        projects.getByRole('button', { exact: true, name: `Select ${name}` })
+
+      async function selectWithKey(name: string, key: 'Enter' | 'Space') {
+        const item = selectButton(name)
+        await expect(item).toHaveAttribute('aria-pressed', 'false')
+        await item.press(key)
+        await expect(item).toBeFocused()
+        await expect.soft(item).toHaveAttribute('aria-pressed', 'true', { timeout: 1000 })
+        await expect
+          .soft(inspector.getByRole('heading', { exact: true, name }))
+          .toBeVisible({ timeout: 1000 })
+        await expect(homeTab).toHaveAttribute('aria-selected', 'true')
+        await expect(page.getByRole('tab', { exact: true, name: `${name}.igs` })).toHaveCount(0)
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+      }
+
+      for (const name of [
+        'Archive character sheet',
+        'Damaged portrait study',
+        'Future schema concept',
+      ]) {
+        await selectWithKey(name, 'Enter')
+      }
+
+      const trashedName = 'NoobAI composition tests'
+      await projects
+        .getByRole('article')
+        .filter({ hasText: trashedName })
+        .getByRole('button', { exact: true, name: 'Project actions' })
+        .click()
+      await page.getByText('Move to Trash', { exact: true }).click()
+      await page
+        .getByRole('dialog', { exact: true, name: 'Move Project to Trash' })
+        .getByRole('button', { exact: true, name: 'Move to Trash' })
+        .click()
+      await page.getByRole('button', { name: /^Trash 1$/ }).click()
+      await selectWithKey(trashedName, 'Enter')
+      await expect.soft(inspector.getByRole('button', { name: 'Restore Project' })).toBeVisible({
+        timeout: 1000,
+      })
+
+      await page.getByRole('button', { exact: true, name: 'Projects' }).click()
+      await selectButton('Midnight greenhouse').press('Enter')
+      const recovery = page.getByRole('dialog', { exact: true, name: 'Recover Project' })
+      await expect(recovery).toBeVisible()
+      await recovery.getByRole('button', { exact: true, name: 'Cancel' }).click()
+      await expect(recovery).toBeHidden()
+
+      const readyName = 'Regional light study'
+      await selectWithKey(readyName, 'Space')
+      await selectButton(readyName).press('Enter')
+      await expect(
+        page.getByRole('tab', { exact: true, name: `${readyName}.igs` }),
+      ).toHaveAttribute('aria-selected', 'true')
+      await expect(homeTab).toBeHidden()
+    })
+  }
+
   test('searches by name, filters conditions, and switches view mode', async ({ page }) => {
     await openHome(page)
     await page.getByPlaceholder('Search projects').fill('greenhouse')

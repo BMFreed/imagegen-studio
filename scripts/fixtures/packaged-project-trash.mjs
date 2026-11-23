@@ -62,6 +62,18 @@ function projectPort(page, method, ...args) {
   return page.evaluate(({ method, args }) => window.api.projects[method](...args), { method, args })
 }
 
+function documentTabs(page) {
+  return page
+    .getByRole('tablist', { name: 'Open documents', exact: true })
+    .getByRole('tab')
+    .evaluateAll((tabs) =>
+      tabs.map((element) => ({
+        name: element.getAttribute('aria-label'),
+        selected: element.getAttribute('aria-selected'),
+      })),
+    )
+}
+
 async function listTrash(page) {
   const result = await projectPort(page, 'listTrash')
   assert.equal(result.ok, true, JSON.stringify(result))
@@ -137,6 +149,7 @@ async function connectTrashKeyboard(state, root) {
   return {
     input,
     observations,
+    record,
     trace,
     async tabTo(target, phase) {
       await expect(target).toBeVisible()
@@ -179,6 +192,41 @@ async function connectTrashKeyboard(state, root) {
       return observed
     },
   }
+}
+
+async function observeTrashEnter(page, keyboard) {
+  const inspector = page.getByRole('complementary', { name: 'Project inspector', exact: true })
+  const inspection = inspector.getByRole('heading', { name: targetTitle, exact: true })
+  const results = []
+  for (const mode of ['Grid', 'List']) {
+    await showTrash(page)
+    await button(page, `${mode} view`).click()
+    await expect(button(page, `${mode} view`)).toHaveAttribute('aria-pressed', 'true')
+    const select = button(
+      page.getByRole('list', { name: `Project ${mode.toLowerCase()}`, exact: true }),
+      `Select ${targetTitle}`,
+    )
+    await expect(select).toHaveAttribute('aria-pressed', 'false')
+    await expect(inspector.getByText('Select a project to preview', { exact: true })).toBeVisible()
+    const phase = `trash-enter-${mode.toLowerCase()}`
+    await keyboard.tabTo(select, `reach-${phase}`)
+    await keyboard.input.press('Return', phase)
+    const focus = await keyboard.observe(`after-${phase}`)
+    const result = {
+      phase: `${phase}-result`,
+      selected:
+        (await select.count()) === 1 && (await select.getAttribute('aria-pressed')) === 'true',
+      inspectorVisible: await inspection.isVisible(),
+      tabs: await documentTabs(page),
+      focus,
+    }
+    results.push(result)
+    await keyboard.record(result)
+    // Keep the remaining lifecycle checks independent of a failed keyboard assertion.
+    if (await tab(page, targetTitle).count()) await closeProject(page, targetTitle)
+  }
+  await showTrash(page)
+  return results
 }
 
 export async function runPackagedProjectTrash({
@@ -341,6 +389,10 @@ export async function runPackagedProjectTrash({
   assert.equal(restartTrash.trashId, firstTrash.trashId)
   assert.equal(restartTrash.trashedAt, firstTrash.trashedAt)
   const keyboard = nativeWayland ? await connectTrashKeyboard(second, root) : null
+  const trashEnter = keyboard ? await observeTrashEnter(secondPage, keyboard) : []
+  if (keyboard) {
+    assert.equal((await verifyTrashed(second, false)).trashId, restartTrash.trashId)
+  }
   const searchProjects = secondPage.getByRole('textbox', { name: 'Search projects', exact: true })
   const restore = button(secondPage, `Restore ${targetTitle}`)
   if (keyboard) {
@@ -356,7 +408,26 @@ export async function runPackagedProjectTrash({
   assert.deepEqual(indexSnapshot(database), baseline)
   await assertSource()
   await button(home(secondPage), 'Projects').click()
-  await button(secondPage, `Open ${targetTitle}`).click()
+  let readyEnter
+  if (keyboard) {
+    const select = button(secondPage, `Select ${targetTitle}`)
+    await keyboard.tabTo(select, 'reach-ready-enter')
+    await keyboard.input.press('Return', 'ready-enter')
+    const ready = tab(secondPage, targetTitle)
+    await expect(ready)
+      .toHaveAttribute('aria-selected', 'true', { timeout: 5_000 })
+      .catch(() => undefined)
+    const focus = await keyboard.observe('after-ready-enter')
+    readyEnter = { phase: 'ready-enter-result', tabs: await documentTabs(secondPage), focus }
+    await keyboard.record(readyEnter)
+    if (
+      !readyEnter.tabs.some(({ name, selected }) => name === targetTitle && selected === 'true')
+    ) {
+      await button(secondPage, `Open ${targetTitle}`).click()
+    }
+  } else {
+    await button(secondPage, `Open ${targetTitle}`).click()
+  }
   await assertOpened(second, id)
   await closeProject(secondPage, targetTitle)
 
@@ -473,6 +544,24 @@ export async function runPackagedProjectTrash({
   const restarted = await retainOwnStore('after-delete-restart', path.basename(neighbor.filename))
 
   if (keyboard) {
+    assert.deepEqual(
+      readyEnter?.tabs,
+      [{ name: targetTitle, selected: 'true' }],
+      'Enter on the ready Project must replace Home with the exact Project tab.',
+    )
+    assert.ok(
+      trashEnter.every(
+        ({ selected, inspectorVisible, tabs, focus }) =>
+          selected &&
+          inspectorVisible &&
+          tabs.length === 1 &&
+          tabs[0].name === 'Home' &&
+          tabs[0].selected === 'true' &&
+          focus.active?.name === `Select ${targetTitle}` &&
+          focus.active.focusVisible,
+      ),
+      `Enter must select the Trash Project without opening a tab in Grid and List: ${JSON.stringify(trashEnter)}`,
+    )
     assert.ok(
       openings.every(
         ({ active }) =>
@@ -514,7 +603,14 @@ export async function runPackagedProjectTrash({
       neighbor: neighborBefore,
       finalIndex: expectedFinalIndex,
       refusals: { openRefusal, trashedOpenRefusal, stale, unconfirmed },
-      ...(keyboard && { keyboard: { trace: keyboard.trace, observations: keyboard.observations } }),
+      ...(keyboard && {
+        keyboard: {
+          trace: keyboard.trace,
+          observations: keyboard.observations,
+          trashEnter,
+          readyEnter,
+        },
+      }),
     },
   }
 }

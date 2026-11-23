@@ -431,7 +431,8 @@ Opening projects follows browser-like tab semantics.
 Rules:
 
 - single left click selects the project and updates the Inspector without opening it;
-- double click or `Enter` opens the selected project in the current tab;
+- double click or `Enter` opens an available project in the current tab;
+- `Enter` selects a project for inspection when it cannot be opened, including projects in Trash;
 - opening from `Home` replaces `Home` with the `Project` tab;
 - middle click opens the project in a new tab next to `Home`;
 - Ctrl/Cmd+click opens the project in a new tab;
@@ -751,7 +752,7 @@ The queue/download badges use fixed mock counts (`2` and `1`) to reserve chrome 
 Accessibility requirements:
 
 - workspace and browse-view rows use keyboard-focusable selection semantics;
-- project cards support single-click selection, `Enter` opening, modifier-assisted opening and an accessible context menu;
+- project cards support single-click and Space selection, `Enter` opening or inspection, modifier-assisted opening and an accessible context menu;
 - each card/list row uses a semantic article shell with one full-surface Naive selection button and a separate non-nested actions button;
 - document tabs expose tablist/tab semantics and separate accessible close buttons;
 - search, sort, filter and view controls have visible labels or accessible names;
@@ -790,7 +791,10 @@ MVP does not include:
 - An external `.igs` must be moved or copied into a workspace before it is indexed and opened.
 - Home may show `New Project` as the Home primary action and `Open Project` as the selected-project primary action.
 - Opening an already-open `.igs` focuses the existing `Project` tab.
-- Single click selects a project for preview; double click / Enter opens it in the current tab; middle click / Ctrl-click opens it in a new tab.
+- Single click and Space select a project for preview. Enter opens an available
+  project or selects the unavailable project for inspection. Double click opens
+  an available project in the current tab. Middle click and Ctrl-click open it in
+  a new tab.
 - Search matches project display names only; sorting supports last opened, name and modified date.
 - Project filtering supports `Open`, `Recovery available` and `Needs attention` without treating independent conditions as one enum.
 - Project cards show thumbnail, name, basic metadata and applicable independent conditions.

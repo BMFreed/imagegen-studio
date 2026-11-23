@@ -18,6 +18,7 @@ import type {
 
 import { createHomeScenario } from './home.mock'
 import {
+  canOpenHomeProject,
   createProjectFromDraft,
   createProjectFromExternalDraft,
   filterHomeProjects,
@@ -197,12 +198,7 @@ function requestOpen(intent: HomeProjectOpenIntent) {
   const workspace = project
     ? workspaces.value.find((candidate) => candidate.id === project.workspaceId)
     : undefined
-  if (
-    !project ||
-    project.trashedAt ||
-    project.health !== 'ready' ||
-    workspace?.availability !== 'available'
-  ) {
+  if (!project || !canOpenHomeProject(project, workspace)) {
     return
   }
   if (project.recoveryAvailable) {

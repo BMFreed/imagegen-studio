@@ -514,6 +514,13 @@ function requestOpen(project: ProjectSummary, target: 'current' | 'new' = 'curre
     emit('openProject', project.id, target)
   }
 }
+function handleProjectEnter(event: KeyboardEvent, project: ProjectSummary) {
+  if (canOpenProject(project)) {
+    event.preventDefault()
+    event.stopPropagation()
+    requestOpen(project)
+  }
+}
 function doubleClickProject(event: MouseEvent, project: ProjectSummary) {
   if (!isProjectControl(event) && event.button === 0 && !event.ctrlKey && !event.metaKey) {
     requestOpen(project, 'current')
@@ -1029,7 +1036,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                         class="row-select"
                         :disabled="busy"
                         text
-                        @keydown.enter.prevent.stop="requestOpen(project)"
+                        @keydown.enter="handleProjectEnter($event, project)"
                       >
                         <div class="project-thumbnail">
                           <img

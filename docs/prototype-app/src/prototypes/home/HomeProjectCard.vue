@@ -2,9 +2,10 @@
 import { NButton, NDropdown, NTag } from 'naive-ui'
 import { computed, ref } from 'vue'
 
-import type { HomeProjectAction, HomeProjectRecord } from './home.types'
+import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types'
 
 import { projectStatusTagTheme } from '../../theme/naive-theme'
+import { canOpenHomeProject } from './home.utils'
 import HomeProjectActions from './HomeProjectActions.vue'
 import ProjectArtwork from './ProjectArtwork.vue'
 
@@ -14,7 +15,7 @@ const props = defineProps<{
   selected: boolean
   showWorkspace: boolean
   trashView: boolean
-  workspaceName: string
+  workspace?: HomeWorkspace
 }>()
 
 const emit = defineEmits<{
@@ -68,6 +69,13 @@ function handleDoubleClick() {
   }
 }
 
+function handleEnter(event: KeyboardEvent) {
+  if (!props.trashView && canOpenHomeProject(props.project, props.workspace)) {
+    event.preventDefault()
+    emit('open', { projectId: props.project.id, target: 'current' })
+  }
+}
+
 function handleContextAction(key: string) {
   contextMenuVisible.value = false
   emit('action', {
@@ -101,7 +109,7 @@ function openContextMenu(event: MouseEvent) {
       @click="handleClick"
       @contextmenu.prevent="openContextMenu"
       @dblclick="handleDoubleClick"
-      @keydown.enter.prevent="$emit('open', { projectId: project.id, target: 'current' })"
+      @keydown.enter="handleEnter"
     >
       <div class="thumbnail">
         <ProjectArtwork v-if="project.thumbnailState === 'ready'" :tone="project.thumbnailTone" />
@@ -122,7 +130,7 @@ function openContextMenu(event: MouseEvent) {
       <div class="card-body">
         <strong v-overflow-title>{{ project.displayName }}</strong>
         <span v-if="showWorkspace" v-overflow-title class="workspace-name">
-          {{ workspaceName }}
+          {{ workspace?.name ?? 'Unknown' }}
         </span>
         <div class="card-meta">
           <span>{{ project.width }} × {{ project.height }}</span>

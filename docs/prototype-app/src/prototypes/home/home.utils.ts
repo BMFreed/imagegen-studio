@@ -8,9 +8,11 @@ import type {
   NewProjectDraft,
 } from './home.types'
 
-export function projectNeedsAttention(project: HomeProjectRecord, workspaces: HomeWorkspace[]) {
-  const workspace = workspaces.find((candidate) => candidate.id === project.workspaceId)
-  return project.health !== 'ready' || !workspace || workspace.availability !== 'available'
+export function canOpenHomeProject(
+  project: HomeProjectRecord,
+  workspace: HomeWorkspace | undefined,
+) {
+  return project.trashedAt === undefined && !projectNeedsAttention(project, workspace)
 }
 
 export function getProjectsForBrowseSelection(
@@ -42,7 +44,10 @@ export function filterHomeProjects(
     }
     switch (status) {
       case 'attention': {
-        return projectNeedsAttention(project, workspaces)
+        return projectNeedsAttention(
+          project,
+          workspaces.find((workspace) => workspace.id === project.workspaceId),
+        )
       }
       case 'open': {
         return openProjectIds.includes(project.id)
@@ -216,6 +221,10 @@ export function getNextProjectAfterRemoval(
 ) {
   const index = visibleProjects.findIndex((project) => project.id === removedProjectId)
   return visibleProjects[index + 1] ?? visibleProjects[index - 1]
+}
+
+function projectNeedsAttention(project: HomeProjectRecord, workspace: HomeWorkspace | undefined) {
+  return project.health !== 'ready' || workspace?.availability !== 'available'
 }
 
 function slugify(value: string) {

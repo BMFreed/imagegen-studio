@@ -2,9 +2,10 @@
 import { NButton, NDropdown, NTag } from 'naive-ui'
 import { computed, ref } from 'vue'
 
-import type { HomeProjectAction, HomeProjectRecord } from './home.types'
+import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types'
 
 import { projectStatusTagTheme } from '../../theme/naive-theme'
+import { canOpenHomeProject } from './home.utils'
 import HomeProjectActions from './HomeProjectActions.vue'
 import ProjectArtwork from './ProjectArtwork.vue'
 
@@ -13,7 +14,7 @@ const props = defineProps<{
   project: HomeProjectRecord
   selected: boolean
   trashView: boolean
-  workspaceName: string
+  workspace?: HomeWorkspace
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +63,13 @@ function handleContextAction(key: string) {
   })
 }
 
+function handleEnter(event: KeyboardEvent) {
+  if (!props.trashView && canOpenHomeProject(props.project, props.workspace)) {
+    event.preventDefault()
+    emit('open', { projectId: props.project.id, target: 'current' })
+  }
+}
+
 function openContextMenu(event: MouseEvent) {
   emit('select', props.project.id)
   contextMenuX.value = event.clientX
@@ -84,12 +92,12 @@ function openContextMenu(event: MouseEvent) {
       @auxclick.middle.prevent="$emit('open', { projectId: project.id, target: 'new' })"
       @click="handleClick"
       @dblclick.stop="$emit('open', { projectId: project.id, target: 'current' })"
-      @keydown.enter.prevent="$emit('open', { projectId: project.id, target: 'current' })"
+      @keydown.enter="handleEnter"
     >
       <div class="row-art"><ProjectArtwork :tone="project.thumbnailTone" /></div>
       <div class="row-name">
         <strong v-overflow-title>{{ project.displayName }}</strong>
-        <span v-overflow-title>{{ workspaceName }} · {{ project.fileName }}</span>
+        <span v-overflow-title>{{ workspace?.name ?? 'Unknown' }} · {{ project.fileName }}</span>
       </div>
       <span>{{ project.width }} × {{ project.height }}</span>
       <span>{{ project.layerCount }} layers</span>

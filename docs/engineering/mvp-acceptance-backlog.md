@@ -304,6 +304,10 @@ entries record the state at their checkpoint.
    in the Trash search when the row disappears. The exact Project and its
    neighbor passed the existing persistence controls.
    [Trash keyboard focus](./phase-5-packaged-project-and-preset-research.md#trash-keyboard-focus-on-kde-wayland)
+   A follow-up made Enter select the focused Trash project in Grid and List.
+   Native Wayland showed selected state, the Project Inspector and continued
+   Home focus in both layouts. The regular project still opened in the current
+   tab. [Enter on Home cards](./phase-5-packaged-project-and-preset-research.md#enter-on-home-project-cards)
    In a separate startup case, the AppImage finished two committed
    deletions. A different valid `.igs` at the old path stayed on disk
    with a pending diagnostic and Restore refused. The ordinary Trash

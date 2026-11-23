@@ -11,7 +11,7 @@ import { computed } from 'vue'
 
 import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types'
 
-import { getProjectConditionLabels } from './home.utils'
+import { canOpenHomeProject, getProjectConditionLabels } from './home.utils'
 import HomePreviewViewport from './HomePreviewViewport.vue'
 
 const props = defineProps<{
@@ -43,10 +43,7 @@ const conditions = computed(() =>
     : [],
 )
 const canOpen = computed(
-  () =>
-    !props.trashView &&
-    props.project?.health === 'ready' &&
-    props.workspace?.availability === 'available',
+  () => !props.trashView && props.project && canOpenHomeProject(props.project, props.workspace),
 )
 </script>
 
