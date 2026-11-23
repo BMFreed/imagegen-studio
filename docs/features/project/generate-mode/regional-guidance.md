@@ -76,6 +76,9 @@ Euler/Normal, false/leading noise, CFG(1,30], steps1–200, embedded FP16 VAE,
 64–512 divisible8, one static item, existing text/attention limits and at most
 three original references across at most three enabled regions. Per-PNG32MiB,
 aggregate96MiB; original import dimensions/pixels remain independently bounded.
+The [IMG capacity follow-up](../../../engineering/phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity)
+exercises 16,384 pixels on one side, 64 million pixels per original,
+and 95.61 MiB across three normalized PNGs on the measured host.
 Enabled LoRA, active TI, selected VAE, other methods/objectives/modes, dynamic
 prompts/batch and Smart references remain outside this consumer. Anima references,
 inverse auto-negative and generic adapter workflows remain exclusions.

@@ -117,3 +117,84 @@ bounds. It matched the large weight file identities by metadata. The
 30-entry payload archive was verified entry by entry before disposing of the
 two owned temporary directories. Net allocated space reclaimed was
 12,824,576 bytes. `retention.json` records the archive digest and exact paths.
+
+## Original PNG dimensions and near-limit byte capacity
+
+Studio `59bf2d5aa2e426960614106f85c885e480376ffb`, InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The fresh source trace read
+`invokeai/app/api/routers/images.py` and
+`invokeai/app/services/image_files/image_files_disk.py` for original image
+decode and storage. `invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts`
+calls `addRegionalGuidance.ts`, which routes each original alongside its
+owned mask. `invokeai/app/invocations/sd/ip_adapter.py` resolves the vision
+model and `invokeai/app/invocations/sd/denoise_latents.py` consumes the decoded
+RGB original before applying the associated mask. The exact Studio ceilings
+belong to the existing Project import, package and Generate consumers.
+
+The follow-up uses real RGB PNGs from a seeded generator. Main imports
+them through the installed CPU worker, which produces canonical RGBA PNGs
+and owned thumbnails. The three invalid originals have one isolated
+dimension violation each. They are 16,385 × 1, 1 × 16,385, and 5,213 × 12,277.
+The last image exceeds the area limit by exactly one pixel. The PNG content
+and geometry were checked separately from the importer.
+
+| Original | Dimensions | Normalized PNG bytes |
+| --- | ---: | ---: |
+| Valid replacement | 4,096 × 4,096 | 33,419,438 |
+| Maximum-width original | 16,384 × 800 | 33,409,098 |
+| Maximum-area original | 8,000 × 8,000 | 33,424,410 |
+| Oversized normalized original | 4,096 × 4,096 | 33,688,472 |
+
+The refused set contains three references and totals 100,521,980 bytes,
+below the 96 MiB aggregate ceiling. Only the oversized original exceeds
+32 MiB. The acceptable set replaces that original on the same owner,
+preserves both neighboring references, and totals 100,252,946 bytes
+(95.61 MiB). The earlier four-count control remains a separate profile.
+The inherited `passes` and `riskBoundary` strings in the frozen Run R1
+fixture described that earlier profile. The retained preregistration and
+`fixture-metadata-correction.json` record the actual scope and preserve
+the original fixture bytes.
+
+The installed importer returned `IMAGE_TOO_LARGE` for all three geometry
+controls. The same Project document, tab state, Undo/Redo availability,
+saved package hash and scratch file hashes remained intact. The oversized
+normalized PNG imported, saved and reopened. Main Generate refused it with
+`GENERATION_INVALID_REQUEST` and the explicit byte-limit message before
+capture, resource lookup, worker startup or queue admission. All application
+tables and the owned staging trees matched the snapshot before refusal.
+
+Replacing that one original admitted exactly one Current Canvas IMG job.
+The signed worker consumed all three frozen original PNGs and masks and sent
+16 progress receipts. The worker result and staged candidate matched exactly
+at 146,920 bytes with SHA-256
+`e0e50f427a7825e4e04b2de46d5b25223dcae31f44d99581071e77cdf0e68cb8`.
+The fixture explicitly discarded the candidate. The saved Project, history
+and accepted-result state remained intact.
+
+The service finished in 128.832 seconds. Sampled worker VRAM peaked at
+8,460 MiB across 35 samples. Group memory reached the 12 GiB cap. cgroup
+recorded 1,408 `max` events, with zero swap and zero OOM events. The final
+snapshot recorded 10,475,917,312 bytes of file cache and 314,675,200 bytes
+of anonymous memory. These are final values and leave peak attribution
+open. This establishes capacity for the exercised host and set, with
+the exact byte endpoints, smaller hardware profiles and visual acceptance
+still open. Under the three-reference limit the 96 MiB aggregate ceiling
+is the sum of the per-file ceilings.
+
+All 79 focused tests passed, with zero failures or skips. Typecheck, scoped
+ESLint and formatting checks, and `pnpm run app:build` passed.
+
+An independent live audit verified eight input PNGs, exact RGB preservation
+with opaque alpha and sRGB in the four normalized originals, six thumbnails,
+all 32 ZIP entries, the closed SQLite and all three frozen queue originals.
+It rehashed 12 source, 77 engine and 17 signed configuration pins and
+confirmed physical exit. Checkpoint and auxiliary files matched their
+verified inode identities. The audit made no additional GPU request.
+
+Run `regional-reference-capacity/20261123-r1` retains the synthetic input
+generator and exact seeds, row counts and file hashes, compact Project and
+queue manifests, closed SQLite, mask and target bytes, the worker PNG and
+reports. It released 558,219,264 allocated bytes from both temporary
+directories and both generated `.igs` snapshots after verifying their
+member digests. The large synthetic PNG and package bodies were disposed.
+All 55 retained evidence files matched after cleanup.

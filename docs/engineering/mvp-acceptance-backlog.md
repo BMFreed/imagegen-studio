@@ -179,8 +179,13 @@ entries record the state at their checkpoint.
    references completed on the RTX 4080 with 9.50 GiB peak group RAM and
    8,852 MiB maximum sampled worker VRAM. A saved Project with four references
    refused Generate before capture or admission and preserved queue and Project
-   state. The original-image byte and dimension limits and wider hardware
-   capacity remain open. [Reference capacity](./phase-4-regional-reference-capacity-research.md),
+   state. The next installed run accepted three originals totaling 95.61 MiB,
+   including exact width and area boundaries. The genuine importer refused
+   adjacent width, height and area overflows. A saved reference just above
+   32 MiB refused Generate before capture or queue admission. The allowed
+   run reached its 12 GiB memory cap without an OOM. Exact byte endpoints
+   and wider hardware capacity remain open.
+   [Reference capacity](./phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity),
    [visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),
