@@ -609,7 +609,10 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
   const sourceImage = structuredClone(options.sourceImage)
   const runs = path.join(os.homedir(), '.codex/artifacts/imagegen-studio/runs')
   const runParent = path.dirname(run)
-  const anchoredAppleProfile = runParent === path.join(runs, 'anima-apple-negative-anchored')
+  const anchoredBaselineProfile = runParent === path.join(runs, 'anima-apple-negative-anchored')
+  const anchoredAppleProfile =
+    anchoredBaselineProfile ||
+    runParent === path.join(runs, 'anima-apple-negative-anchored-spatial')
   const appleProfile = anchoredAppleProfile || runParent === path.join(runs, 'anima-apple-negative')
   if (appleProfile) {
     assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
@@ -737,7 +740,7 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
     }
 
     let targetSha: string | undefined
-    const cases = anchoredAppleProfile
+    const cases = anchoredBaselineProfile
       ? [ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES[0]]
       : ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES
     for (const testCase of cases) {

@@ -42,8 +42,11 @@ const [flag, run, ...extra] = process.argv.slice(2)
 assert.equal(flag, '--run')
 assert.ok(run && extra.length === 0)
 const runParent = path.dirname(run)
-const anchoredAppleProfile =
+const anchoredSpatialProfile =
+  runParent === path.join(artifactRoot, 'runs/anima-apple-negative-anchored-spatial')
+const anchoredBaselineProfile =
   runParent === path.join(artifactRoot, 'runs/anima-apple-negative-anchored')
+const anchoredAppleProfile = anchoredBaselineProfile || anchoredSpatialProfile
 const appleProfile =
   anchoredAppleProfile || runParent === path.join(artifactRoot, 'runs/anima-apple-negative')
 if (appleProfile) {
@@ -74,7 +77,11 @@ const profile = appleProfile
               'a blue ceramic mug with a loop handle on a pale wooden tabletop against a plain light blue wall, even lighting',
           }
         : 'a pale wooden tabletop against a plain light blue wall, even lighting',
-      schema: anchoredAppleProfile ? 'anima-apple-negative-anchored-v1' : 'anima-apple-negative-v1',
+      schema: anchoredSpatialProfile
+        ? 'anima-apple-negative-anchored-spatial-v1'
+        : anchoredBaselineProfile
+          ? 'anima-apple-negative-anchored-v1'
+          : 'anima-apple-negative-v1',
       sourceFilename: 'apple-mug-source.png',
       startStep: 7,
     }
@@ -98,7 +105,7 @@ const negativeCases = [
   { label: 'negative-left', negativeSide: 'left' },
   { label: 'negative-right', negativeSide: 'right' },
 ] as const
-const cases = anchoredAppleProfile ? [negativeCases[0]] : negativeCases
+const cases = anchoredBaselineProfile ? [negativeCases[0]] : negativeCases
 const seed = 123
 const sampling = {
   cfgScale: 4,

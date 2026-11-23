@@ -42,7 +42,10 @@ three installed CUDA cases. Both blind readers identified a wooden box
 in all outputs. The baseline and right-mask control lost both subjects,
 leaving the spatial visual verdict inconclusive.
 [The named-subject baseline](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects)
-passed CPU preparation and awaits the single CUDA output.
+passed on installed CUDA. Both visual readers saw the apple and mug on
+their original sides in the coherent scene. The
+[matched spatial comparison](./phase-4-anima-apple-negative-research.md#named-subject-spatial-comparison)
+keeps the passing baseline and tests both local negative owners.
 
 ## Anima tabletop placement with shared scene context
 

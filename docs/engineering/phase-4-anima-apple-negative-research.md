@@ -156,6 +156,57 @@ The CPU manifest retained a descriptive sentence about identical positives
 from the earlier recipe. The correction is recorded separately, with both
 literal prompts and the actual mask assignment verified.
 
-The 238 focused tests, typecheck, scoped lint and build passed. The
-single-request CUDA baseline remains open while the available GPU and
-host memory are below the established run bounds.
+The 238 focused tests, typecheck, scoped lint and build passed for CPU preparation.
+
+### Installed one-request baseline
+
+Studio `31054adae45ac22325ab4a21b8005b6031ef45f0`. Run `20261123-r1`
+stopped before worker startup. The runtime idleness check received
+`EACCES` reading the executable link of the KDE System Monitor network
+helper. The helper exited, and R2 repeated the same checks with only the
+source path rebound. R1 and R2 kept the existing idleness guard.
+
+R2 issued one installed CUDA IMG request with the two named positives
+and zero local negatives. The result is a 512×512 PNG with SHA-256
+`efe2730e725093db6caac70fd807adff200c0d5378911db6fe4fd12e335155e2`.
+Both readers, given the source and an anonymous output, recognized a red
+apple on the left and a separate blue ceramic mug with a visible loop
+handle on the right. Both saw a continuous pale tabletop and light blue
+wall. This passes the control criterion for the fixed source and seed.
+
+The worker completed all 25 Heun evaluations. Peak group memory was
+9,652,989,952 bytes, maximum sampled worker VRAM was 6,556 MiB, and the
+unit finished in 47.418 seconds. The independent check passed 467
+assertions over the current runtime, resolved model identities, frozen
+Project, masks, compiled prompts, 25 progress receipts, output PNG and
+physical exit. The native controller uses Main's captured inputs and the
+installed worker directly. Its SQLite queue and accepted-result index
+remain empty. The PNG, closed Project and SQLite archive, and exact
+requests and reports are retained. Cleanup of the two attempts reclaimed
+43,376,640 allocated bytes. Human acceptance remains open.
+
+## Named-subject spatial comparison
+
+The follow-up fixes the passing baseline's source, seed, installed
+engine, model, mask owners, sampling and all positive prompts. It uses
+separate projects for an empty-local-negative replay, `(red apple)2.0`
+on the apple mask, and the identical negative on the mug mask. The
+previous baseline provides a pinned decoded-pixel replay control.
+Both spatial controls must preserve the apple, mug and scene. Both
+condition-blind readers must see the treated apple disappear or become
+substantially less recognizable, with the mug and scene preserved. An
+equally weakened right-mask control leaves the spatial effect unresolved.
+
+The fresh local InvokeAI check at
+`4875d96531ca6712b288f6e660fcbb34143408c1` traced the caller
+`invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts`
+through `addRegionalGuidance.ts`. It routes the local negative and its
+owner's alpha mask to the negative collector. The denoiser in
+`invokeai/app/invocations/anima/anima_denoise.py` calls
+`invokeai/backend/anima/regional_prompting.py` with image-wide global
+negative permissions and separately scoped local masks. Studio's
+qualification adds a separate finite three-case profile to the existing
+probe, with no change in worker behavior.
+
+The 242 focused tests passed without failures or skips. Typecheck, scoped
+ESLint and formatting checks, and the app build passed.
