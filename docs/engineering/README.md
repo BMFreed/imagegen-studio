@@ -421,7 +421,10 @@ three originals totaling 95.61 MiB at the measured 12 GiB group cap.
 The [exact stored byte test](./phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries)
 accepted three exact 32 MiB PNGs and refused the same 96 MiB total with
 one file a byte over. The installed worker reproduced the prior control
-PNG exactly. Visual utility and wider hardware capacity remain open.
+PNG exactly. The [joint capacity run](./phase-4-regional-reference-capacity-research.md#exact-stored-bytes-with-large-original-geometry)
+accepted the same 96 MiB with 191,995,904 decoded pixels and a maximum-width
+original. Timed snapshots show file and anonymous memory separately near
+the 12 GiB group cap. Visual utility and wider hardware capacity remain open.
 
 ## Current InvokeAI comparison for Anima negative placement
 

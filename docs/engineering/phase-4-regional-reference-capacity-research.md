@@ -251,7 +251,8 @@ across 34 samples. Peak cgroup memory reached its 12 GiB cap, with 785
 `max` events, zero swap and zero OOM events. The exact byte endpoints pass
 on this host. Hardware capacity at smaller limits, a combined maximum
 decoded geometry and exact byte cohort, and broader visual acceptance
-remain open. The production UI and shipping host matrix are separate checks.
+were outside this 512×512-original test. The larger combined check follows
+below. The production UI and shipping host matrix are separate checks.
 
 The final checks ran 79 focused tests with zero failures or skips, full
 typecheck and app build, and scoped formatting and lint. These are private
@@ -271,3 +272,82 @@ queue manifests, closed SQLite, mask and target bytes, result PNG and
 reports. Cleanup reclaimed 648,089,600 allocated bytes from the synthetic
 working data and both generated `.igs` snapshots. All 71 files sealed across
 the two runs matched after cleanup.
+
+## Exact stored bytes with large original geometry
+
+Studio `f8aba928b659ab74e1e01ba07b4ffbccc05b6f1e` and clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The current donor trace read
+`invokeai/app/api/routers/images.py`, the
+`invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts`
+caller of `addRegionalGuidance.ts`, and
+`invokeai/app/invocations/sd/denoise_latents.py::prep_ip_adapter_image_prompts`.
+The donor loads the original RGB pixels for the adapter and binds the
+owner mask separately. The existing Studio authoring, package, queue and
+worker paths enforce this product's original size and byte limits.
+
+Three deterministic RGB sources pass the ordinary reference importer.
+The Project qualifier then applies independently verified stored PNGs
+using the same opaque RGBA planes, canonical sRGB and a CRC-valid private
+chunk. Both saved states contain 100,663,296 bytes. The refusal has one
+file a byte over 32 MiB and one a byte under. The legal state has three
+files of 33,554,432 bytes each. Both have the same reference IDs, owners,
+masks, thumbnails, target and draft.
+
+| Reference | Width × height | Decoded pixels |
+| --- | ---: | ---: |
+| First area limit | 8,000 × 8,000 | 64,000,000 |
+| Maximum side | 16,384 × 3,906 | 63,995,904 |
+| Second area limit | 6,400 × 10,000 | 64,000,000 |
+| Total | | 191,995,904 |
+
+The width-limit original uses the largest whole-number height admitted
+at that width. The 8,000 × 8,000 source and canonical PNG reproduce the
+prior near-byte-limit control. The other two planes extend that cohort.
+The model, settings and 512×512 processing target use the same pinned
+Illustrious IMG control.
+
+The owned native service retains the existing 12 GiB group cap, zero
+swap and 600-second deadline. In addition to the kernel peak and the
+worker-specific VRAM samples, a separate observer samples the actual
+cgroup every 250 ms. It records total charged, anonymous, file and kernel
+memory, plus group events and file markers. These reads give interval
+snapshots alongside the kernel's peak counter.
+
+Run `20261123-r4` refused the one-byte overflow before capture, model or
+reference preparation, resources, any worker call or queue admission. Its
+saved `.igs`, live Project and history, application rows and owned paths
+matched the pre-call snapshot. Main then saved and reopened the accepted
+variant and froze all three exact RGBA PNG bodies with their masks.
+The signed worker completed one IMG job with 16 progress receipts. Its
+149,326-byte PNG matched the staged candidate with SHA-256
+`aec3b1406e1cc3902f6b405cad027cc21681d4c549466096d987cbacf27cb0ad`.
+The candidate was explicitly discarded. The saved Project and empty
+accepted-result index and journal survived Generate.
+
+The service finished in 147.355 seconds. Worker VRAM peaked at 8,460 MiB
+across 35 samples. The kernel peak reached the 12 GiB cap, with 419
+`max` events and zero OOM or swap. The 589 sampled snapshots cover
+147.296 seconds. Near the largest sampled total, after output, the
+group showed 9.49 GiB file and 2.42 GiB anonymous memory. The largest
+sampled anonymous value, during inference, was 3.89 GiB. The timing
+marker records when the output file was first visible. The snapshots
+measure this group on this machine and leave a smaller-capacity pass
+and concurrent host workloads unqualified.
+
+The 79 focused tests passed with zero failures or skips. Typecheck, app
+build, scoped lint and formatting passed. Visual acceptance and shipping
+qualification remain separate.
+
+The independent readback checked all eight input bodies, complete PNG
+chunk CRCs and decoded color/alpha equality, both 16-entry ZIPs, all six
+thumbnails, the three frozen PNGs and the closed SQLite queue and receipt.
+It rehashed 12 source, 77 engine and 17 configuration pins. The native
+controller, recorded workers, sampler and cgroup exited normally. The
+audit reconciled the full interval trace with the kernel receipt without
+issuing another request.
+
+The run retains exact fixture seeds and sizes, the generator and sampler,
+compact Project and queue manifests, closed SQLite, masks, target, result
+PNG, memory samples and chart, and reports. Cleanup reclaimed 697,303,040
+allocated bytes from the synthetic working data, short scratch and both
+generated `.igs` copies. All 58 sealed evidence files matched afterward.

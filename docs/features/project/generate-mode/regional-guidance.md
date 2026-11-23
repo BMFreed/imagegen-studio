@@ -82,6 +82,9 @@ and 95.61 MiB across three normalized PNGs on the measured host.
 The [exact stored PNG test](../../../engineering/phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries)
 exercises the inclusive 32 MiB per-file and 96 MiB aggregate bounds, with
 a one-byte per-file overflow refused before capture.
+The [joint capacity run](../../../engineering/phase-4-regional-reference-capacity-research.md#exact-stored-bytes-with-large-original-geometry)
+combined the exact byte ceilings with two exact area limits and a
+16,384-pixel-wide original on the measured host.
 Enabled LoRA, active TI, selected VAE, other methods/objectives/modes, dynamic
 prompts/batch and Smart references remain outside this consumer. Anima references,
 inverse auto-negative and generic adapter workflows remain exclusions.
