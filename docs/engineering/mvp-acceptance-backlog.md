@@ -183,9 +183,13 @@ entries record the state at their checkpoint.
    including exact width and area boundaries. The genuine importer refused
    adjacent width, height and area overflows. A saved reference just above
    32 MiB refused Generate before capture or queue admission. The allowed
-   run reached its 12 GiB memory cap without an OOM. Exact byte endpoints
-   and wider hardware capacity remain open.
+   run reached its 12 GiB memory cap without an OOM. The exact stored byte
+   follow-up held the same 96 MiB aggregate across both saved states. Main
+   refused a one-byte per-file overflow and the installed worker completed
+   the three-file exact-cap IMG control. Wider hardware capacity and the
+   joint maximum decoded geometry and exact byte profile remain open.
    [Reference capacity](./phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity),
+   [exact stored byte limits](./phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries),
    [visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),

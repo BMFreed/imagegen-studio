@@ -177,9 +177,9 @@ recorded 1,408 `max` events, with zero swap and zero OOM events. The final
 snapshot recorded 10,475,917,312 bytes of file cache and 314,675,200 bytes
 of anonymous memory. These are final values and leave peak attribution
 open. This establishes capacity for the exercised host and set, with
-the exact byte endpoints, smaller hardware profiles and visual acceptance
-still open. Under the three-reference limit the 96 MiB aggregate ceiling
-is the sum of the per-file ceilings.
+smaller hardware profiles and visual acceptance still open. The
+[exact stored byte test](#exact-stored-png-byte-boundaries) covers the byte
+endpoints separately.
 
 All 79 focused tests passed, with zero failures or skips. Typecheck, scoped
 ESLint and formatting checks, and `pnpm run app:build` passed.
@@ -231,3 +231,43 @@ with at most three items entails an individual limit violation. The
 ceiling, before Main or worker startup. The corrected R3 test reader
 admits exactly one additional byte for this profile's fixture input.
 R3 reuses the five exact R2 PNGs and preserves the failed attempt receipt.
+
+With Studio `77aa7dfef934be84c3bba492964d995959293eb8`, R3 reached the
+Main byte-limit diagnostic before capture, resource lookup, worker startup
+or queue admission. The saved `.igs`, live document and history, complete
+database snapshot and owned staging directories matched before and after
+the refusal. Main then accepted all three exact 32 MiB files and froze the
+actual 100,663,296 bytes with their original owners and masks.
+
+The signed installed worker completed one 512×512 IMG job with all 16
+progress receipts. Its output and staged candidate were both 171,328 bytes
+and matched the prior small-encoded control byte for byte, with SHA-256
+`ca7bc143ba90707290a91ce4b91d31086ab914440379b532b3d7df01156aa`.
+The candidate was explicitly discarded. The saved Project and the empty
+accepted-result index and journal survived Generate.
+
+Observed service runtime was 93.921 seconds. Peak worker VRAM was 8,460 MiB
+across 34 samples. Peak cgroup memory reached its 12 GiB cap, with 785
+`max` events, zero swap and zero OOM events. The exact byte endpoints pass
+on this host. Hardware capacity at smaller limits, a combined maximum
+decoded geometry and exact byte cohort, and broader visual acceptance
+remain open. The production UI and shipping host matrix are separate checks.
+
+The final checks ran 79 focused tests with zero failures or skips, full
+typecheck and app build, and scoped formatting and lint. These are private
+qualification results. Public promise statuses retain their existing scope.
+
+The independent audit passed 451 assertions and a separate exact check of
+the empty acceptance index and journal. It verified the five fixture PNGs,
+all 32 entries from both saved ZIPs, the six thumbnails, closed SQLite and
+the exact frozen queue originals. The comparison rehashed 12 source, 77
+engine and 17 configuration pins, then verified the controller and both
+recorded workers had physically exited. The audit used retained bytes and
+made no new generation request.
+
+Runs `20261123-r2` and `20261123-r3` retain the generator, exact fixture
+descriptors and source seeds, the first preflight log, compact Project and
+queue manifests, closed SQLite, mask and target bytes, result PNG and
+reports. Cleanup reclaimed 648,089,600 allocated bytes from the synthetic
+working data and both generated `.igs` snapshots. All 71 files sealed across
+the two runs matched after cleanup.

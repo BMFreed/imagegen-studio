@@ -418,7 +418,10 @@ with four references refuses Generate before capture or queue admission and
 preserves the Project, history and database. The [original PNG boundary run](./phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity)
 checks adjacent geometry and byte refusals. One signed IMG job accepted
 three originals totaling 95.61 MiB at the measured 12 GiB group cap.
-Visual utility, exact byte endpoints and wider hardware capacity remain open.
+The [exact stored byte test](./phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries)
+accepted three exact 32 MiB PNGs and refused the same 96 MiB total with
+one file a byte over. The installed worker reproduced the prior control
+PNG exactly. Visual utility and wider hardware capacity remain open.
 
 ## Current InvokeAI comparison for Anima negative placement
 

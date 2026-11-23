@@ -79,6 +79,9 @@ aggregate96MiB; original import dimensions/pixels remain independently bounded.
 The [IMG capacity follow-up](../../../engineering/phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity)
 exercises 16,384 pixels on one side, 64 million pixels per original,
 and 95.61 MiB across three normalized PNGs on the measured host.
+The [exact stored PNG test](../../../engineering/phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries)
+exercises the inclusive 32 MiB per-file and 96 MiB aggregate bounds, with
+a one-byte per-file overflow refused before capture.
 Enabled LoRA, active TI, selected VAE, other methods/objectives/modes, dynamic
 prompts/batch and Smart references remain outside this consumer. Anima references,
 inverse auto-negative and generic adapter workflows remain exclusions.
