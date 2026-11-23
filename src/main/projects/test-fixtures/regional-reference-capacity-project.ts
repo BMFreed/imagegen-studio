@@ -9,7 +9,7 @@ import { parseProjectDocumentV1 } from '../../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,6 +49,11 @@ const STRIPES = [
 ] as const
 const REFERENCE_OWNERS = [0, 1, 2, 0] as const
 
+export interface CapacityOriginalBoundaries {
+  dimensionRefusals: readonly [FilePin, FilePin, FilePin]
+  normalized: readonly { bytes: number; height: number; sha256: string; width: number }[]
+}
+
 interface FilePin {
   byteSize: number
   path: string
@@ -58,10 +63,10 @@ interface FilePin {
 interface CapacityProject {
   database: AppDatabase
   models: ModelService
+  prepareAccepted: () => Promise<string>
   projectIndex: ProjectIndexRepository
   projects: ProjectService
-  referenceIds: { fourth: string; originals: readonly [string, string, string] }
-  removeFourth: () => Promise<string>
+  referenceIds: { originals: string[]; refused: string }
   root: string
   scratch: string
   tabId: string
@@ -70,15 +75,16 @@ interface CapacityProject {
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 export async function withRegionalReferenceCapacityProject<T>(options: {
+  boundaries?: CapacityOriginalBoundaries
   install: { pythonExecutable: string; runtimeDir: string }
   referenceImages: readonly [FilePin, FilePin, FilePin, FilePin]
   run: string
   sourceImage: FilePin
   use: (project: CapacityProject) => Promise<T>
 }): Promise<T> {
-  const { install, referenceImages, run, sourceImage, use } = options
+  const { boundaries, install, referenceImages, run, sourceImage, use } = options
   assert.equal(path.dirname(run), path.join(ARTIFACT_ROOT, 'runs/regional-reference-capacity'))
-  assert.match(path.basename(run), /^20261118-r[1-9]\d*$/u)
+  assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/u)
   assert.equal(await realpath(run), run)
   const payloads = path.join(run, 'payloads')
   await mkdir(payloads, { mode: 0o700, recursive: true })
@@ -89,8 +95,8 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
   await mkdir(scratch, { mode: 0o700 })
   assert.equal(classifyTargetPngAlpha(await verifyImage(sourceImage), 512, 512), 'img2img')
   assert.equal(new Set(referenceImages.map(({ sha256: hash }) => hash)).size, 4)
-  for (const image of referenceImages) {
-    await verifyImage(image)
+  for (const image of [...referenceImages, ...(boundaries?.dimensionRefusals ?? [])]) {
+    await verifyImage(image, boundaries ? 36 : 32)
   }
 
   const database = openAppDatabase(root, path.join(REPO, 'src/main/db/migrations'))
@@ -123,23 +129,50 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
       return { documentId, documentRevision }
     }
 
-    const worker = await ProjectWorkerClient.start(
-      {
-        pythonExecutable: install.pythonExecutable,
-        runtimeRoot: install.runtimeDir,
-        stagingBasePath: scratch,
-      },
-      {
-        environment: {
-          CUDA_VISIBLE_DEVICES: '',
-          LANG: 'C.UTF-8',
-          PYTHONDONTWRITEBYTECODE: '1',
-          TMPDIR: scratch,
+    const withWorker = async (work: (worker: ProjectWorkerClient) => Promise<void>) => {
+      const worker = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: install.pythonExecutable,
+          runtimeRoot: install.runtimeDir,
+          stagingBasePath: scratch,
         },
-      },
-    )
+        {
+          environment: {
+            CUDA_VISIBLE_DEVICES: '',
+            LANG: 'C.UTF-8',
+            PYTHONDONTWRITEBYTECODE: '1',
+            TMPDIR: scratch,
+          },
+        },
+      )
+      try {
+        await work(worker)
+      } finally {
+        await worker.close()
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+      }
+    }
     const imported: string[] = []
-    try {
+    const importReference = async (worker: ProjectWorkerClient, index: number) => {
+      const region = current().document.regionalGuidance![REFERENCE_OWNERS[index]]
+      const before = region.referenceImages?.length ?? 0
+      assert.ok(
+        await projects.importRegionalGuidanceReferenceImage(
+          tabId,
+          { ...owner(), regionId: region.id },
+          async () => referenceImages[index].path,
+          worker,
+        ),
+      )
+      const images = current().document.regionalGuidance![REFERENCE_OWNERS[index]].referenceImages!
+      assert.equal(images.length, before + 1)
+      if (boundaries) {
+        const { bytes, height, sha256, width } = images[before].asset
+        assert.deepEqual({ bytes, height, sha256, width }, boundaries.normalized[index])
+      }
+      imported[index] = images[before].id
+    }
+    await withWorker(async (worker) => {
       await projects.importRasterImage(tabId, sourceImage.path, worker)
       const initial = current().document
       assert.deepEqual(initial.primaryBbox, BBOX)
@@ -195,29 +228,58 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
         })
       }
 
-      for (const [index, regionIndex] of REFERENCE_OWNERS.entries()) {
-        const region = current().document.regionalGuidance![regionIndex]
-        const before = region.referenceImages?.length ?? 0
-        const image = referenceImages[index]
-        assert.ok(
-          await projects.importRegionalGuidanceReferenceImage(
-            tabId,
-            { ...owner(), regionId: region.id },
-            async () => image.path,
-            worker,
+      if (boundaries) {
+        const regionId = current().document.regionalGuidance![0].id
+        const snapshot = async () => ({
+          document: structuredClone(current().document),
+          epoch: current().documentEpoch,
+          history: [current().canUndo, current().canRedo],
+          packageHash: sha256(await readFile(current().filePath)),
+          scratch: await Promise.all(
+            (await readdir(scratch, { recursive: true })).sort().map(async (relative) => {
+              const file = path.join(scratch, relative)
+              const entry = await lstat(file)
+              assert.ok(entry.isDirectory() || entry.isFile())
+              return { relative, sha256: entry.isFile() ? sha256(await readFile(file)) : null }
+            }),
           ),
+          tabs: structuredClone(projects.getOpenTabs()),
+        })
+        const before = await snapshot()
+        const rejection = {
+          code: 'IMAGE_TOO_LARGE',
+          message: 'Image dimensions exceed the worker limit.',
+        }
+        for (const input of boundaries.dimensionRefusals) {
+          await assert.rejects(
+            projects.importRegionalGuidanceReferenceImage(
+              tabId,
+              { ...owner(), regionId },
+              async () => input.path,
+              worker,
+            ),
+            rejection,
+          )
+          assert.deepEqual(await snapshot(), before)
+        }
+        await writeFile(
+          path.join(run, 'import-dimension-refusals.json'),
+          `${JSON.stringify({ inputs: boundaries.dimensionRefusals, preserved: before, rejection }, null, 2)}\n`,
+          { flag: 'wx', mode: 0o600 },
         )
-        const images = current().document.regionalGuidance![regionIndex].referenceImages!
-        assert.equal(images.length, before + 1)
-        imported.push(images[before].id)
       }
-    } finally {
-      await worker.close()
-      assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
-    }
+      for (const index of boundaries ? [3, 1, 2] : [0, 1, 2, 3]) {
+        await importReference(worker, index)
+      }
+    })
 
-    const [first, second, third, fourth] = imported
-    const referenceIds = { fourth, originals: [first, second, third] as const }
+    const [, second, third, refused] = imported
+    const referenceIds = {
+      get originals() {
+        return imported.slice(0, 3)
+      },
+      refused,
+    }
     const retainPackage = async (name: string, expectedByOwner: readonly (readonly string[])[]) => {
       await projects.save(tabId)
       const filePath = current().filePath
@@ -250,8 +312,11 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
       return packageData.project
     }
 
-    const before = await retainPackage('four-references.igs', [[first, fourth], [second], [third]])
-    const removeFourth = async () => {
+    const before = await retainPackage(
+      boundaries ? 'oversized-reference.igs' : 'four-references.igs',
+      [boundaries ? [refused] : [imported[0], refused], [second], [third]],
+    )
+    const prepareAccepted = async () => {
       // Compare with the authored snapshot after the public refusal. The caller
       // controls the refusal test and cannot silently change the input for the admitted job.
       assert.deepEqual(current().document, before)
@@ -259,16 +324,22 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
       await projects.updateRegionalGuidanceReferenceImage(
         tabId,
         { ...owner(), regionId },
-        { kind: 'remove', referenceId: fourth },
+        { kind: 'remove', referenceId: refused },
       )
-      const after = await retainPackage('three-references.igs', [[first], [second], [third]])
+      if (boundaries) {
+        await withWorker((worker) => importReference(worker, 0))
+      }
+      const after = await retainPackage('three-references.igs', [[imported[0]], [second], [third]])
       assert.deepEqual(after.layers, before.layers)
       assert.deepEqual(after.generationDraft, before.generationDraft)
       assert.deepEqual(
         after.regionalGuidance,
-        before.regionalGuidance!.map((region) => ({
+        before.regionalGuidance!.map((region, index) => ({
           ...region,
-          referenceImages: region.referenceImages!.filter(({ id }) => id !== fourth),
+          referenceImages:
+            boundaries && index === 0
+              ? after.regionalGuidance![0].referenceImages
+              : region.referenceImages!.filter(({ id }) => id !== refused),
         })),
       )
       assert.equal(after.lastActualSeedSnapshot, before.lastActualSeedSnapshot)
@@ -277,10 +348,10 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
     return await use({
       database,
       models,
+      prepareAccepted,
       projectIndex,
       projects,
       referenceIds,
-      removeFourth,
       root,
       scratch,
       tabId,
@@ -296,13 +367,13 @@ export async function withRegionalReferenceCapacityProject<T>(options: {
   }
 }
 
-async function verifyImage(pin: FilePin): Promise<Buffer> {
+async function verifyImage(pin: FilePin, maxMiB = 32): Promise<Buffer> {
   assert.equal(path.resolve(pin.path), pin.path)
   assert.equal(await realpath(pin.path), pin.path)
   const info = await lstat(pin.path)
   assert.ok(info.isFile())
   assert.equal(info.size, pin.byteSize)
-  assert.ok(info.size > 0 && info.size <= 32 * 1024 * 1024)
+  assert.ok(info.size > 0 && info.size <= maxMiB * 1024 * 1024)
   const bytes = await readFile(pin.path)
   assert.equal(bytes.length, pin.byteSize)
   assert.equal(sha256(bytes), pin.sha256)

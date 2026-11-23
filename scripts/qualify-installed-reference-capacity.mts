@@ -3,7 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
-import { withRegionalReferenceCapacityProject } from '../src/main/projects/test-fixtures/regional-reference-capacity-project.js'
+import {
+  type CapacityOriginalBoundaries,
+  withRegionalReferenceCapacityProject,
+} from '../src/main/projects/test-fixtures/regional-reference-capacity-project.js'
 import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.js'
 import {
   REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
@@ -14,7 +17,6 @@ import {
 import { runRegionalReferenceCapacityMain } from './fixtures/regional-reference-capacity-main.js'
 import {
   artifactRoot,
-  assertRuntimeIdle,
   assertUpgradeBounds,
   bytesAt,
   errorText,
@@ -22,6 +24,7 @@ import {
   observeGpu,
   readEngine,
   regular,
+  runtimeIdle,
   sha,
   verify,
   writeJson,
@@ -32,7 +35,7 @@ const [flag, run, ...extra] = process.argv.slice(2)
 assert.equal(flag, '--run')
 assert.ok(run && !extra.length)
 assert.equal(path.dirname(run), path.join(artifactRoot, 'runs/regional-reference-capacity'))
-assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
 assert.equal(await realpath(run), run)
 assert.equal(await realpath(path.join(run, 'payloads')), path.join(run, 'payloads'))
 
@@ -40,6 +43,7 @@ const fixturePath = path.join(run, 'fixture.json')
 const fixtureBytes = await bytesAt(fixturePath)
 const fixture = JSON.parse(fixtureBytes.toString()) as {
   applicationBase: string
+  boundaries?: CapacityOriginalBoundaries
   geometry: object
   invokeRevision: string
   model: { byteSize: number; name: string; sha256: string }
@@ -51,7 +55,9 @@ const fixture = JSON.parse(fixtureBytes.toString()) as {
 const revision = (cwd: string) =>
   execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 10_000 }).trim()
 const invoke = path.resolve(repository, '../sources/InvokeAI')
-assert.equal(fixture.schema, 'regional-reference-capacity-v1')
+const originalBoundaries = fixture.schema === 'regional-reference-original-capacity-v1'
+assert.ok(originalBoundaries || fixture.schema === 'regional-reference-capacity-v1')
+assert.equal(Boolean(fixture.boundaries), originalBoundaries)
 assert.equal(revision(repository), fixture.applicationBase)
 assert.equal(revision(invoke), fixture.invokeRevision)
 assert.equal(fixture.invokeRevision, '4875d96531ca6712b288f6e660fcbb34143408c1')
@@ -82,16 +88,53 @@ assert.deepEqual(fixture.model, {
   name: 'Illustrious XL v0.1',
   sha256: '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9',
 })
-const imagePins = [fixture.sourceImage, ...fixture.referenceImages]
+const imagePins = [
+  fixture.sourceImage,
+  ...fixture.referenceImages,
+  ...(fixture.boundaries?.dimensionRefusals ?? []),
+]
 assert.equal(fixture.referenceImages.length, 4)
 assert.equal(new Set(fixture.referenceImages.map((image) => image.sha256)).size, 4)
-assert.equal(
-  fixture.referenceImages.slice(0, 3).reduce((sum, image) => sum + image.byteSize, 0),
-  14_750,
-)
+if (fixture.boundaries) {
+  const byteLimit = 32 * 1024 ** 2
+  assert.equal(fixture.boundaries.dimensionRefusals.length, 3)
+  assert.deepEqual(
+    fixture.boundaries.normalized.map(({ height, width }) => [width, height]),
+    [
+      [4096, 4096],
+      [16_384, 800],
+      [8000, 8000],
+      [4096, 4096],
+    ],
+  )
+  for (const { bytes } of fixture.boundaries.normalized.slice(0, 3)) {
+    assert.ok(bytes >= byteLimit - 256 * 1024 && bytes <= byteLimit)
+  }
+  const oversized = fixture.boundaries.normalized[3].bytes
+  assert.ok(oversized > byteLimit && oversized <= byteLimit + 256 * 1024)
+  const dimensionRefusals = await Promise.all(
+    fixture.boundaries.dimensionRefusals.map(async (pin) => {
+      const header = await bytesAt(pin.path)
+      assert.equal(header.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+      assert.equal(header.toString('ascii', 12, 16), 'IHDR')
+      return [header.readUInt32BE(16), header.readUInt32BE(20)]
+    }),
+  )
+  assert.deepEqual(dimensionRefusals, [
+    [16_385, 1],
+    [1, 16_385],
+    [5213, 12_277],
+  ])
+} else {
+  assert.equal(
+    fixture.referenceImages.slice(0, 3).reduce((sum, image) => sum + image.byteSize, 0),
+    14_750,
+  )
+}
 for (const pin of imagePins) {
   assert.ok(
-    pin.byteSize < 1024 ** 2 && pin.path.startsWith(path.join(artifactRoot, 'runs') + path.sep),
+    pin.byteSize < (originalBoundaries ? 36 : 1) * 1024 ** 2 &&
+      pin.path.startsWith(path.join(artifactRoot, 'runs') + path.sep),
   )
   await verify({ path: pin.path, sha256: pin.sha256, sizeBytes: pin.byteSize })
 }
@@ -103,7 +146,7 @@ const enginePins = [...install.pinned, ...install.configs]
 for (const pin of enginePins) {
   await verify(pin)
 }
-const assertIdle = () => assertRuntimeIdle(install.appDataDir, install.basePrefix)
+const assertIdle = () => runtimeIdle(install)
 await assertIdle()
 const auxiliaryRoot = path.join(
   artifactRoot,
@@ -140,7 +183,12 @@ const sources = [
   'src/main/projects/test-fixtures/regional-reference-capacity-project.ts',
   'src/main/projects/generation-action-controller.ts',
   'src/main/projects/project-regional-generation-coordinator.ts',
+  'src/main/projects/project-regional-reference-import.ts',
+  'src/main/projects/igs-package.ts',
   'src/shared/projects/regional-invoke-generation.ts',
+  'src/shared/projects/project-schema.ts',
+  'worker-python/src/imagegen_worker/imports.py',
+  'worker-python/src/imagegen_worker/illustrious_regional_references.py',
 ]
 const sourceWitness = () =>
   Promise.all(
@@ -175,6 +223,7 @@ let actual: unknown
 let failure: unknown
 try {
   actual = await withRegionalReferenceCapacityProject({
+    boundaries: fixture.boundaries,
     install,
     referenceImages: fixture.referenceImages,
     run,
@@ -184,6 +233,7 @@ try {
         assertIdle,
         install,
         observeGpu,
+        originalBoundaries,
         resources,
         run,
       }),

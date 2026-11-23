@@ -36,10 +36,10 @@ import { children, workerExited } from '../qualify-installed-reference-img-utili
 interface CapacityProject {
   database: AppDatabase
   models: ModelService
+  prepareAccepted: () => Promise<string>
   projectIndex: ProjectIndexRepository
   projects: ProjectService
-  referenceIds: { fourth: string; originals: readonly [string, string, string] }
-  removeFourth: () => Promise<string>
+  referenceIds: { originals: string[]; refused: string }
   root: string
   scratch: string
   tabId: string
@@ -60,6 +60,7 @@ interface CapacityOptions {
     maximumMiB: number | null
     samples: number
   }>
+  originalBoundaries?: boolean
   resources: RegionalReferenceResourceResolver
   run: string
   timeoutMs?: number
@@ -71,6 +72,11 @@ const maxReferenceRefusal = {
   code: 'GENERATION_INVALID_REQUEST',
   message:
     'Regional reference images support at most 3 images across enabled regions per generation.',
+}
+const maxReferenceBytesRefusal = {
+  code: 'GENERATION_INVALID_REQUEST',
+  message:
+    'Regional reference images require PNG files no larger than 32 MiB each and 96 MiB in total.',
 }
 const profile = regionalReferenceProfileForMode('img2img')
 const sha = (bytes: string | Buffer | Uint8Array) =>
@@ -93,15 +99,16 @@ export async function runRegionalReferenceCapacityMain(
   const {
     database,
     models,
+    prepareAccepted,
     projectIndex,
     projects,
     referenceIds,
-    removeFourth,
     root,
     scratch,
     tabId,
   } = context
   const { assertIdle, install, observeGpu, resources, run } = options
+  const originalBoundaries = options.originalBoundaries === true
   const artifactRoot = path.join(run, 'native')
   const end = Date.now() + (options.timeoutMs ?? 420_000)
   assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -349,10 +356,23 @@ export async function runRegionalReferenceCapacityMain(
     }
     const before = await snapshot()
     assert.deepEqual(before.document.primaryBbox, bbox)
-    assert.equal(authoredReferences(before.document).length, 4)
+    const refusedReferences = authoredReferences(before.document)
+    assert.equal(refusedReferences.length, originalBoundaries ? 3 : 4)
+    const rejection = originalBoundaries ? maxReferenceBytesRefusal : maxReferenceRefusal
+    if (originalBoundaries) {
+      assert.ok(
+        refusedReferences.reduce((total, { asset }) => total + asset.bytes, 0) <= 96 * 1024 ** 2,
+      )
+      assert.deepEqual(
+        refusedReferences
+          .filter(({ asset }) => asset.bytes > 32 * 1024 ** 2)
+          .map(({ referenceId }) => referenceId),
+        [referenceIds.refused],
+      )
+    }
     await assert.rejects(
       actions.generate(tabId, { documentId: before.document.documentId, iterations: 1 }),
-      maxReferenceRefusal,
+      rejection,
     )
     assert.deepEqual(calls, {
       admission: 0,
@@ -365,10 +385,10 @@ export async function runRegionalReferenceCapacityMain(
     assert.deepEqual(await snapshot(), before)
     await writeJson('main-refusal.json', {
       calls,
-      rejection: maxReferenceRefusal,
+      rejection,
       snapshot: before,
     })
-    assert.equal(await removeFourth(), tabId)
+    assert.equal(await prepareAccepted(), tabId)
     const legal = current()
     const saved = await readFile(legal.filePath)
     const savedDocument = structuredClone(legal.document)
@@ -380,9 +400,12 @@ export async function runRegionalReferenceCapacityMain(
     const savedTabs = structuredClone(projects.getOpenTabs())
     const beforeIds = authoredReferences(before.document).map(({ referenceId }) => referenceId)
     const legalIds = authoredReferences(savedDocument).map(({ referenceId }) => referenceId)
+    if (originalBoundaries) {
+      assert.ok(!beforeIds.includes(legalIds[0]))
+    }
     assert.deepEqual(
-      legalIds,
-      beforeIds.filter((id) => id !== referenceIds.fourth),
+      originalBoundaries ? legalIds.slice(1) : legalIds,
+      beforeIds.filter((id) => id !== referenceIds.refused),
     )
     assert.deepEqual(legalIds, referenceIds.originals)
     allowed = true
