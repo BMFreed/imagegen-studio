@@ -47,7 +47,9 @@ their original sides in the coherent scene. In the
 [matched spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result),
 the baseline replayed exactly and the negative on either mask left the
 apple recognizable. The three requests passed and selective suppression
-remains unqualified for this source and seed.
+remains unqualified for this source and seed. The
+[original Invoke denoiser](./phase-4-anima-apple-negative-research.md#current-original-invoke-denoiser-on-the-matched-apple-scene)
+also retained the recognizable apple in all three cases.
 
 ## Anima tabletop placement with shared scene context
 

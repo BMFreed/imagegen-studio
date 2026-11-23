@@ -1123,7 +1123,8 @@ inheritance are never rewritten to manufacture compatibility.
 The [matched installed Anima IMG check](../../../engineering/phase-4-anima-apple-negative-research.md#installed-spatial-result)
 verified both local negative owners with a stable, repeatable baseline.
 The weighted negative on the apple's mask left the apple recognizable in
-the fixed scene. This case leaves visual suppression unqualified.
+the fixed scene. The [current original Invoke denoiser](../../../engineering/phase-4-anima-apple-negative-research.md#current-original-invoke-denoiser-on-the-matched-apple-scene)
+also retained the apple. This case leaves visual suppression unqualified.
 
 ## Vue Prototype Coverage
 

@@ -236,12 +236,75 @@ snapshots and closed SQLite, 77 installed files, 17 signed configuration
 files and physical exit of the controller and three workers. Peak group
 memory was 9,157,402,624 bytes. Maximum sampled VRAM by case was
 6,944 / 6,558 / 6,558 MiB. The unit finished in 129.579 seconds with
-zero OOM events. This exercised the installed Studio worker. There is
-no direct Invoke execution of this matched apple scene yet. The prior
-[direct Invoke scarf case](./phase-4-anima-negative-invoke-control-research.md)
+zero OOM events. This exercised the installed Studio worker. The
+[prior Invoke scarf case](./phase-4-anima-negative-invoke-control-research.md)
 used different source and subject prompts.
 
 The three PNGs, source, blind observations, frozen requests and Project
 snapshots remain available. The verified 8-entry archive retains the
 closed payload. Cleanup released 6,045,696 allocated bytes of scratch
 and blind copies. Human review and broader visual utility remain open.
+
+## Current original Invoke denoiser on the matched apple scene
+
+Studio base `a80b77de9138449759b03ffb56c607bded52db3f`, clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`. Run
+`anima-apple-negative-invoke-control/20261123-r1` reuses the
+[scarf source-control harness](./phase-4-anima-negative-invoke-control-research.md#original-denoiser-visual-control)
+with the apple scene's exact saved Studio handoffs and the same three
+mask assignments. The original denoiser, transformer, prompt parser,
+weighted T5 tokenization, regional masks and Heun driver execute from
+the pinned Invoke source. The current checkout has no app environment.
+The control uses the signed Studio runtime with its held VAE posterior,
+Qwen encoder, and RGB decode, plus the same pinned Einops package as the
+scarf control. The app registry, frontend and Invoke VAE's ambient
+posterior draw are outside this comparison.
+
+The fresh source trace follows `compileCanvasGraph.ts` into
+`addRegionalGuidance.ts`, `app/invocations/text_encoder/anima_text_encoder.py`
+into `backend/anima/prompt_weighting.py`, and the main denoising path in
+`app/invocations/anima/anima_denoise.py` into `backend/anima/regional_prompting.py`,
+`anima_transformer_patch.py`, `scheduler_driver.py` and
+`backend/flux/schedulers.py`. These paths are relative to `invokeai/`.
+The application ports bind the original bodies of 16 denoiser methods.
+
+The five raw prompts match Studio in cleaned text, spans, Qwen IDs,
+attention mask and states, and T5 IDs and weights. Both native Heun
+arrays match Studio exactly, starting at physical index 14 with 25
+evaluations and 13 logical progress updates. Invoke's initial source
+preblend uses sigma `0.8478260869565218`. Studio blends at the first
+native Heun sigma `0.8378547430038452`. The Invoke even-block mask leaves
+global positive support closed over the two full half masks. Its global
+negative remains image-wide and the weighted local negative appears
+only on the selected half. All three calls retain the original patch
+and restoration checks on the 28-block transformer.
+
+The original denoiser completed all three CUDA cases in 46.042 seconds,
+with 25 positive and 25 negative calls per case. Peak group memory was
+8,938,569,728 bytes and peak reserved Torch CUDA memory was 6,949,961,728
+bytes. Swap and OOM events were zero. Both blind readers recognized the
+apple on the left and the blue loop-handle mug on the right against the
+continuous tabletop and wall in every case. Both controls pass and both
+readers fail the apple-mask treatment criterion. Selective suppression
+is **NOT_QUALIFIED** in both engines for this exact recipe.
+
+| Engine | Baseline | Negative on the apple | Negative on the mug |
+| --- | ---: | ---: | ---: |
+| Studio | 10,219 | 10,370 | 10,053 |
+| Current Invoke source control | 10,333 | 10,322 | 10,043 |
+
+Counts are red pixels in the same 13,572-pixel source-defined ROI. The
+visible apple remains fully recognizable. More than 261,000 pixels differ
+in each matched Studio/Invoke pair. The comparison closes the exact-scene
+donor question: the original Invoke path exhibits the same failed effect.
+It provides no verified fix to port for this recipe. Other sources,
+settings and human acceptance remain open.
+
+The independent byte audit passed 946 assertions, rehashed 51 source
+and 124 input pins, reconciled 685 loaded tensors and three RoPE buffers,
+and verified the PNGs and physical exit. A separate source audit checked
+the unchanged method binding. This read-only audit used the retained run
+and made no additional CUDA calls. The run keeps the three PNGs, exact
+adapters and preregistration, owner and scheduler receipts, anonymous
+observations and verdict. Cleanup released 5,386,240 allocated bytes
+from two temporary paths. All 31 sealed files matched after cleanup.

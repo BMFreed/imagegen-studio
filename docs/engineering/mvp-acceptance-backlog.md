@@ -166,10 +166,12 @@ entries record the state at their checkpoint.
    byte for byte and preserved both subjects in the right-mask control.
    The apple remained recognizable with the negative on its own mask as
    well. Selective suppression stays unqualified on this source and seed.
-   A matched run of the current Invoke denoiser on the same prepared apple
-   source would distinguish a Studio difference from shared behavior.
+   The current original Invoke denoiser on the same prepared apple
+   source also retained the recognizable apple in all three cases. The
+   measured source differences offer no verified fix for this recipe.
    [Baseline with named subjects](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects),
-   [spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result).
+   [spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result),
+   [matched Invoke source comparison](./phase-4-anima-apple-negative-research.md#current-original-invoke-denoiser-on-the-matched-apple-scene).
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
