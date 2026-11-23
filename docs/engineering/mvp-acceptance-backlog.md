@@ -298,6 +298,12 @@ entries record the state at their checkpoint.
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project
    and file. [Packaged Trash](./phase-5-packaged-project-and-preset-research.md#home-trash)
+   On native KDE Wayland at 900×620, the destructive confirmation opened on
+   Cancel and trapped Tab in both directions. Escape and Cancel returned focus
+   to the Delete action. Restore and confirmed Delete now leave visible focus
+   in the Trash search when the row disappears. The exact Project and its
+   neighbor passed the existing persistence controls.
+   [Trash keyboard focus](./phase-5-packaged-project-and-preset-research.md#trash-keyboard-focus-on-kde-wayland)
    In a separate startup case, the AppImage finished two committed
    deletions. A different valid `.igs` at the old path stayed on disk
    with a pending diagnostic and Restore refused. The ordinary Trash

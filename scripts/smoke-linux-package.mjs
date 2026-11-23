@@ -69,7 +69,8 @@ const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
 const nativeWaylandKeyboard =
-  kdeChooser && (offlineProject === 'home-recovery-keyboard' || modelInstallHistory)
+  kdeChooser &&
+  (offlineProject === 'home-recovery-keyboard' || offlineProject === 'trash' || modelInstallHistory)
 assert.ok(
   !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard,
   'The private Wayland launcher requires a supported packaged case.',

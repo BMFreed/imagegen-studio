@@ -360,6 +360,7 @@ const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
 // Home is remounted on Project navigation; browse controls belong to the app session.
 const homeProjectSearch = ref('')
+const homeView = ref<InstanceType<typeof HomeView> | null>(null)
 const homeSelectedProjectId = ref<string | null>(null)
 const homeProjectSort = ref<HomeProjectSort>('lastOpened')
 const homeProjectStatus = ref<HomeProjectStatus>('all')
@@ -4205,6 +4206,32 @@ async function switchTrashProject() {
   await openProject(project.id)
 }
 
+function captureTrashActionFocus(scope: '.home-view' | '.project-trash-modal') {
+  if (selectedTrashView.value && document.activeElement?.closest(scope)) {
+    return captureHomePresentationIntent()
+  }
+  return null
+}
+
+function focusAfterTrashRemoval(intent: HomePresentationIntent | null, projectId: string) {
+  if (!intent) {
+    return
+  }
+  void nextTick(() => {
+    if (
+      homeOpenIntentCurrent(intent) &&
+      selectedTrashView.value &&
+      !pendingProjectAction.value &&
+      !showProjectTrashAction.value &&
+      !trashProjects.value.some(({ id }) => id === projectId) &&
+      document.hasFocus() &&
+      document.activeElement === document.body
+    ) {
+      homeView.value?.focusProjectSearch()
+    }
+  })
+}
+
 async function confirmProjectTrashAction() {
   const project = trashActionProject.value
   const kind = trashDialogKind.value
@@ -4218,6 +4245,8 @@ async function confirmProjectTrashAction() {
     return
   }
   const projectId = project.id
+  const focus = kind === 'delete' ? captureTrashActionFocus('.project-trash-modal') : null
+  let deleted = false
   pendingProjectAction.value = { kind: kind === 'trash' ? 'trash' : 'delete-project', projectId }
   trashActionError.value = null
   try {
@@ -4234,6 +4263,7 @@ async function confirmProjectTrashAction() {
       if (result.kind === 'pending') {
         trashPendingMessage.value = result.message
       } else {
+        deleted = true
         showProjectTrashAction.value = false
       }
     }
@@ -4242,6 +4272,9 @@ async function confirmProjectTrashAction() {
     trashActionError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+    if (deleted) {
+      focusAfterTrashRemoval(focus, projectId)
+    }
   }
 }
 
@@ -4255,15 +4288,21 @@ async function restoreTrashedProject(project: ProjectTrashSummary) {
   }
   const projectId = project.id
   const trashId = project.trashId
+  const focus = captureTrashActionFocus('.home-view')
+  let restored = false
   pendingProjectAction.value = { kind: 'restore-trash', projectId }
   homeError.value = null
   try {
     await apiValue(() => projectApi().restoreProject(projectId, trashId))
+    restored = true
     await refreshProjects()
   } catch (cause) {
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+    if (restored) {
+      focusAfterTrashRemoval(focus, projectId)
+    }
   }
 }
 
@@ -6602,6 +6641,7 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          ref="homeView"
           v-model:browserPaneSize="homeBrowserPaneSize"
           v-model:inspectorCollapsed="homeInspectorCollapsed"
           v-model:search="homeProjectSearch"

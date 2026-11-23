@@ -24,6 +24,7 @@ import {
   Trash as TrashIcon,
 } from '@vicons/tabler'
 import {
+  type InputInst,
   NAlert,
   NButton,
   NButtonGroup,
@@ -73,6 +74,15 @@ const browserPaneSize = defineModel<number>('browserPaneSize', { required: true 
 // Only drag writes the App-owned preferred ratios; temporary viewport clamps do not.
 const homeRoot = ref<HTMLElement | null>(null)
 const contentRoot = ref<HTMLElement | null>(null)
+const projectSearch = ref<InputInst | null>(null)
+
+function focusProjectSearch() {
+  if (homeRoot.value?.isConnected && !homeRoot.value.closest('[inert]')) {
+    projectSearch.value?.focus()
+  }
+}
+
+defineExpose({ focusProjectSearch })
 const homeWidth = ref(1440)
 const contentWidth = ref(1180)
 let layoutObserver: ResizeObserver | null = null
@@ -922,6 +932,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                     <label class="toolbar-field toolbar-field--search">
                       <NText class="toolbar-label" depth="3">Name</NText>
                       <NInput
+                        ref="projectSearch"
                         v-model:value="search"
                         clearable
                         :inputProps="{ 'aria-label': 'Search projects' }"

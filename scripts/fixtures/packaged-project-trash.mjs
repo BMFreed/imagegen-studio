@@ -2,7 +2,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 
 import { expect } from '@playwright/test'
@@ -116,6 +125,62 @@ async function createNeighbor(page) {
   await closeProject(page, neighborTitle)
 }
 
+async function connectTrashKeyboard(state, root) {
+  const { connectNativeInput } = await import('./packaged-home-recovery-keyboard.mjs')
+  const page = state.page
+  const trace = path.join(root, 'native-keyboard.ndjson')
+  const observations = []
+  const record = (entry) => appendFile(trace, `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+  const input = await connectNativeInput(state, record, root)
+  await input.resize(900, 620)
+
+  return {
+    input,
+    observations,
+    trace,
+    async tabTo(target, phase) {
+      await expect(target).toBeVisible()
+      await expect(target).toBeEnabled()
+      for (let count = 0; count < 64; count++) {
+        if (await target.evaluate((element) => element === document.activeElement)) return
+        await input.press('Tab', phase)
+      }
+      await expect(target, phase).toBeFocused({ timeout: 1_000 })
+    },
+    async observe(phase, target) {
+      const inspect = (expected) => {
+        const active = document.activeElement
+        const style = active && getComputedStyle(active)
+        return {
+          returnedToTrigger: expected ? active === expected : null,
+          active: active && {
+            tag: active.tagName,
+            name: active.getAttribute('aria-label') ?? active.textContent?.trim().slice(0, 90),
+            role: active.getAttribute('role'),
+            dialog: active.closest('[role=dialog]')?.getAttribute('aria-label') ?? null,
+            focusVisible: active.matches(':focus-visible'),
+            outline: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+            boxShadow: style.boxShadow,
+          },
+        }
+      }
+      if (target) {
+        await expect(target)
+          .toBeFocused({ timeout: 2_000 })
+          .catch(() => undefined)
+      }
+      const focus = target ? await target.evaluate(inspect) : await page.evaluate(inspect, null)
+      const screenshot = path.join(root, `${phase}-900x620.png`)
+      const observed = { phase, ...focus, screenshot }
+      observations.push(observed)
+      await record(observed)
+      await page.screenshot({ path: screenshot, animations: 'disabled' })
+      return observed
+    },
+  }
+}
+
 export async function runPackagedProjectTrash({
   root,
   appData,
@@ -127,12 +192,23 @@ export async function runPackagedProjectTrash({
   retainOwnStore,
   identity,
 }) {
+  const nativeWayland = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
+  let expectedPackage
+  if (nativeWayland) {
+    const proof = JSON.parse(
+      await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
+    )
+    assert.equal(proof.schemaVersion, 1)
+    assert.ok(proof.package.path.startsWith(`${ownedRunRoot}${path.sep}`))
+    expectedPackage = proof.package
+  }
   const original = await verifyChooserFixture({
     scenario: 'trash',
     root,
     ownedRunRoot,
     packageBefore,
     identity,
+    expectedPackage,
   })
   const workspace = path.join(appData, 'workspaces/Uncategorized')
   const source = path.join(workspace, targetBasename)
@@ -190,7 +266,7 @@ export async function runPackagedProjectTrash({
     assert.equal(await readFile(sentinel, 'utf8'), sentinelText)
   }
 
-  async function verifyTrashed(state) {
+  async function verifyTrashed(state, navigate = true) {
     assert.deepEqual(
       (await readPorts(state)).projects.value.map((row) => row.id),
       [neighbor.id],
@@ -205,7 +281,8 @@ export async function runPackagedProjectTrash({
     assert.equal(summary.originalWorkspaceDirectoryPath, workspace)
     assert.equal(summary.deletionStatus, 'trashed')
     assert.match(summary.trashId, /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/)
-    await showTrash(state.page)
+    if (navigate) await showTrash(state.page)
+    await expect(state.page.getByRole('heading', { name: 'Trash', exact: true })).toBeVisible()
     await expect(state.page.locator(`[data-project-id="${id}"]`)).toHaveAttribute(
       'data-trash-id',
       summary.trashId,
@@ -263,8 +340,17 @@ export async function runPackagedProjectTrash({
   const restartTrash = await verifyTrashed(second)
   assert.equal(restartTrash.trashId, firstTrash.trashId)
   assert.equal(restartTrash.trashedAt, firstTrash.trashedAt)
-  await button(secondPage, `Restore ${targetTitle}`).click()
+  const keyboard = nativeWayland ? await connectTrashKeyboard(second, root) : null
+  const searchProjects = secondPage.getByRole('textbox', { name: 'Search projects', exact: true })
+  const restore = button(secondPage, `Restore ${targetTitle}`)
+  if (keyboard) {
+    await keyboard.tabTo(restore, 'reach-restore')
+    await keyboard.input.press('Return', 'restore-project')
+  } else {
+    await restore.click()
+  }
   await expect(secondPage.getByText('Trash is empty', { exact: true })).toBeVisible()
+  const afterRestore = await keyboard?.observe('after-restore', searchProjects)
   assert.deepEqual(await listTrash(secondPage), [])
   assert.deepEqual(lifecycleSnapshot(database), emptyLifecycle)
   assert.deepEqual(indexSnapshot(database), baseline)
@@ -295,11 +381,50 @@ export async function runPackagedProjectTrash({
   )
   const remove = button(secondPage, `Delete ${targetTitle} permanently`)
   const confirmation = dialog(secondPage, 'Delete Project Permanently')
-  await remove.click()
-  await expect(confirmation).toContainText(targetBasename)
-  await button(confirmation, 'Cancel').click()
-  await expect(confirmation).toBeHidden()
-  assert.equal((await verifyTrashed(second)).trashId, secondTrash.trashId)
+  const cancel = button(confirmation, 'Cancel')
+  const confirm = button(confirmation, 'Delete Permanently')
+  const dismissals = []
+  const openings = []
+  const trap = []
+  if (keyboard) {
+    for (const choice of ['escape', 'cancel']) {
+      await keyboard.tabTo(remove, `reach-delete-for-${choice}`)
+      await keyboard.input.press('Return', `open-delete-for-${choice}`)
+      await expect(confirmation).toContainText(targetBasename)
+      await expect(cancel).toBeEnabled()
+      await expect(confirm).toBeEnabled()
+      openings.push(await keyboard.observe(`delete-open-${choice}`))
+
+      await keyboard.tabTo(cancel, `reach-cancel-for-${choice}`)
+      for (const [key, expected, label] of [
+        ['Tab', confirm, 'forward-to-delete'],
+        ['Tab', cancel, 'forward-wrap-to-cancel'],
+        ['shift+Tab', confirm, 'reverse-wrap-to-delete'],
+        ['Tab', cancel, 'restore-cancel-focus'],
+      ]) {
+        await keyboard.input.press(key, `check-delete-trap-${choice}-${label}`)
+        trap.push(await keyboard.observe(`delete-trap-${choice}-${label}`, expected))
+      }
+
+      if (choice === 'cancel') {
+        await keyboard.tabTo(cancel, 'focus-cancel-before-enter')
+        await expect(cancel).toBeFocused()
+      }
+      await keyboard.input.press(
+        choice === 'escape' ? 'Escape' : 'Return',
+        `dismiss-delete-${choice}`,
+      )
+      await expect(confirmation).toBeHidden()
+      dismissals.push(await keyboard.observe(`after-delete-${choice}`, remove))
+      assert.equal((await verifyTrashed(second, false)).trashId, secondTrash.trashId)
+    }
+  } else {
+    await remove.click()
+    await expect(confirmation).toContainText(targetBasename)
+    await cancel.click()
+    await expect(confirmation).toBeHidden()
+    assert.equal((await verifyTrashed(second)).trashId, secondTrash.trashId)
+  }
 
   async function assertDeleted(state) {
     assert.deepEqual(
@@ -318,10 +443,22 @@ export async function runPackagedProjectTrash({
     await assertOriginalBytes(original.path, identity)
   }
 
-  await remove.click()
-  await button(confirmation, 'Delete Permanently').click()
+  if (keyboard) {
+    await keyboard.tabTo(remove, 'reach-delete-for-confirmation')
+    await keyboard.input.press('Return', 'open-delete-for-confirmation')
+    await expect(confirmation).toContainText(targetBasename)
+    await keyboard.tabTo(cancel, 'reach-cancel-before-deliberate-delete')
+    await keyboard.input.press('Tab', 'deliberately-focus-delete')
+    await expect(confirm).toBeFocused()
+    await keyboard.observe('before-confirmed-delete', confirm)
+    await keyboard.input.press('Return', 'confirm-permanent-delete')
+  } else {
+    await remove.click()
+    await confirm.click()
+  }
   await expect(confirmation).toBeHidden()
   await expect(secondPage.getByText('Trash is empty', { exact: true })).toBeVisible()
+  const afterDeletion = await keyboard?.observe('after-confirmed-delete', searchProjects)
   await assertDeleted(second)
   await closeNormally(second)
 
@@ -335,6 +472,36 @@ export async function runPackagedProjectTrash({
   await closeNormally(third)
   const restarted = await retainOwnStore('after-delete-restart', path.basename(neighbor.filename))
 
+  if (keyboard) {
+    assert.ok(
+      openings.every(
+        ({ active }) =>
+          active?.dialog === 'Delete Project Permanently' && active.name !== 'Delete Permanently',
+      ),
+      `The destructive action must not receive initial focus: ${JSON.stringify(openings)}`,
+    )
+    assert.ok(
+      trap.every(({ returnedToTrigger, active }) => returnedToTrigger && active?.focusVisible),
+      `Keyboard traversal must wrap within the confirmation: ${JSON.stringify(trap)}`,
+    )
+    assert.ok(
+      dismissals.every(
+        ({ returnedToTrigger, active }) => returnedToTrigger && active?.focusVisible,
+      ),
+      `Both dismissals must return visible focus to the same Delete button: ${JSON.stringify(dismissals)}`,
+    )
+    const completed = [afterRestore, afterDeletion]
+    assert.ok(
+      completed.every(
+        (observation) =>
+          observation?.returnedToTrigger &&
+          observation.active?.focusVisible &&
+          observation.active.name === 'Search projects',
+      ),
+      `Both successful actions must leave visible focus on Search projects in Trash: ${JSON.stringify(completed)}`,
+    )
+  }
+
   return {
     saved,
     restarted,
@@ -347,6 +514,7 @@ export async function runPackagedProjectTrash({
       neighbor: neighborBefore,
       finalIndex: expectedFinalIndex,
       refusals: { openRefusal, trashedOpenRefusal, stale, unconfirmed },
+      ...(keyboard && { keyboard: { trace: keyboard.trace, observations: keyboard.observations } }),
     },
   }
 }

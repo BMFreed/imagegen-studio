@@ -112,3 +112,52 @@ fresh `runs/packaged-project-trash/<date>-rN/trash` or
 `runs/packaged-noobai-result-preset/<date>-rN/result-preset` path, respectively,
 under the artifact root. Use a short owned `TMPDIR`, a 4 GiB user scope with
 zero swap and a 150-second outer deadline for each case.
+
+## Trash keyboard focus on KDE Wayland
+
+The packaged Trash persistence case previously drove the destructive dialog
+with the pointer. The follow-up used trusted KWin keyboard events in the
+production renderer resized to 900×620. The named dialog opened on Cancel,
+kept Tab and Shift+Tab within its two buttons, and returned to the same Delete
+button after Escape and Cancel. Both dismissals left the exact `.igs`, its
+inode and its SQLite Trash entry in place. Restore and permanent deletion
+initially left the document body focused when the row disappeared.
+
+The renderer captures focus ownership before a Trash action and waits for
+successful Restore or completed deletion and the resulting list update. If the
+same Trash view remains active, the target row has left and focus is on the
+document body, the existing Naive input receives focus. Another control with
+focus, a pending operation or a closed view suppresses this handoff.
+[Action owner](../../src/renderer/App.vue), [Home search](../../src/renderer/components/HomeView.vue).
+
+The UI reference check used the clean InvokeAI revision
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The inspected files under
+`invokeai/frontend/webv2/src/features/gallery/ui/` were `GalleryImageGrid.tsx`,
+`GalleryProgressSection.tsx` and `GalleryGridFocus.browser.test.tsx`. InvokeAI
+keeps focus inside the Gallery when its focused item disappears. Studio uses
+the Trash search as its stable target and keeps project selection empty.
+
+The same keyboard fixture reached the post-removal assertion on the original
+AppImage from `efcf0b36`. It reported `BODY` after both successful actions,
+after the modal, file, persistence and process-exit checks had passed. The
+rebuilt AppImage passed the same assertion with visible focus in Search
+projects. Confirmed deletion retired the target, and the neighbor and its
+sentinel file survived a cold reopen. Each run closed three AppImage lifetimes
+normally and confirmed 30 enrolled process exits. Typecheck, focused lint,
+61 focused tests and AppImage packaging passed. The native evidence covers
+this desktop, viewport and Trash list view.
+
+Independent readback rehashed both AppImages and the six matching fixture
+pins. The closed SQLite snapshots show the same Trash key retired after
+reopen. Both after-Trash `.igs` hashes match the pinned source, and the final
+neighbor matches its recorded hash.
+
+The original AppImage SHA-256 was
+`a3c133847c78ce61972f59dbae71f129e12467006b78e3e6c07f858eb349953a`.
+The rebuilt SHA-256 was
+`51893a62d27b75f8a1af232f098b79d98cfdb6de8e90e2c5e4951738de2e4f99`.
+The semantic RED and final PASS retain traces, screenshots, package manifests,
+closed snapshots and exit receipts under `runs/packaged-project-trash/20261123-r2`
+and `runs/packaged-project-trash/20261123-r3` in the local artifact root.
+The AppImage builds, private profiles and scratch were removed after physical
+exit and dependency checks, reclaiming 1,087,827,968 allocated bytes.

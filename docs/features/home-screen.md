@@ -568,6 +568,13 @@ Trash actions are:
 
 Open projects must still be closed before moving them to Trash. Workspace counters exclude trashed projects. Restore requires the original canonical folder to be registered and its source Project available; it never implicitly adds a workspace or redirects to Uncategorized. A permanent deletion that has committed but cannot finish stays visible as pending with Retry Delete and cannot be restored. Repairing access allows guarded startup recovery to finish that committed deletion.
 
+The permanent-delete confirmation opens with focus on **Cancel**. Escape and
+Cancel return focus to the same Delete action. After Restore or a confirmed
+permanent deletion removes the focused row or its action, Home returns focus to
+**Search projects** in the current Trash view. A different focused control keeps
+its focus. Selection clears when the row leaves the view.
+[Packaged keyboard check](../engineering/phase-5-packaged-project-and-preset-research.md#trash-keyboard-focus-on-kde-wayland)
+
 ## Read-Only Preview Flow
 
 Preview is for inspection, not editing.
