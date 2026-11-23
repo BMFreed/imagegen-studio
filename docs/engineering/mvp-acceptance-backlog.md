@@ -368,10 +368,12 @@ entries record the state at their checkpoint.
    missing. With an empty KWallet 6.24 profile, Save now reports a
    timeout after the creation dialog and releases the controls.
    Chromium's Linux fixed-key fallback is refused, and existing
-   fallback files can be removed from Model Manager. Qualify automatic
-   wallet creation on a supported system with the KDE Frameworks 6.29
-   collection fix.
-   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#bounding-the-first-wallet-wait)
+   fallback files can be removed from Model Manager. Isolated Ubuntu
+   KWallet 6.29 created the first wallet. Studio refused the first Save.
+   Closing Studio and opening it again in the same profile restored
+   secure Save with live CivitAI. One-action setup on an empty wallet
+   profile remains open.
+   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#first-save-with-kwallet-629)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

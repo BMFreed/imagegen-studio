@@ -224,3 +224,50 @@ reported by lint in the compiled Main. The independent process check
 confirmed 45 enrolled AppImage processes had exited. Cleanup reclaimed
 2,175,561,728 allocated bytes. The compact receipts are under
 `runs/civitai-wallet-recovery/20261123` in the local artifact root.
+
+## First Save with KWallet 6.29
+
+The same stock AppImage from
+`42a7891182fc772c08e4e3de1c65511b739b18ca` ran the 6.24 and 6.29 cases.
+Its SHA-256 was
+`f798d4e58eff127a286b66a4be3b4d75f0d25d8cc525c3f29c7b3e76284b8db4`.
+The comparison used the Ubuntu 26.04 host's private Wayland and D-Bus
+session. For the 6.29 case, only the wallet daemons and their libraries
+ran from an extracted Ubuntu 26.10 package closure in Bubblewrap.
+The Ubuntu archive signature, main and universe index hashes, and all
+211 package bodies were verified. The closure contained KWallet
+`6.29.0-0ubuntu1`, Qt `6.11.2+dfsg-4ubuntu2` and glibc
+`2.44-1ubuntu2`. The running wallet executables matched signed package
+members by device, inode and hash.
+[Ubuntu package](https://packages.ubuntu.com/stonking/kwallet6).
+
+With system KWallet 6.24, the empty-profile control again produced a
+Studio timeout at about 60.5 seconds. The compatibility endpoint
+returned from `openAsync` without sending its completion signal.
+With KWallet 6.29 and no wallet, `networkWallet` returned a D-Bus error
+before Chromium could call `openAsync`. KDE 6.29 removed the configured
+wallet-name fallback when the default Secret Service alias is absent.
+The desktop portal then opened the native creation dialog and created
+the wallet. After provider validation, the token store refused to
+persist the credential and left no token file. Chromium enables portal
+retrieval by default. Its separate flag for using the portal key for
+new encryption is disabled by default.
+[KDE change to default wallet lookup](https://github.com/KDE/kwallet/commit/5fed650b0db2),
+[Chromium portal flags](https://chromium.googlesource.com/chromium/src/+/refs/tags/152.0.7977.130/chrome/browser/browser_features.cc#160).
+
+After a normal AppImage close, a new launch reused the same private
+profile and wallet. The explicit retry passed live CivitAI validation
+and saved a 51-byte `v11` ciphertext in mode `0600`. The compatibility
+endpoint completed `openAsync` on this launch. After close and confirmed
+wallet lock, the next launch prompted for native unlock and revalidated
+the saved token. Explicit Remove deleted the file. The last launch
+reported the missing-token status with the wallet still locked.
+All four 6.29 lifetimes and the 6.24 control closed normally. First Save
+used the stock renderer IPC and native KDE dialog. Reopen and Remove
+used the visible Model Manager.
+
+The independent audit verified 45 enrolled AppImage process exits,
+both wallet daemon exits, and the signed package and AppImage identities.
+Cleanup reclaimed 1,363,542,016 allocated bytes. The package manifest,
+traces and receipts are under `runs/kwallet629-first-save/20261123` in
+the local artifact root.

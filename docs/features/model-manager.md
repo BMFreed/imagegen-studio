@@ -268,6 +268,11 @@ rejects Linux ciphertext made with Chromium's fixed-key fallback. A failed
 check of a saved token allows explicit Remove even when the token cannot be
 used. Token-dependent import requires a securely stored, usable token.
 
+If the first Save created a KDE wallet and Studio then reported that secure
+storage was unavailable, close and reopen Studio before retrying Save.
+This recovery was verified with KWallet 6.29. Follow the KDE unlock prompt if
+it appears.
+
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 
 `Add from CivitAI URL` opens a dedicated import dialog. Import preview must not be shown permanently inside the selected-model details panel, because that makes it look like metadata for the currently selected model.
