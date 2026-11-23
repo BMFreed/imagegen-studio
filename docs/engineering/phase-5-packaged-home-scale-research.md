@@ -34,9 +34,9 @@ samples include driver overhead and two frames.
 ## Results
 
 | Projects | First index to all cards | Indexed restart to all cards | First Refresh | Indexed restart Refresh |
-| --- | ---: | ---: | ---: | ---: |
-| 32 | 3.45 s | 3.69 s | 0.44 s | 0.41 s |
-| 512 | 11.43 s | 11.21 s | 6.40 s | 6.85 s |
+| -------- | -----------------------: | ---------------------------: | ------------: | ----------------------: |
+| 32       |                   3.45 s |                       3.69 s |        0.44 s |                  0.41 s |
+| 512      |                  11.43 s |                      11.21 s |        6.40 s |                  6.85 s |
 
 Home's shell appeared at 2.80–2.99 seconds with 32 fixtures and at 4.94–5.06
 seconds with 512. At 512, the longest observed search was 384 ms and the longest
@@ -72,7 +72,7 @@ archive opens. In the two lifetimes, 489 and 509 of the 512 files were opened
 exactly 14 times. Both
 lifetimes closed normally. The latency table uses the earlier untraced runs.
 
-The source explains that observed minimum. Startup initializes and scans
+The baseline source explains that observed minimum. Startup initializes and scans
 Uncategorized. Home's `list` and `listWorkspaces` then independently scan
 the workspace, and the ready Project summary opens the archive for recovery
 inspection. Manual Refresh repeats the latter three checks. A full package
@@ -101,3 +101,81 @@ after confirming physical exits and rechecking dependencies. It reclaimed
 583,680,000 allocated bytes. The closed indexes, exact fixture and package
 manifests, screen evidence and raw trace remain. The compressed trace's 456
 entries were checked against their original SHA-256 hashes before disposal.
+
+## Share discovery within one Home request
+
+The implementation pass reread clean InvokeAI revision
+`4875d96531ca6712b288f6e660fcbb34143408c1`. Under
+`invokeai/frontend/webv2/src`, the consulted owners and callers were
+`platform/state/singleFlight.ts`, `features/models/data/modelsStore.ts`,
+`features/models/ui/ModelManagerView.tsx`, `ui/launchpad/ModelsNotice.tsx`,
+`features/workflow/data/libraryBrowseStore.ts` and
+`features/workflow/ui/library/WorkflowLibraryDialog.tsx`. The workflow API
+caller boundary was `invokeai/app/api/routers/workflows.py`. InvokeAI shares
+model readiness reads through an active request and clears ownership on
+settlement. The workflow library starts a fresh explicit refresh. Its
+indexed library does not have Studio's portable `.igs` scan or separate Home
+card and sidebar projections.
+
+Main already serialized the old requests under the catalog lock. Home now
+requests both lists through one guarded IPC. The Project service shares each
+successful workspace scan between the two projections for the lifetime of
+that request. A subsequent request scans again. An unavailable workspace stays
+eligible for the second projection to retry. Package validation, availability
+checks and Recovery inspection still run through their existing owners. The
+renderer publishes workspace counts with the combined response and falls back
+to separate reads on error, so a failure elsewhere in the catalog can coexist
+with healthy cards in the selected workspace. Both lists keep their own request
+freshness checks, including before any fallback.
+[Project service](../../src/main/projects/project-service.ts),
+[Main](../../src/main/index.ts), [Preload](../../src/preload/index.ts),
+[Home renderer](../../src/renderer/App.vue).
+
+### Packaged comparison
+
+| Projects | First index to all cards | Indexed restart to all cards | First Refresh | Indexed restart Refresh |
+| -------- | -----------------------: | ---------------------------: | ------------: | ----------------------: |
+| 32       |            3.45 → 3.16 s |                3.69 → 3.01 s | 0.44 → 0.30 s |           0.41 → 0.28 s |
+| 512      |           11.43 → 8.81 s |               11.21 → 8.72 s | 6.40 → 3.65 s |           6.85 → 3.69 s |
+
+Each column compares one baseline sample with one optimized sample on the
+same KDE Wayland host. The fixture uses synthetic 2×2 Rasters and leaves the
+OS cache in its ordinary state. Startup includes AppImage extraction and the
+renderer connection. A separate trace with the new package recorded 5,213 and
+5,129 successful archive opens, down from 7,261 and 7,177. The minimum fell
+from 14 to 10 opens across startup and one Refresh, for the same 489 and 509
+archives respectively. A shared scan eliminates two opens per archive on each
+Home request. The comparison table uses untraced runs.
+
+After the 512-project timing samples, the app detected three external changes
+on an explicit Refresh. It showed a new title and revision for a replaced
+`.igs` with the same identity, added the new Project and marked a moved file
+missing with Open disabled. The closed index contained exactly 513 rows, and
+the other 510 files and the moved file's bytes matched their input witnesses.
+The freshness check is opt-in via `IMAGEGEN_HOME_SCALE_REFRESH_CONTROL=1`.
+A semantic mutation that shared the completed-scan set across requests
+returned the old title and omitted the newly added file in the Project service
+test. The same test passed on the original and restored sources.
+[Service tests](../../src/main/projects/project-workspaces.test.ts),
+[native fixture](../../scripts/fixtures/packaged-home-scale.mjs).
+
+Typecheck, AppImage build and scoped lint passed. The focused Node suite passed
+134 tests and the renderer browser suite passed 26, including independent
+failure handling and rejection of stale responses.
+[Renderer tests](../prototype-app/tests/home-catalog-app.spec.ts).
+
+All six app lifetimes closed normally. The optimized AppImage SHA-256 is
+`9ceb182824db2a0363f787d52c735ce36711de0f02a0abf22b54051155b6388c`.
+Independent live readback rehashed the package, current harness pins, 1,057
+synthetic Projects and all three closed SQLite indexes. The independent trace
+readback confirmed four fewer opens for every archive in both lifetimes. The
+optimized receipts are under `runs/packaged-home-scale/20261123-r6` (32),
+`20261123-r7` (512 and freshness) and `20261123-r8` (trace) in the local
+artifact root. Cleanup reclaimed 1,117,245,440 allocated bytes from the private
+profiles, scratch, source fixture and development packages. The closed indexes,
+package hashes, measurement and freshness receipts, screenshots and the
+454-member byte-verified trace archive remain.
+
+The comparison establishes the reduction on this host for the fixture workload.
+Performance with larger Rasters, multiple large workspaces and other hosts
+remains open.

@@ -238,6 +238,7 @@ export const ipcChannels = {
     importRegionalGuidanceReferenceImage: 'projects:import-regional-guidance-reference-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
+    listHomeCatalog: 'projects:list-home-catalog',
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
     listTrash: 'projects:list-trash',
     listWorkspaces: 'projects:list-workspaces',
@@ -353,6 +354,11 @@ export interface PresetApi {
   restore: (id: string) => Promise<PresetApiResult<PresetRecord>>
   softDelete: (id: string) => Promise<PresetApiResult<PresetRecord>>
   update: (id: string, definition: PresetDefinition) => Promise<PresetApiResult<PresetRecord>>
+}
+
+export interface ProjectHomeCatalog {
+  projects: ProjectSummary[]
+  workspaces: ProjectWorkspaceSummary[]
 }
 
 export interface ProjectSummary {
@@ -762,6 +768,7 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab | null>>
   list: (workspaceId?: string) => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
+  listHomeCatalog: (workspaceId?: string) => Promise<ApiResult<ProjectHomeCatalog>>
   listSmartPatchGenerationResults: (
     tabId: string,
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>

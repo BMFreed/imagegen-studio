@@ -15,6 +15,7 @@ import type {
   PresetRecord,
   ProjectCandidateExportResult,
   ProjectCloseImpact,
+  ProjectHomeCatalog,
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectOpenResult,
@@ -1764,6 +1765,18 @@ const api: StudioApi = {
         ipcChannels.projects.listGenerationResults,
         [tabId],
         isProjectGenerationResultsSnapshot,
+      ),
+    listHomeCatalog: (workspaceId) =>
+      invokeProject(
+        ipcChannels.projects.listHomeCatalog,
+        workspaceId === undefined ? [] : [workspaceId],
+        (value): value is ProjectHomeCatalog =>
+          isRecord(value) &&
+          Object.keys(value).length === 2 &&
+          Array.isArray(value.projects) &&
+          value.projects.every(isProjectSummary) &&
+          Array.isArray(value.workspaces) &&
+          value.workspaces.every(isProjectWorkspaceSummary),
       ),
     listSmartPatchGenerationResults: (tabId) =>
       invokeProject(

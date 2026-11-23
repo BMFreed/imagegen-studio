@@ -1,7 +1,7 @@
 /** Measure Home with owned synthetic Projects in the actual packaged renderer. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { expect } from '@playwright/test'
@@ -43,61 +43,73 @@ async function framePair(page) {
   )
 }
 
+function scaleProjectTitle(index) {
+  return `Scale Project ${String(index).padStart(4, '0')}`
+}
+
+async function writeScaleProject(filename, index, title, revision, identity) {
+  const suffix = String(index).padStart(12, '0')
+  const documentId = `2385c134-dc60-4fce-8ba5-${suffix}`
+  const layerId = `9f310111-d280-4db3-9351-${suffix}`
+  const assetPath = `assets/layers/${layerId}.png`
+  const project = parseProjectDocumentV1({
+    ...createEmptyProjectDocumentV1({
+      documentId,
+      documentRevision: revision,
+      primaryBbox: canvas,
+      title,
+    }),
+    layers: [
+      {
+        asset: {
+          bytes: png.length,
+          height: canvas.height,
+          path: assetPath,
+          sha256: pngSha256,
+          width: canvas.width,
+        },
+        blendMode: 'normal',
+        id: layerId,
+        kind: 'raster',
+        locked: false,
+        name: 'Scale fixture raster',
+        opacity: 1,
+        transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+        visible: true,
+      },
+    ],
+  })
+  await saveIgsPackage(filename, {
+    assets: { [assetPath]: { bytes: png } },
+    preview: { merged: png, rect: canvas, status: 'rendered', thumbnail },
+    project,
+  })
+  await regularFile(filename)
+  return {
+    bytes: await identity(filename),
+    documentId,
+    id: `project-v1-${createHash('sha256').update(filename).digest('hex')}`,
+    revision,
+    title,
+  }
+}
+
+async function stageProject(workspace, index, identity) {
+  const title = scaleProjectTitle(index)
+  const filename = path.join(workspace, `${title}.igs`)
+  const revision = `e98c6d46-5794-4dbb-9424-${String(index).padStart(12, '0')}`
+  return await writeScaleProject(filename, index, title, revision, identity)
+}
+
 async function stageProjects(workspace, count, identity) {
   const files = []
   for (let index = 1; index <= count; index++) {
-    const title = `Scale Project ${String(index).padStart(4, '0')}`
-    const suffix = String(index).padStart(12, '0')
-    const documentId = `2385c134-dc60-4fce-8ba5-${suffix}`
-    const revision = `e98c6d46-5794-4dbb-9424-${suffix}`
-    const layerId = `9f310111-d280-4db3-9351-${suffix}`
-    const filename = path.join(workspace, `${title}.igs`)
-    const assetPath = `assets/layers/${layerId}.png`
-    const project = parseProjectDocumentV1({
-      ...createEmptyProjectDocumentV1({
-        documentId,
-        documentRevision: revision,
-        primaryBbox: canvas,
-        title,
-      }),
-      layers: [
-        {
-          asset: {
-            bytes: png.length,
-            height: canvas.height,
-            path: assetPath,
-            sha256: pngSha256,
-            width: canvas.width,
-          },
-          blendMode: 'normal',
-          id: layerId,
-          kind: 'raster',
-          locked: false,
-          name: 'Scale fixture raster',
-          opacity: 1,
-          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
-          visible: true,
-        },
-      ],
-    })
-    await saveIgsPackage(filename, {
-      assets: { [assetPath]: { bytes: png } },
-      preview: { merged: png, rect: canvas, status: 'rendered', thumbnail },
-      project,
-    })
-    await regularFile(filename)
-    files.push({
-      bytes: await identity(filename),
-      documentId,
-      id: `project-v1-${createHash('sha256').update(filename).digest('hex')}`,
-      revision,
-      title,
-    })
+    files.push(await stageProject(workspace, index, identity))
   }
   return files
 }
 
-async function assertSavedState(workspace, database, files, identity) {
+async function assertSavedState(workspace, database, files, identity, missing) {
   assert.deepEqual(
     (await readdir(workspace)).sort(),
     files.map(({ bytes }) => path.basename(bytes.path)).sort(),
@@ -121,6 +133,25 @@ async function assertSavedState(workspace, database, files, identity) {
     trashedAt: null,
     workspace: 'uncategorized',
   }))
+  if (missing) {
+    const { original, detached } = missing
+    await assert.rejects(lstat(original.bytes.path), { code: 'ENOENT' })
+    await regularFile(detached.path)
+    assert.deepEqual(await identity(detached.path), detached)
+    expected.push({
+      bytes: null,
+      diagnostic: 'FILE_MISSING',
+      documentId: original.documentId,
+      filename: original.bytes.path,
+      health: 'missing',
+      id: original.id,
+      preview: 'rendered',
+      revision: original.revision,
+      title: original.title,
+      trashedAt: null,
+      workspace: 'uncategorized',
+    })
+  }
   expected.sort((left, right) => left.id.localeCompare(right.id))
   assert.deepEqual(snapshot, { accepted: [], jobs: 0, projects: expected, receipts: 0, seeds: 0 })
   return { ...snapshot, database: await identity(database) }
@@ -178,6 +209,87 @@ async function measureRefresh(page, refresh, cards, count, root, name) {
     resultCount: count,
     timedOut: false,
     transitions: await page.evaluate(() => globalThis.__igsHomeScaleRefreshTransitions),
+  }
+}
+
+async function assertCards(cards, files) {
+  await expect(cards).toHaveCount(files.length)
+  const actual = await cards.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('aria-label')).sort(),
+  )
+  assert.deepEqual(actual, files.map(({ title }) => `Select ${title}`).sort())
+}
+
+async function verifyExternalRefresh(page, root, workspace, files, identity) {
+  const home = page.getByRole('region', { exact: true, name: 'Home' })
+  const grid = home.getByRole('list', { exact: true, name: 'Project grid' })
+  const cards = grid.getByRole('button', { name: /^Select / })
+  const refresh = home.getByRole('button', { exact: true, name: 'Refresh projects' })
+  const workspaceNav = home.getByRole('complementary', {
+    exact: true,
+    name: 'Workspace navigation',
+  })
+  const workspaceCount = (count) =>
+    workspaceNav.getByRole('button', { exact: true, name: `Uncategorized ${count}` })
+  await home.getByRole('textbox', { exact: true, name: 'Search projects' }).fill('')
+  await assertCards(cards, files)
+  await expect(workspaceCount(files.length)).toBeVisible()
+
+  const [original, missing, ...neighbors] = files
+  for (const file of [original, missing]) {
+    await regularFile(file.bytes.path)
+    assert.deepEqual(await identity(file.bytes.path), file.bytes)
+  }
+  const replacement = await writeScaleProject(
+    original.bytes.path,
+    1,
+    `${original.title} Revised`,
+    'e98c6d46-5794-4dbb-9425-000000000001',
+    identity,
+  )
+  assert.equal(replacement.documentId, original.documentId)
+  assert.equal(replacement.id, original.id)
+  assert.notEqual(replacement.revision, original.revision)
+  assert.notEqual(replacement.bytes.sha256, original.bytes.sha256)
+
+  const addedIndex = files.length + 1
+  await assert.rejects(lstat(path.join(workspace, `${scaleProjectTitle(addedIndex)}.igs`)), {
+    code: 'ENOENT',
+  })
+  const added = await stageProject(workspace, addedIndex, identity)
+  const detachedDirectory = path.join(root, 'refresh-detached')
+  await mkdir(detachedDirectory, { mode: 0o700 })
+  const detachedPath = path.join(detachedDirectory, path.basename(missing.bytes.path))
+  await rename(missing.bytes.path, detachedPath)
+  await regularFile(detachedPath)
+  const detached = await identity(detachedPath)
+  assert.deepEqual(detached, { ...missing.bytes, path: detachedPath })
+
+  const expectedFiles = [replacement, ...neighbors, added]
+  await assertCards(cards, files)
+  const refreshSample = await measureRefresh(
+    page,
+    refresh,
+    cards,
+    files.length + 1,
+    root,
+    'external',
+  )
+  await assertCards(cards, [...expectedFiles, missing])
+  await expect(workspaceCount(files.length + 1)).toBeVisible()
+  const missingCard = grid.locator(`[data-project-id="${missing.id}"]`)
+  await expect(missingCard.getByText('File missing', { exact: true })).toBeVisible()
+  await expect(
+    missingCard.getByRole('button', { exact: true, name: `Open ${missing.title}` }),
+  ).toBeDisabled()
+  await expect(missingCard.locator('img')).toHaveCount(0)
+  return {
+    added,
+    expectedFiles,
+    missing: { detached, original: missing },
+    refresh: refreshSample,
+    replacement: { before: original, after: replacement },
+    unchangedNeighbors: neighbors.length,
   }
 }
 
@@ -366,29 +478,43 @@ export async function runPackagedHomeScale({
   await writeJson(root, 'home-scale-input.json', input)
 
   const lifetimes = []
+  let freshness
   for (const name of ['first-index', 'indexed-restart']) {
     const launchStart = performance.now()
     const state = await launch(name)
     let measured
     try {
       measured = await measureHome(state, root, files, launchStart)
+      if (name === 'indexed-restart' && process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === '1') {
+        freshness = await verifyExternalRefresh(state.page, root, workspace, files, identity)
+      }
     } finally {
       await closeNormally(state)
     }
-    const checked = await assertSavedState(workspace, database, files, identity)
+    const checked = await assertSavedState(
+      workspace,
+      database,
+      freshness?.expectedFiles ?? files,
+      identity,
+      freshness?.missing,
+    )
     const result = {
       ...measured,
       database: checked.database,
-      filesUnchanged: true,
+      filesUnchanged: !freshness,
       indexedProjects: checked.projects.length,
       normalPhysicalExit: state.normalPhysicalExit,
     }
     await writeJson(root, `${name}-measurements.json`, result)
     lifetimes.push(result)
+    if (freshness) {
+      const { expectedFiles: _expected, ...controls } = freshness
+      await writeJson(root, 'home-scale-refresh-control.json', { ...controls, ...checked })
+    }
   }
 
   return {
-    filesUnchanged: true,
+    filesUnchanged: !freshness,
     input,
     lifetimes,
     measurement: {
@@ -400,5 +526,6 @@ export async function runPackagedHomeScale({
     },
     package: packageBefore,
     projectCount,
+    ...(freshness && { refreshControl: 'home-scale-refresh-control.json' }),
   }
 }

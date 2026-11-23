@@ -500,6 +500,130 @@ test('missing and inaccessible folders retain cached rows and do not block healt
   })
 })
 
+test('Home shares one scan per workspace and each request sees external Project changes', async () => {
+  await withWorkspaceFixture(async (fixture) => {
+    const added = await fixture.service.addWorkspace(
+      { color: 'blue', displayName: 'Home catalog' },
+      await fixture.folder('home-catalog'),
+    )
+    const defaultDirectory = (await fixture.service.listWorkspaces())[0].directoryPath
+    const external = await ProjectSession.create(
+      path.join(added.directoryPath, 'external.igs'),
+      'Original external title',
+      fixture.roots,
+    )
+    const original = await ProjectSession.create(
+      path.join(defaultDirectory, 'default.igs'),
+      'Default Project',
+      fixture.roots,
+    )
+    const defaultBytes = await readFile(original.filePath)
+    class ObservedIndex extends ProjectIndexRepository {
+      readonly scans: string[] = []
+
+      override async scanWorkspace(workspaceId: string) {
+        this.scans.push(workspaceId)
+        return await super.scanWorkspace(workspaceId)
+      }
+    }
+    const repository = new ObservedIndex(fixture.database.db)
+    const service = fixture.makeService(repository)
+    await service.initialize()
+    repository.scans.length = 0
+    const expectedScans = ['uncategorized', added.id].sort()
+
+    const initial = await service.listHomeCatalog()
+    assert.deepEqual(repository.scans.sort(), expectedScans)
+    assert.deepEqual(initial.projects, await fixture.service.list())
+    assert.deepEqual(initial.workspaces, await fixture.service.listWorkspaces())
+    const initialExternal = initial.projects.find((project) => project.workspaceId === added.id)
+    assert.ok(initialExternal)
+    assert.equal(initialExternal.title, 'Original external title')
+
+    external.applyDocument({ ...external.document, title: 'Externally updated title' })
+    assert.equal((await external.save()).reloadRequired, false)
+    await ProjectSession.create(
+      path.join(defaultDirectory, 'new.igs'),
+      'Externally added Project',
+      fixture.roots,
+    )
+
+    repository.scans.length = 0
+    const refreshed = await service.listHomeCatalog()
+    assert.deepEqual(refreshed.projects.map((project) => project.title).sort(), [
+      'Default Project',
+      'Externally added Project',
+      'Externally updated title',
+    ])
+    assert.deepEqual(repository.scans.sort(), expectedScans)
+    assert.equal(
+      refreshed.projects.find((project) => project.workspaceId === added.id)?.id,
+      initialExternal.id,
+    )
+    assert.deepEqual(
+      refreshed.workspaces.map((workspace) => workspace.projectCount),
+      [2, 1],
+    )
+    assert.deepEqual(await readFile(original.filePath), defaultBytes)
+
+    repository.scans.length = 0
+    const scoped = await service.listHomeCatalog(added.id)
+    assert.deepEqual(repository.scans.sort(), expectedScans)
+    assert.deepEqual(
+      scoped.projects,
+      refreshed.projects.filter((project) => project.workspaceId === added.id),
+    )
+    assert.deepEqual(scoped.workspaces, refreshed.workspaces)
+
+    repository.scans.length = 0
+    assert.deepEqual(await service.list(added.id), scoped.projects)
+    assert.deepEqual(repository.scans, [added.id])
+    repository.scans.length = 0
+    assert.deepEqual(await service.listWorkspaces(), refreshed.workspaces)
+    assert.deepEqual(repository.scans.sort(), expectedScans)
+  })
+})
+
+test('Home retries a transiently unavailable workspace before reading its Project cards', async () => {
+  await withWorkspaceFixture(async (fixture) => {
+    const added = await fixture.service.addWorkspace(
+      { color: 'green', displayName: 'Transient folder' },
+      await fixture.folder('transient'),
+    )
+    const external = await ProjectSession.create(
+      path.join(added.directoryPath, 'returned.igs'),
+      'Project in the returned workspace',
+      fixture.roots,
+    )
+    const before = await readFile(external.filePath)
+    const moved = `${added.directoryPath}.retained`
+    class TransientIndex extends ProjectIndexRepository {
+      attempts = 0
+
+      override async scanWorkspace(workspaceId: string) {
+        if (workspaceId !== added.id || ++this.attempts !== 1) {
+          return await super.scanWorkspace(workspaceId)
+        }
+        await rename(added.directoryPath, moved)
+        try {
+          return await super.scanWorkspace(workspaceId)
+        } finally {
+          await rename(moved, added.directoryPath)
+        }
+      }
+    }
+    const repository = new TransientIndex(fixture.database.db)
+    const service = fixture.makeService(repository)
+    const catalog = await service.listHomeCatalog(added.id)
+    assert.equal(repository.attempts, 2)
+    assert.deepEqual(
+      catalog.projects.map(({ health, recoveryStatus, title }) => [health, recoveryStatus, title]),
+      [['ready', 'none', 'Project in the returned workspace']],
+    )
+    assert.deepEqual(await readFile(external.filePath), before)
+  })
+})
+
 test('cross-workspace refresh isolates availability errors and propagates real repository failures', async () => {
   await withWorkspaceFixture(async (fixture) => {
     const added = await fixture.service.addWorkspace(
@@ -518,5 +642,7 @@ test('cross-workspace refresh isolates availability errors and propagates real r
     const service = fixture.makeService(new FailingIndex(fixture.database.db))
     await assert.rejects(service.list(), (error) => error === sentinel)
     await assert.rejects(service.listWorkspaces(), (error) => error === sentinel)
+    await assert.rejects(service.listHomeCatalog('uncategorized'), (error) => error === sentinel)
+    assert.deepEqual(await service.list('uncategorized'), [])
   })
 })

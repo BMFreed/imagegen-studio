@@ -11,6 +11,7 @@ import type {
   ProjectGenerationActionState,
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
+  ProjectHomeCatalog,
   ProjectImportSelection,
   ProjectLoraIdentity,
   ProjectOpenResult,
@@ -3772,7 +3773,12 @@ async function refreshProjects() {
   const trashView = selectedTrashView.value
   projectsLoading.value = true
   homeError.value = null
-  const catalogRefresh = refreshWorkspaces()
+  // Active Home reads share discovery in Main. On failure the existing independent
+  // requests recover whichever lists are still available to the current view.
+  const combined = trashView
+    ? undefined
+    : apiValue(() => projectApi().listHomeCatalog(workspaceId ?? undefined)).catch(() => null)
+  const catalogRefresh = refreshWorkspaces(combined)
   const trashRefresh = refreshTrash()
   const current = () =>
     !rendererDisposed &&
@@ -3783,7 +3789,12 @@ async function refreshProjects() {
     if (trashView) {
       await trashRefresh
     } else {
-      const list = await apiValue(() => projectApi().list(workspaceId ?? undefined))
+      const catalog = await combined
+      if (!current()) {
+        return
+      }
+      const list =
+        catalog?.projects ?? (await apiValue(() => projectApi().list(workspaceId ?? undefined)))
       if (current()) {
         projects.value = list
       }
@@ -3825,12 +3836,16 @@ async function refreshTrash() {
   }
 }
 
-async function refreshWorkspaces() {
+async function refreshWorkspaces(combined?: Promise<ProjectHomeCatalog | null>) {
   const request = ++workspacesRequest
   workspacesLoading.value = true
   workspacesError.value = null
   try {
-    const catalog = await apiValue(() => projectApi().listWorkspaces())
+    const snapshot = combined ? await combined : null
+    if (rendererDisposed || request !== workspacesRequest) {
+      return
+    }
+    const catalog = snapshot?.workspaces ?? (await apiValue(() => projectApi().listWorkspaces()))
     if (!rendererDisposed && request === workspacesRequest) {
       workspaces.value = catalog
     }
@@ -6958,7 +6973,7 @@ onBeforeUnmount(() => {
             :disabled="pendingProjectAction !== null || workspacesLoading"
             size="tiny"
             tertiary
-            @click="refreshWorkspaces"
+            @click="refreshWorkspaces()"
           >
             Refresh workspaces
           </NButton>

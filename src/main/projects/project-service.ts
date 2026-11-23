@@ -2,6 +2,7 @@ import type {
   ProjectCreateInput,
   ProjectEmbeddingIdentity,
   ProjectGenerationDraftChange,
+  ProjectHomeCatalog,
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectLoraIdentity,
@@ -2283,74 +2284,24 @@ export class ProjectService {
   }
 
   async list(workspaceId?: string): Promise<ProjectSummary[]> {
-    await this.initialize()
+    return await this.readProjectSummaries(workspaceId, (id) => this.scanWorkspaceIfAvailable(id))
+  }
+
+  async listHomeCatalog(workspaceId?: string): Promise<ProjectHomeCatalog> {
     if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
-    const workspaces =
-      workspaceId === undefined
-        ? await this.options.repository.listWorkspaces()
-        : [await this.options.repository.workspaceById(workspaceId)]
-    const readableWorkspaces = new Set<string>()
-    for (const workspace of workspaces) {
-      await this.scanWorkspaceIfAvailable(workspace.id)
-      if (
-        (await this.options.repository.workspaceAvailability(workspace)).availability ===
-        'available'
-      ) {
-        readableWorkspaces.add(workspace.id)
+    const scanned = new Set<string>()
+    const scan = async (id: string) => {
+      // This witness belongs to the current catalog request. An unavailable folder may recover
+      // before the second consumer, so only a completed scan can be shared.
+      if (!scanned.has(id) && (await this.scanWorkspaceIfAvailable(id))) {
+        scanned.add(id)
       }
     }
-    const records = await this.options.repository.listProjects(workspaceId)
-    const modifiedTimes = await this.options.repository.listProjectModifiedTimes(workspaceId)
-    const active = await Promise.all(
-      records.map(
-        async (record) =>
-          await this.toSummary(
-            record,
-            readableWorkspaces.has(record.workspaceId),
-            modifiedTimes.get(record.localProjectKey) ?? null,
-          ),
-      ),
-    )
-    const pending = (await this.options.repository.relocations.list()).filter(
-      (move) => workspaceId === undefined || move.sourceWorkspaceId === workspaceId,
-    )
-    return [
-      ...active,
-      ...pending.map((move): ProjectSummary => ({
-        bbox:
-          move.project.bboxWidth && move.project.bboxHeight
-            ? { height: move.project.bboxHeight, width: move.project.bboxWidth }
-            : null,
-        fileName: path.basename(move.sourcePath),
-        health: 'ready',
-        id: move.localProjectKey,
-        lastOpenedAt: canonicalHomeTimestamp(move.project.lastOpenedAt),
-        modifiedAt: fileMtimeToHomeTimestamp(move.sourceWitness.mtimeNs),
-        ...(move.kind === 'rename'
-          ? {
-              pendingRename: {
-                message:
-                  move.errorMessage ?? 'The Project rename is pending. Retry the original name.',
-                name: move.rename!.targetTitle,
-              },
-            }
-          : {
-              pendingMove: {
-                message:
-                  move.errorMessage ??
-                  'The Project move is pending. Retry its original destination.',
-                workspaceId: move.targetWorkspaceId,
-              },
-            }),
-        previewStatus: 'unavailable',
-        recoveryStatus: 'none',
-        thumbnailUrl: null,
-        title: move.project.displayName,
-        workspaceId: move.sourceWorkspaceId,
-      })),
-    ]
+    const workspaces = await this.readWorkspaceSummaries(scan)
+    const projects = await this.readProjectSummaries(workspaceId, scan)
+    return { projects, workspaces }
   }
 
   async listTrash(): Promise<ProjectTrashSummary[]> {
@@ -2412,19 +2363,7 @@ export class ProjectService {
   }
 
   async listWorkspaces(): Promise<ProjectWorkspaceSummary[]> {
-    await this.initialize()
-    const workspaces = await this.options.repository.listWorkspaces()
-    const pendingMoves = await this.options.repository.relocations.list()
-    const summaries: ProjectWorkspaceSummary[] = []
-    for (const workspace of workspaces) {
-      await this.scanWorkspaceIfAvailable(workspace.id)
-      const summary = await this.toWorkspaceSummary(workspace)
-      summary.projectCount += pendingMoves.filter(
-        (move) => move.sourceWorkspaceId === workspace.id,
-      ).length
-      summaries.push(summary)
-    }
-    return summaries
+    return await this.readWorkspaceSummaries((id) => this.scanWorkspaceIfAvailable(id))
   }
 
   /** Explicit OS selection reconnects a closed missing Project without importing or saving it. */
@@ -5075,6 +5014,98 @@ export class ProjectService {
     return { kind: 'opened', tab }
   }
 
+  private async readProjectSummaries(
+    workspaceId: string | undefined,
+    scan: (id: string) => Promise<unknown>,
+  ): Promise<ProjectSummary[]> {
+    await this.initialize()
+    if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
+    }
+    const workspaces =
+      workspaceId === undefined
+        ? await this.options.repository.listWorkspaces()
+        : [await this.options.repository.workspaceById(workspaceId)]
+    const readableWorkspaces = new Set<string>()
+    for (const workspace of workspaces) {
+      await scan(workspace.id)
+      if (
+        (await this.options.repository.workspaceAvailability(workspace)).availability ===
+        'available'
+      ) {
+        readableWorkspaces.add(workspace.id)
+      }
+    }
+    const records = await this.options.repository.listProjects(workspaceId)
+    const modifiedTimes = await this.options.repository.listProjectModifiedTimes(workspaceId)
+    const active = await Promise.all(
+      records.map(
+        async (record) =>
+          await this.toSummary(
+            record,
+            readableWorkspaces.has(record.workspaceId),
+            modifiedTimes.get(record.localProjectKey) ?? null,
+          ),
+      ),
+    )
+    const pending = (await this.options.repository.relocations.list()).filter(
+      (move) => workspaceId === undefined || move.sourceWorkspaceId === workspaceId,
+    )
+    return [
+      ...active,
+      ...pending.map((move): ProjectSummary => ({
+        bbox:
+          move.project.bboxWidth && move.project.bboxHeight
+            ? { height: move.project.bboxHeight, width: move.project.bboxWidth }
+            : null,
+        fileName: path.basename(move.sourcePath),
+        health: 'ready',
+        id: move.localProjectKey,
+        lastOpenedAt: canonicalHomeTimestamp(move.project.lastOpenedAt),
+        modifiedAt: fileMtimeToHomeTimestamp(move.sourceWitness.mtimeNs),
+        ...(move.kind === 'rename'
+          ? {
+              pendingRename: {
+                message:
+                  move.errorMessage ?? 'The Project rename is pending. Retry the original name.',
+                name: move.rename!.targetTitle,
+              },
+            }
+          : {
+              pendingMove: {
+                message:
+                  move.errorMessage ??
+                  'The Project move is pending. Retry its original destination.',
+                workspaceId: move.targetWorkspaceId,
+              },
+            }),
+        previewStatus: 'unavailable',
+        recoveryStatus: 'none',
+        thumbnailUrl: null,
+        title: move.project.displayName,
+        workspaceId: move.sourceWorkspaceId,
+      })),
+    ]
+  }
+
+  private async readWorkspaceSummaries(
+    scan: (id: string) => Promise<unknown>,
+  ): Promise<ProjectWorkspaceSummary[]> {
+    await this.initialize()
+    const workspaces = await this.options.repository.listWorkspaces()
+    const pendingMoves = await this.options.repository.relocations.list()
+    const summaries: ProjectWorkspaceSummary[] = []
+    for (const workspace of workspaces) {
+      await scan(workspace.id)
+      const summary = await this.toWorkspaceSummary(workspace)
+      summary.projectCount += pendingMoves.filter(
+        (move) => move.sourceWorkspaceId === workspace.id,
+      ).length
+      summaries.push(summary)
+    }
+    return summaries
+  }
+
   private async rebuildOne(
     projectId: string,
     worker: Pick<ProjectWorkerClient, 'composePreview'>,
@@ -5287,13 +5318,15 @@ export class ProjectService {
     }
   }
 
-  private async scanWorkspaceIfAvailable(workspaceId: string): Promise<void> {
+  private async scanWorkspaceIfAvailable(workspaceId: string): Promise<boolean> {
     try {
       await this.options.repository.scanWorkspace(workspaceId)
+      return true
     } catch (error) {
       if (!(error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE')) {
         throw error
       }
+      return false
     }
   }
 

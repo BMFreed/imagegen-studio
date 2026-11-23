@@ -1974,6 +1974,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.deleteProjectPermanently,
         ipcChannels.projects.finishImport,
         ipcChannels.projects.list,
+        ipcChannels.projects.listHomeCatalog,
         ipcChannels.projects.listTrash,
         ipcChannels.projects.listWorkspaces,
         ipcChannels.projects.locateProject,
@@ -2125,6 +2126,11 @@ if (!gotInstanceLock) {
         ipcChannels.projects.list,
         (args) => args.length === 0 || (args.length === 1 && isProjectWorkspaceId(args[0])),
         (workspaceId) => projectService.list(workspaceId as string | undefined),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.listHomeCatalog,
+        (args) => args.length === 0 || (args.length === 1 && isProjectWorkspaceId(args[0])),
+        (workspaceId) => projectService.listHomeCatalog(workspaceId as string | undefined),
       )
       registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
         projectService.listWorkspaces(),
