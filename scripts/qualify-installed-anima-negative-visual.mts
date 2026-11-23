@@ -41,8 +41,11 @@ const invokeRepository = path.resolve(repository, '../sources/InvokeAI')
 const [flag, run, ...extra] = process.argv.slice(2)
 assert.equal(flag, '--run')
 assert.ok(run && extra.length === 0)
-const appleRunParent = path.join(artifactRoot, 'runs/anima-apple-negative')
-const appleProfile = path.dirname(run) === appleRunParent
+const runParent = path.dirname(run)
+const anchoredAppleProfile =
+  runParent === path.join(artifactRoot, 'runs/anima-apple-negative-anchored')
+const appleProfile =
+  anchoredAppleProfile || runParent === path.join(artifactRoot, 'runs/anima-apple-negative')
 if (appleProfile) {
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
 } else {
@@ -64,8 +67,14 @@ const profile = appleProfile
       regionalNegative: '(red apple)2.0',
       regionalNegativeCleaned: 'red apple',
       regionalNegativeWeight: 2,
-      regionalPositive: 'a pale wooden tabletop against a plain light blue wall, even lighting',
-      schema: 'anima-apple-negative-v1',
+      regionalPositive: anchoredAppleProfile
+        ? {
+            left: 'a red apple with a small green leaf on a pale wooden tabletop against a plain light blue wall, even lighting',
+            right:
+              'a blue ceramic mug with a loop handle on a pale wooden tabletop against a plain light blue wall, even lighting',
+          }
+        : 'a pale wooden tabletop against a plain light blue wall, even lighting',
+      schema: anchoredAppleProfile ? 'anima-apple-negative-anchored-v1' : 'anima-apple-negative-v1',
       sourceFilename: 'apple-mug-source.png',
       startStep: 7,
     }
@@ -84,11 +93,12 @@ const profile = appleProfile
     }
 const { expectedActualSteps, globalPositive, regionalNegative, regionalPositive } = profile
 const globalNegative = '(blur)0.75, noise'
-const cases = [
+const negativeCases = [
   { label: 'baseline', negativeSide: null },
   { label: 'negative-left', negativeSide: 'left' },
   { label: 'negative-right', negativeSide: 'right' },
 ] as const
+const cases = anchoredAppleProfile ? [negativeCases[0]] : negativeCases
 const seed = 123
 const sampling = {
   cfgScale: 4,
@@ -358,6 +368,9 @@ try {
       targetSha ??= sha(prepared.targetPngBytes)
       assert.equal(sha(prepared.targetPngBytes), targetSha)
       assert.equal(prepared.context.target.sha256, targetSha)
+      if (anchoredAppleProfile) {
+        assert.equal(targetSha, 'c5ca320f02b1d2ec433246b5ab60cbc73ea18be68cedf7ba30541d0bd483e3de')
+      }
       assert.equal(recipe.family, 'anima')
       assert.deepEqual(
         recipe.regions.map(({ regionId: id }) => id),
@@ -369,11 +382,11 @@ try {
         positives.map(({ prompt, sourceId, text }) => [sourceId, text, prompt]),
         [
           ['current-canvas', globalPositive, literalPrompt(globalPositive)],
-          ...(['left', 'right'] as const).map((side) => [
-            regionId(side),
-            regionalPositive,
-            literalPrompt(regionalPositive),
-          ]),
+          ...(['left', 'right'] as const).map((side) => {
+            const positive =
+              typeof regionalPositive === 'string' ? regionalPositive : regionalPositive[side]
+            return [regionId(side), positive, literalPrompt(positive)]
+          }),
         ],
       )
       const [global, ...local] = negatives

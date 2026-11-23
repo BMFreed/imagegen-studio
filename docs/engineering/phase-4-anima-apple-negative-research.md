@@ -121,3 +121,41 @@ The run retains the original PNGs, blind observations, condition map,
 comparison, exact captured inputs and three saved Projects. The verified
 8-entry archive preserves the closed payload, including SQLite. Scratch
 and blind copies released 5,996,544 allocated bytes.
+
+## Baseline with named subjects
+
+Studio base `419aef9bc1f65424eb50b96fda0bbf94d0550e88` and clean
+InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1`. The current
+`invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts`
+calls `addRegionalGuidance.ts` to construct the positive conditioning in
+each region. The denoiser in
+`invokeai/app/invocations/anima/anima_denoise.py` calls
+`invokeai/backend/anima/regional_prompting.py`. In masked blocks the
+global positive covers the complement of the positive regional masks.
+Here the two masks cover the whole target, so each mask receives its
+own subject description.
+
+The new profile prepares one baseline with the same 512×512 IMG source,
+Heun 20, strength 0.65, CFG 4, seed 123, Auto VAE, mask geometry and
+global prompts. Both local negatives are empty. The only intended
+changes are the two local positives.
+
+- Left `a red apple with a small green leaf on a pale wooden tabletop against a plain light blue wall, even lighting`
+- Right `a blue ceramic mug with a loop handle on a pale wooden tabletop against a plain light blue wall, even lighting`
+
+The acceptance control requires a recognizable red apple on the left,
+a recognizable blue mug with a loop handle on the right, and a coherent
+tabletop and wall. The single baseline can establish whether that scene
+survives. A later matched side comparison would measure the local negative.
+
+CPU run `20261123-r90` saved and reopened the Project and prepared the
+exact R3 target PNG. The independent audit passed 129 assertions and
+confirmed the two intended positive changes and the full frozen Heun
+window with 25 evaluations planned. It issued zero denoising requests.
+The CPU manifest retained a descriptive sentence about identical positives
+from the earlier recipe. The correction is recorded separately, with both
+literal prompts and the actual mask assignment verified.
+
+The 238 focused tests, typecheck, scoped lint and build passed. The
+single-request CUDA baseline remains open while the available GPU and
+host memory are below the established run bounds.

@@ -159,6 +159,10 @@ entries record the state at their checkpoint.
    outputs. Baseline and spatial control lost both original subjects, so
    local negative utility stays open for this trial.
    [Anima red-apple negative](./phase-4-anima-apple-negative-research.md)
+   The matched follow-up names the apple and mug in their respective
+   local positives. CPU preparation passed with the exact source and
+   frozen sampling. The visual baseline still needs one CUDA output.
+   [Baseline with named subjects](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

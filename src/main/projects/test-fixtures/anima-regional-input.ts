@@ -590,8 +590,8 @@ export interface AnimaRegionalNegativeVisualUseCase {
 
 /**
  * InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1:
- * frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts pairs negative text
- * with its mask. app/invocations/anima/anima_denoise.py calls backend/anima/scheduler_driver.py and
+ * frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts pairs local text with
+ * its mask. app/invocations/anima/anima_denoise.py calls backend/anima/scheduler_driver.py and
  * applies the signed masks using backend/anima/{regional_prompting,anima_transformer_patch}.py. The
  * webv1 buildAnimaGraph.ts and addImageToImage.ts pass the canvas composite to
  * app/invocations/vae/anima_image_to_latents.py, which converts its input before encoding.
@@ -608,7 +608,9 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
   const trainedBundle = captureTrainedBundle(options.trainedBundle)
   const sourceImage = structuredClone(options.sourceImage)
   const runs = path.join(os.homedir(), '.codex/artifacts/imagegen-studio/runs')
-  const appleProfile = path.dirname(run) === path.join(runs, 'anima-apple-negative')
+  const runParent = path.dirname(run)
+  const anchoredAppleProfile = runParent === path.join(runs, 'anima-apple-negative-anchored')
+  const appleProfile = anchoredAppleProfile || runParent === path.join(runs, 'anima-apple-negative')
   if (appleProfile) {
     assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
   } else {
@@ -691,9 +693,15 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
     const initial = structuredClone(owner().document)
     assert.deepEqual(initial.primaryBbox, bbox)
     assert.equal(initial.layers.length, 1)
-    const positive = appleProfile
+    const sharedPositive = appleProfile
       ? 'a pale wooden tabletop against a plain light blue wall, even lighting'
       : 'one white cat wearing a scarf'
+    const positives = anchoredAppleProfile
+      ? [
+          'a red apple with a small green leaf on a pale wooden tabletop against a plain light blue wall, even lighting',
+          'a blue ceramic mug with a loop handle on a pale wooden tabletop against a plain light blue wall, even lighting',
+        ]
+      : [sharedPositive, sharedPositive]
     const negative = appleProfile ? '(red apple)2.0' : '(red scarf)1.5'
     const globalPositive = appleProfile
       ? 'anime still life illustration, a continuous pale wooden tabletop against a plain light blue wall, front view, even lighting'
@@ -729,7 +737,10 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
     }
 
     let targetSha: string | undefined
-    for (const testCase of ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES) {
+    const cases = anchoredAppleProfile
+      ? [ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES[0]]
+      : ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES
+    for (const testCase of cases) {
       const regionalGuidance = sides.map((side, index) => ({
         enabled: true,
         id: REGION_IDS[index],
@@ -739,7 +750,7 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
         overlayOpacity: 0,
         prompts: {
           negative: prompt(testCase.negativeSide === side ? negative : ''),
-          positive: prompt(positive),
+          positive: prompt(positives[index]),
           useGlobalNegativePrompt: false,
         },
       }))
@@ -824,7 +835,7 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
           const { alpha, ...descriptor } = region.coverage
           assert.equal(region.regionId, REGION_IDS[index])
           assert.equal(region.maskId, MASK_IDS[index])
-          assert.equal(region.positive?.text, positive)
+          assert.equal(region.positive?.text, positives[index])
           assert.equal(region.negative.source, 'regional')
           assert.equal(
             region.negative.prompt.text,
