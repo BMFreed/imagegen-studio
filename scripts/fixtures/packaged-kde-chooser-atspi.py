@@ -1,6 +1,7 @@
 """Operate one owned KDE portal chooser on the isolated AT-SPI bus."""
 
 import argparse
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,8 @@ from gi.repository import Atspi, GLib
 
 
 OPEN_TITLES = ("Import Project", "Locate Project")
+DIRECTORY_TITLES = ("Add Workspace", "Locate Workspace Folder")
+DIRECTORY_ACCEPT = "OK"
 SAVE_NAMES = {
     "Export As": "canvas.png",
     "Export Generation BBox": "generation-bbox.png",
@@ -48,12 +51,12 @@ def showing(obj):
     return obj.get_state_set().contains(Atspi.StateType.SHOWING)
 
 
-def owned_dialog(pid, title):
+def owned_dialog(pid, title, *, include_hidden=False):
     for app in children(Atspi.get_desktop(0)):
         if app.get_process_id() != pid:
             continue
         for dialog in children(app):
-            if dialog.get_role() == Atspi.Role.DIALOG and showing(dialog):
+            if dialog.get_role() == Atspi.Role.DIALOG and (include_hidden or showing(dialog)):
                 if dialog.get_name() == title and dialog.get_process_id() == pid:
                     yield dialog
 
@@ -74,10 +77,54 @@ def controls(parent):
             yield from controls(child)
 
 
+def directory_diagnostic(pid, title):
+    def describe(obj):
+        state = obj.get_state_set()
+        flags = ("active", "modal", "focused", "focusable", "visible", "showing", "enabled")
+        return {
+            "role": obj.get_role_name(),
+            "name": (obj.get_name() or "")[:120],
+            "index": obj.get_index_in_parent(),
+            "states": [name for name in flags if state.contains(getattr(Atspi.StateType, name.upper()))],
+        }
+
+    result = []
+    for dialog in islice(owned_dialog(pid, title, include_hidden=True), 4):
+        result.append({
+            **describe(dialog),
+            "children": [describe(obj) for obj in islice(children(dialog), 12)],
+            "controls": [describe(obj) for obj in islice((
+                child for child in controls(dialog)
+                if child.get_role() in (Atspi.Role.LABEL, Atspi.Role.COMBO_BOX, Atspi.Role.PUSH_BUTTON)
+            ), 16)],
+        })
+    return json.dumps({"pid": pid, "title": title, "dialogs": result})
+
+
 def named_control(dialog, role, name):
     return single(
         (obj for obj in controls(dialog) if obj.get_role() == role and obj.get_name() == name),
         f"{name} chooser control",
+    )
+
+
+def owned_directory_dialogs(pid, title):
+    # KDE exposes a same-title wrapper without controls alongside KDirSelectDialog.
+    for dialog in owned_dialog(pid, title):
+        buttons = [obj.get_name() for obj in controls(dialog) if obj.get_role() == Atspi.Role.PUSH_BUTTON]
+        if buttons.count(DIRECTORY_ACCEPT) == 1 and buttons.count("Cancel") == 1:
+            yield dialog
+
+
+def directory_editor(dialog):
+    return single(
+        (
+            obj for combo in controls(dialog) if combo.get_role() == Atspi.Role.COMBO_BOX
+            for obj in children(combo)
+            if obj.get_role() in (Atspi.Role.TEXT, Atspi.Role.ENTRY) and showing(obj)
+            and obj.get_editable_text_iface() is not None and obj.get_text_iface() is not None
+        ),
+        "editable directory location field",
     )
 
 
@@ -111,6 +158,8 @@ def press(button):
 
 
 def choose(pid, title, filename, accept_label, accept_default, existing_png):
+    directory = title in DIRECTORY_TITLES
+    matching_dialogs = owned_directory_dialogs if directory else owned_dialog
     if existing_png:
         pending = list(owned_overwrite_dialog(pid))
         if filename is None and pending:
@@ -119,9 +168,10 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
             wait_for(lambda: not list(owned_overwrite_dialog(pid)), "Overwrite prompt did not close.")
         elif pending:
             raise RuntimeError("An overwrite prompt was already present before selection.")
-    dialog = single(wait_for(lambda: list(owned_dialog(pid, title)), "Chooser did not appear."), title)
+    dialog = single(wait_for(lambda: list(matching_dialogs(pid, title)), "Chooser did not appear."), title)
     if filename is not None:
         suggested_name = SAVE_NAMES.get(title)
+        initial_names = {suggested_name}
         if suggested_name is not None:
             named_control(dialog, Atspi.Role.LABEL, "Name:")
         if title == "Save Recovery AppImage":
@@ -144,13 +194,14 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
                 (obj for obj, value in inputs if value in initial_names),
                 f"recovery filename field with its suggested value from {[value for _, value in inputs]}",
             )
+        elif directory:
+            field = directory_editor(dialog)
         else:
             combo = named_control(dialog, Atspi.Role.COMBO_BOX, suggested_name or "Name:")
             field = single(
                 (obj for obj in children(combo) if obj.get_role() == Atspi.Role.TEXT and showing(obj)),
                 "chooser filename field",
             )
-            initial_names = {suggested_name}
         editor = field.get_editable_text_iface()
         text = field.get_text_iface()
         if editor is None or text is None:
@@ -186,7 +237,7 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
         wait_for(lambda: not list(owned_overwrite_dialog(pid)), "Overwrite prompt did not close.")
     else:
         press(button)
-    wait_for(lambda: not list(owned_dialog(pid, title)), "Chooser did not close.")
+    wait_for(lambda: not list(matching_dialogs(pid, title)), "Chooser did not close.")
     result = {
         "pid": pid,
         "title": title,
@@ -207,8 +258,8 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", required=True, type=int)
-    parser.add_argument("--title", required=True, choices=OPEN_TITLES + SAVE_TITLES)
-    parser.add_argument("--accept-label", choices=("Save", "Export PNG"))
+    parser.add_argument("--title", required=True, choices=OPEN_TITLES + DIRECTORY_TITLES + SAVE_TITLES)
+    parser.add_argument("--accept-label", choices=("Save", "Export PNG", DIRECTORY_ACCEPT))
     parser.add_argument("--select", type=Path)
     parser.add_argument("--accept-default", action="store_true")
     parser.add_argument("--owned-existing-png", action="store_true")
@@ -216,8 +267,13 @@ def main():
     if args.pid <= 1 or not os.environ.get("AT_SPI_BUS_ADDRESS"):
         parser.error("Supply the owned portal PID and its isolated AT-SPI bus.")
     saving = args.title in SAVE_TITLES
-    if saving != (args.accept_label is not None):
+    directory = args.title in DIRECTORY_TITLES
+    if saving and args.accept_label not in ("Save", "Export PNG"):
         parser.error("Supply the observed SaveFile action label for save dialogs.")
+    if directory and args.accept_label not in (None, DIRECTORY_ACCEPT):
+        parser.error("Supply an observed directory action label.")
+    if not saving and not directory and args.accept_label is not None:
+        parser.error("The OpenFile action label is fixed for file dialogs.")
     if args.title == "Save Recovery AppImage" and args.accept_label != "Save":
         parser.error("The recovery dialog must use the native Save action.")
     if args.accept_default and (args.title != "Save Recovery AppImage" or args.select is None):
@@ -248,13 +304,32 @@ def main():
                     parser.error("The BBox PNG must be an owned regular file without aliases.")
             elif args.select.exists() or args.select.is_symlink():
                 parser.error("The save destination must be a new file.")
+        elif directory:
+            evidence = Path(os.environ["IMAGEGEN_LINUX_PACKAGE_ARTIFACTS"])
+            if (
+                evidence.resolve(strict=True) != evidence
+                or args.select == evidence
+                or not args.select.is_relative_to(evidence)
+                or args.select.resolve(strict=True) != args.select
+            ):
+                parser.error("Select a canonical directory inside the owned run directory.")
+            entry = args.select.lstat()
+            if not (stat.S_ISDIR(entry.st_mode) and entry.st_uid == os.getuid()):
+                parser.error("The selected directory must belong to the current user.")
         elif args.select.resolve(strict=True) != args.select or not args.select.is_file():
             parser.error("The selected path must be a file.")
     Atspi.set_timeout(1200, 1200)
-    print(json.dumps(choose(
-        args.pid, args.title, args.select, args.accept_label or "Open", args.accept_default,
-        args.owned_existing_png,
-    )))
+    accept_label = args.accept_label or (DIRECTORY_ACCEPT if directory else "Open")
+    try:
+        result = choose(
+            args.pid, args.title, args.select, accept_label, args.accept_default,
+            args.owned_existing_png,
+        )
+    except RuntimeError as error:
+        if not directory:
+            raise
+        raise RuntimeError(f"{error} Owned directory dialogs: {directory_diagnostic(args.pid, args.title)}") from error
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

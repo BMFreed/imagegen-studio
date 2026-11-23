@@ -217,8 +217,12 @@ entries record the state at their checkpoint.
    separate native startup confirmed the previous worker remained runnable.
    A separate packaged control reached candidate activation, observed
    actual worker refusal, restored the previous pointer byte for byte
-   and reopened the original ready runtime. Repeat on the shipping
-   artifact and supported host matrix when the publisher is available.
+   and reopened the original ready runtime. The next local check is stock
+   AppImage startup after an installation owner dies before pointer
+   publication or during post-activation qualification. Verify safe claim
+   release in the first case and a retained recovery claim with Repair
+   refused in the second. Repeat on the shipping artifact and supported host
+   matrix when the publisher is available.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
    assembly floor, the exact cached and extracted runtime and LaMa. Repair
@@ -294,6 +298,13 @@ entries record the state at their checkpoint.
    chooser responses and seven normal app closes preserved the exact
    Project and accepted Raster. Repeat on the shipping desktop matrix.
    [Packaged KDE Wayland chooser](./phase-5-packaged-kde-chooser-research.md)
+   A separate stock AppImage run used the native KDE directory picker for
+   Add Workspace and Locate Folder. Cancel kept the Add draft and the existing
+   Locate registration. Locate refused a folder with one different saved
+   document, then repointed both exact Projects together after the owner moved
+   the original folder. Both Project keys and bytes survived, and a Project
+   reopened from the new path after restart.
+   [Native workspace folder chooser](./phase-5-packaged-workspace-chooser-research.md)
    Stock AppImage Home blocks Trash while the Project is open. After close it
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project

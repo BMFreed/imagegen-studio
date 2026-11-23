@@ -55,6 +55,7 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
+const workspaceChooser = offlineProject === 'workspace-chooser'
 const modelInstallCrash = offlineProject === 'model-install-interruption'
 const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
@@ -76,9 +77,10 @@ const nativeWaylandKeyboard =
     modelInstallHistory ||
     homeScale)
 assert.ok(
-  !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard,
+  !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard || workspaceChooser,
   'The private Wayland launcher requires a supported packaged case.',
 )
+assert.ok(!workspaceChooser || kdeChooser, 'Use a private KDE Wayland session for folder choice.')
 assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
@@ -197,6 +199,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'result-preset',
         'home-recovery-keyboard',
         'home-scale',
+        'workspace-chooser',
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-history',
@@ -502,6 +505,7 @@ const offlineProjectFixture = {
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'home-scale': 'packaged-home-scale',
+  'workspace-chooser': 'packaged-workspace-chooser',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-history': 'packaged-model-install-history',
@@ -521,6 +525,8 @@ const offlineProjectScope = {
     'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
   'home-scale':
     'Stock AppImage measures rendering and Home interactions over an owned indexed Project catalog.',
+  'workspace-chooser':
+    'Stock AppImage registers and locates a saved workspace through the native KDE folder picker.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
@@ -777,6 +783,21 @@ if (offlineProjectFixture)
     path.join(repo, 'scripts/fixtures', `${offlineProjectFixture}.mjs`),
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (workspaceChooser)
+  sourcePaths.push(
+    ...[
+      'src/main/index.ts',
+      'src/main/projects/project-index.ts',
+      'src/main/projects/project-service.ts',
+      'src/main/projects/project-session.ts',
+      'src/main/projects/project-relocation-store.ts',
+      'src/main/projects/project-location-registry.ts',
+      'src/preload/index.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/AddWorkspaceModal.vue',
+      'src/renderer/components/HomeView.vue',
+    ].map((file) => path.join(repo, file)),
   )
 if (offlineProject === 'trash-recovery')
   sourcePaths.push(
@@ -1710,6 +1731,9 @@ async function runOwnedProjectProfile() {
     if (homeScale) {
       return { offlineProjectResult: await fixture.runPackagedHomeScale(args) }
     }
+    if (workspaceChooser) {
+      return { offlineProjectResult: await fixture.runPackagedWorkspaceChooser(args) }
+    }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)
     }
@@ -2153,7 +2177,7 @@ try {
   if (protocolHarness || legacyHarness || privateDesktop || projectExport || continuity) {
     assert.equal(
       lifetimes.length,
-      portableLocate || offlineProject === 'trash' || modelInstallCrash ? 3 : 2,
+      portableLocate || offlineProject === 'trash' || modelInstallCrash || workspaceChooser ? 3 : 2,
     )
     for (const state of lifetimes) {
       if (modelInstallCrash && state === lifetimes[0]) {

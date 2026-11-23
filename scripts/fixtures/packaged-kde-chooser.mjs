@@ -14,6 +14,8 @@ const backendName = 'org.freedesktop.impl.portal.desktop.kde'
 const desktopPath = '/org/freedesktop/portal/desktop'
 const requestRoot = `${desktopPath}/request/`
 const projectFilter = /^\s*string "\*\.(?:igs|\[iI\]\[gG\]\[sS\])"$/m
+const directoryOption = /string "directory"\s*\n\s*variant\s+boolean true\s*$/m
+const directoryTitles = new Set(['Add Workspace', 'Locate Workspace Folder'])
 const pngFilter = /^\s*string "\*\.(?:png|\[pP\]\[nN\]\[gG\])"$/m
 const appImageFilter =
   /^\s*string "\*\.(?:[aA][pP][pP][iI][mM][aA][gG][eE]|\[aA\]\[pP\]\[pP\]\[iI\]\[mM\]\[aA\]\[gG\]\[eE\])"$/m
@@ -306,6 +308,11 @@ async function observeRequest(
     assert.equal(readStringOption(backend.body, 'accept_label'), frontAcceptLabel)
     return { ...request, acceptLabel: frontAcceptLabel ?? 'Save' }
   }
+  if (directoryTitles.has(windowTitle)) {
+    const acceptLabel = readStringOption(front.body, 'accept_label')
+    assert.equal(readStringOption(backend.body, 'accept_label'), acceptLabel)
+    return { ...request, acceptLabel }
+  }
   return request
 }
 
@@ -353,6 +360,36 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
     trigger,
     method: 'OpenFile',
     filter: projectFilter,
+  })
+}
+
+export async function driveKdeDirectoryChooser({ state, source, windowTitle, trigger }) {
+  assert.ok(directoryTitles.has(windowTitle), 'Use a qualified workspace folder dialog.')
+  if (source !== undefined && source !== null) {
+    const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
+    assert.ok(root && path.isAbsolute(root))
+    assert.equal(await realpath(root), root)
+    const relative = path.relative(root, source)
+    assert.ok(
+      path.isAbsolute(source) &&
+        path.resolve(source) === source &&
+        relative &&
+        relative !== '..' &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative),
+      'The selected directory must be a canonical descendant of the owned run.',
+    )
+    assert.equal(await realpath(source), source)
+    const entry = await lstat(source)
+    assert.ok(entry.isDirectory() && entry.uid === process.getuid())
+  }
+  return await drive({
+    state,
+    selectedPath: source,
+    windowTitle,
+    trigger,
+    method: 'OpenFile',
+    filter: directoryOption,
   })
 }
 
@@ -499,15 +536,15 @@ async function drive({
       await onPresented?.()
       accessibility = await actOnDialog(selectedPath)
     } catch (error) {
-      if (method !== 'SaveFile') throw error
-      // Release the lease of the verified SaveFile request before checking normal close.
+      if (method !== 'SaveFile' && !directoryTitles.has(windowTitle)) throw error
+      // Dismiss the verified native dialog before the caller tries normal close.
       try {
         await actOnDialog(null)
         await observeResponse(monitor, request, null)
       } catch (cancelError) {
         throw new AggregateError(
           [error, cancelError],
-          'SaveFile observation and chooser cleanup failed.',
+          `${method} observation and chooser cleanup failed.`,
         )
       }
       throw error
@@ -546,6 +583,7 @@ async function drive({
       action: selectedPath ? 'select' : 'dismiss',
       selectedPath: selectedPath ?? null,
       accessibility,
+      ...(directoryTitles.has(windowTitle) && { method, directory: true }),
       ...(suggestedName && { method, suggestedName, acceptLabel: request.acceptLabel }),
     }
   } finally {
