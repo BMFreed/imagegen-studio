@@ -72,3 +72,77 @@ compiled member was Main. Among the 20 pinned production sources, only
 the token store changed. The audit verified the 26 run sources in each
 case and all 40 enrolled AppImage process exits. Cleanup reclaimed
 573,239,296 allocated bytes and rechecked the 107 retained files.
+
+## Secure Save, cold unlock and removal on KDE
+
+The follow-up used Studio `1822ef87cf851e1f0832fb65988bed60f56174a8`.
+The clean InvokeAI revision was still `4875d96531ca6712b288f6e660fcbb34143408c1`.
+The source check covered the credential card and storage helper above, the
+install action and API definition under `invokeai/frontend/webv2/src/features/models`,
+and the model-install router and service. Invoke's credential flow uses
+account-scoped browser storage. Electron safeStorage and system wallet
+initialization are Studio's desktop integration.
+
+The stock AppImage SHA-256 was
+`d87dc91e09725b1e25219db0bc072e11062f5b39c7634c1e6d2966c1aa0af985`.
+In `20261123-r1/native-live-full` the harness created a test wallet
+through the native KDE dialog in a private KWin and D-Bus session,
+locked it through `org.kde.ksecretd`, and then exercised the public
+Save IPC with an authorized live CivitAI account. Save prompted for a
+native unlock and returned `connected` after live validation. It wrote
+one 51-byte ciphertext file with mode `0600`. The controlled profile
+check found neither UTF-8 nor UTF-16LE plaintext in that file.
+After normal close and a confirmed lock, the Model Manager reopened with
+the same ciphertext. A second native unlock led to `CivitAI connected`
+after live revalidation. Clicking **Remove token** removed the file.
+The third launch displayed the missing-token status with the wallet
+still locked. The three lifetimes closed normally. The receipt retains
+the outcome and file size and mode. A preliminary request from the
+shell returned HTTP 403 on the endpoint with and without authorization.
+The stock application's own validation succeeded in both qualifying
+lifetimes.
+
+The controlled sibling `native-6` ran a qualification AppImage whose
+only business-code difference was the CivitAI client's transport.
+Its fixed peer accepted the exact synthetic bearer on Save and cold
+revalidation, rejected a replacement, and received zero requests on
+the missing-token launch after Remove. The rejected replacement
+preserved the encrypted file byte for byte. The independent audit read
+10,872 members from the two packaged ASARs. Only `dist/main/main.cjs`
+changed. The other 10,871 members, the native SQLite addon, the embedded
+Electron binary and AppImage runtime matched. All three lifetimes
+closed normally.
+
+### Creating the first wallet from Save
+
+The `native-virgin` control started without any wallet and let Save
+trigger the creation dialog. Native KWin keys submitted both password
+fields. The wallet file appeared and the direct KDE daemon reported it
+open. Studio still showed the Save progress state at the 10-second
+checkpoint, before any provider call or token file write. The app
+closed normally. A standalone request through KDE's `kwalletd6`
+compatibility API returned `-1` on an empty test profile, while the same
+creation and password input through `ksecretd` opened and later
+unlocked the wallet. KWallet Framework 6.24.0's compatibility wrapper calls the
+Secret Service for creation and unlock. Its asynchronous method only
+emits the wallet-opened signal after a successful result.
+[KDE compatibility implementation](https://github.com/KDE/kwallet/blob/v6.24.0/src/runtime/kwalletd/kwalletd.cpp#L306-L378)
+
+The `native-virgin-retry` control reproduced the stall. It closed the
+AppImage normally, locked the new wallet, then repeated Save in the
+same profile. The expected unlock dialog did not appear within the
+retry window and the provider received no request. Neither run
+established a recovery sequence for this first-wallet path.
+
+The live result covers an existing, initially locked KDE wallet on
+this host. First Save with no existing wallet remains an open KDE
+integration case. Shipping candidate, other secure-storage backends
+and model download are separate release checks. The focused token
+store, ModelService and renderer read-guard suites passed 100 tests,
+with zero failures or skips. The stock AppImage build passed.
+Independent checks confirmed 81 enrolled AppImage process exits across
+the two passing lifecycles and the two empty-wallet controls. Cleanup
+removed 1,069,580,288 allocated bytes of packaging and scratch data.
+The receipts and source pins remain under
+`runs/packaged-civitai-secure-token/20261123-r1` in the local artifact root.
+The temporary wallet and credential files were removed.

@@ -27,6 +27,10 @@ reopen.
 the default-wallet KDE AppImage scenario with no saved token. A second
 run preserved the explicit `basic_text` refusal. Both completed the
 Install Queue keyboard flow and cold reopen.
+The [secure Save follow-up](./phase-5-civitai-token-presence-research.md#secure-save-cold-unlock-and-removal-on-kde)
+passed live validation, two real unlocks, explicit Remove and cold
+missing in a private KDE profile with a provisioned wallet. Automatic
+creation of the first wallet during Save remains open.
 
 ## Model install queue keyboard on KDE Wayland
 

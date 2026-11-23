@@ -361,9 +361,15 @@ entries record the state at their checkpoint.
    [Native Install Queue keyboard](./phase-5-model-install-queue-wayland-research.md)
    The follow-up AppImage completed the same flow with default KDE wallet
    settings and returned missing without an existing token file. Its
-   `basic_text` control retained the unavailable diagnostic. First-time
-   secure Save and unlock with a stored token remain separate checks.
+   `basic_text` control retained the unavailable diagnostic.
    [Fresh KDE token status](./phase-5-civitai-token-presence-research.md)
+   With a provisioned, locked KDE wallet, the stock AppImage passed
+   live CivitAI Save, cold unlock and revalidation, Remove and cold
+   missing. The no-wallet control stalled at Save after the KDE
+   creation dialog, before any account call or token file write.
+   Qualify automatic wallet creation and retry on the supported release
+   environments.
+   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#secure-save-cold-unlock-and-removal-on-kde)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
