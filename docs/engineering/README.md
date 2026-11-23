@@ -425,6 +425,9 @@ PNG exactly. The [joint capacity run](./phase-4-regional-reference-capacity-rese
 accepted the same 96 MiB with 191,995,904 decoded pixels and a maximum-width
 original. Timed snapshots show file and anonymous memory separately near
 the 12 GiB group cap. Visual utility and wider hardware capacity remain open.
+The [same-host lower-cap replays](./phase-4-regional-reference-capacity-research.md#same-host-replay-at-8-gib-and-6-gib)
+completed at 8 GiB and 6 GiB cgroup limits with exact output PNG parity.
+Different host RAM and GPU profiles remain open.
 
 ## Current InvokeAI comparison for Anima negative placement
 

@@ -351,3 +351,55 @@ compact Project and queue manifests, closed SQLite, masks, target, result
 PNG, memory samples and chart, and reports. Cleanup reclaimed 697,303,040
 allocated bytes from the synthetic working data, short scratch and both
 generated `.igs` copies. All 58 sealed evidence files matched afterward.
+
+## Same-host replay at 8 GiB and 6 GiB
+
+Studio `6422379e171e79c51f7127eb8f70a568fec899bd` and clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The source check followed
+`invokeai/app/invocations/sd/denoise_latents.py::prep_ip_adapter_image_prompts`
+and its caller into `invokeai/backend/ip_adapter/ip_adapter.py::get_image_embeds`.
+Invoke prepares the reference embeddings before opening the larger UNet
+context. Both replays use the same installed Studio inference path and the
+same 12 application source pins as the 12 GiB run.
+
+R5 regenerated all eight fixture PNG bodies from the sealed R4 generator.
+Every file size and SHA-256 matched R4. R6 uses those same immutable input
+files directly. Both exercise the 96 MiB exact byte limit, 191,995,904
+decoded pixels and the one-byte per-file refusal at the same aggregate
+size. Each replay uses a separate owned cgroup with zero swap, the same
+600-second deadline and its own measured memory ceiling. The RTX 4080,
+physical host and installed worker are shared. System page cache and other
+host activity are observational conditions.
+
+Both replays refused the one-byte per-file overflow before capture,
+resource lookup, worker execution or queue admission. Each legal state
+produced one completed IMG queue item, 16 progress receipts and one staged
+candidate followed by explicit discard. Both 149,326-byte output PNGs
+match R4 byte for byte, with SHA-256
+`aec3b1406e1cc3902f6b405cad027cc21681d4c549466096d987cbacf27cb0ad`.
+The target, masks, three reference bodies, model and adapter resources and
+frozen inference settings match R4. The two saved Projects survived
+Generate and their acceptance index and journal stayed empty.
+
+| Native cgroup cap | Kernel peak | Sampled anonymous peak | Worker VRAM peak | Interval samples | `max` events | Elapsed |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 12 GiB | 12.00 GiB | 3.89 GiB | 8,460 MiB | 589 | 419 | 147.355 s |
+| 8 GiB | 5.69 GiB | 3.75 GiB | 8,460 MiB | 498 | 0 | 124.636 s |
+| 6 GiB | 5.61 GiB | 3.97 GiB | 8,852 MiB | 492 | 0 | 123.101 s |
+
+Swap and OOM were zero in all three runs. The lower caps each admit this
+workload on the measured host. Both lower-cap runs stayed below their
+limits. File-cache accounting differs between runs, so the observed times
+and peaks do not establish a cold-cache minimum or a causal speedup. The
+host reported about 31.1 GiB of system memory. Lower physical RAM,
+different GPUs and concurrent workloads remain separate qualifications.
+
+The paired independent audit rehashed the eight shared fixture PNGs,
+12 source pins and 94 runtime and signed configuration pins. It checked
+all four saved packages, both closed SQLite stores, all frozen queue
+originals, both exact output PNGs, and the controller, worker, sampler
+and cgroup exits. The compact evidence includes both interval traces,
+the two read-only database copies, frozen masks and manifests, result
+PNGs, the comparison chart and exact regeneration inputs. After R6
+closed, cleanup reclaimed 1,072,185,344 allocated bytes across both runs.
+All 93 sealed evidence files matched after cleanup.

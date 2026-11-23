@@ -190,11 +190,13 @@ entries record the state at their checkpoint.
    installed IMG job with the same 96 MiB and 191,995,904 decoded pixels,
    including two exact 64-million-pixel originals and one maximum-width
    original. The one-byte overflow still refused before capture or admission.
-   The 12 GiB group cap and 8,460 MiB worker VRAM were measured on this host.
-   Wider hardware capacity remains open.
+   Same-host replays completed with separate 8 GiB and 6 GiB cgroup limits
+   and exact PNG parity. Their observed group peaks were 5.69 GiB and
+   5.61 GiB. Different hardware and concurrent host capacity remain open.
    [Reference capacity](./phase-4-regional-reference-capacity-research.md#original-png-dimensions-and-near-limit-byte-capacity),
    [exact stored byte limits](./phase-4-regional-reference-capacity-research.md#exact-stored-png-byte-boundaries),
    [joint byte and geometry capacity](./phase-4-regional-reference-capacity-research.md#exact-stored-bytes-with-large-original-geometry),
+   [lower cgroup caps](./phase-4-regional-reference-capacity-research.md#same-host-replay-at-8-gib-and-6-gib),
    [visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),
