@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Retrying a committed Project deletion
+
+[Packaged Retry Delete](./phase-5-packaged-project-trash-recovery-research.md#explicit-retry-after-restoring-workspace-permissions)
+removed the exact committed Project after the workspace regained write
+access. The remaining Trash entries and active neighbor survived cold
+reopen.
+
 ## CivitAI token presence in a fresh KDE wallet profile
 
 [Token presence](./phase-5-civitai-token-presence-research.md) passed

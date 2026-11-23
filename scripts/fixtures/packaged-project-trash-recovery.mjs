@@ -1,7 +1,9 @@
-/** Reconcile positive Project Trash delete authority through packaged Main startup. */
+/** Reconcile committed Project Trash deletions through packaged Main and Retry Delete. */
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import {
+  access,
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -30,10 +32,13 @@ const placeholdersDir = fileURLToPath(
 )
 const replacementDiagnostic =
   'The Project file or its workspace changed. No replacement file will be deleted.'
+const permissionDiagnostic =
+  'Project deletion could not finish safely. Its recovery record was kept; restore workspace access and retry.'
 const titles = {
   present: 'Committed with source present',
   unlinked: 'Committed after unlink',
   changed: 'Committed with changed occupant',
+  retry: 'Committed with read-only workspace',
   ordinary: 'Ordinary Trash control',
   neighbor: 'Active neighbor control',
 }
@@ -78,11 +83,19 @@ async function seed(root, appData, identity) {
     const repository = new ProjectIndexRepository(database.db)
     const workspace = await repository.ensureDefaultWorkspace(appData)
     assert.equal(workspace.directoryPath, path.join(appData, 'workspaces/Uncategorized'))
+    const retryDirectory = path.join(appData, 'workspaces/Retry only')
+    await mkdir(retryDirectory, { mode: 0o700 })
+    const retryWorkspace = await repository.addWorkspace(
+      { color: 'teal', displayName: 'Retry only' },
+      retryDirectory,
+    )
+    assert.equal(retryWorkspace.directoryPath, retryDirectory)
     const projects = {}
     for (const [name, title] of Object.entries(titles)) {
-      const filename = path.join(workspace.directoryPath, `${name}.igs`)
+      const owner = name === 'retry' ? retryWorkspace : workspace
+      const filename = path.join(owner.directoryPath, `${name}.igs`)
       const session = await ProjectSession.create(filename, title, { placeholdersDir, scratchDir })
-      const project = await repository.indexSaved(filename, workspace.id)
+      const project = await repository.indexSaved(filename, owner.id)
       assert.equal(project.documentId, session.document.documentId)
       const retained = path.join(input, `${name}.igs`)
       await copyFile(filename, retained, constants.COPYFILE_EXCL)
@@ -93,9 +106,10 @@ async function seed(root, appData, identity) {
       }
     }
     const guard = () => undefined
-    for (const name of ['present', 'unlinked', 'changed', 'ordinary']) {
+    for (const name of ['present', 'unlinked', 'changed', 'retry', 'ordinary']) {
       const project = projects[name].project
-      await repository.trash.moveToTrash(project, workspace, guard)
+      const owner = name === 'retry' ? retryWorkspace : workspace
+      await repository.trash.moveToTrash(project, owner, guard)
       const entry = await repository.trash.get(project.localProjectKey)
       assert.equal(entry.state, 'trashed')
       projects[name].authority =
@@ -151,6 +165,7 @@ async function seed(root, appData, identity) {
       database: database.filePath,
       projects,
       workspace,
+      retryWorkspace,
       replacement,
       foreignSource,
       foreignDocumentId: foreign.document.documentId,
@@ -162,12 +177,12 @@ async function seed(root, appData, identity) {
   }
 }
 
-function assertRecoveredSnapshot(before, actual, prepared) {
-  const completedIds = [prepared.projects.present, prepared.projects.unlinked]
+function assertRecoveredSnapshot(before, actual, prepared, retryPending = false) {
+  const { changed, neighbor, present, retry, unlinked } = prepared.projects
+  const completedIds = [present, unlinked, ...(retryPending ? [] : [retry])]
     .map(({ project }) => project.localProjectKey)
     .sort()
-  const changedId = prepared.projects.changed.project.localProjectKey
-  const neighborId = prepared.projects.neighbor.project.localProjectKey
+  const neighborId = neighbor.project.localProjectKey
   const expected = structuredClone(before)
   expected.tables.project_file_lifecycle.rows = expected.tables.project_file_lifecycle.rows.filter(
     ({ local_project_key }) => !completedIds.includes(local_project_key),
@@ -180,40 +195,54 @@ function assertRecoveredSnapshot(before, actual, prepared) {
   expected.tables.project_identity_retired_key.rows = completedIds.map((local_project_key) => ({
     local_project_key,
   }))
-  const pending = expected.tables.project_file_lifecycle.rows.find(
-    ({ local_project_key }) => local_project_key === changedId,
-  )
-  const neighbor = expected.tables.project_index.rows.find(
+  const pendingRows = []
+  for (const [project, diagnostic] of [
+    [changed.project, replacementDiagnostic],
+    ...(retryPending ? [[retry.project, permissionDiagnostic]] : []),
+  ]) {
+    const pending = expected.tables.project_file_lifecycle.rows.find(
+      ({ local_project_key }) => local_project_key === project.localProjectKey,
+    )
+    const observed = actual.tables.project_file_lifecycle.rows.find(
+      ({ local_project_key }) => local_project_key === project.localProjectKey,
+    )
+    assert.ok(
+      typeof observed?.updated_at === 'string' &&
+        Number.isFinite(Date.parse(observed.updated_at)) &&
+        observed.updated_at >= pending.updated_at,
+    )
+    pending.updated_at = observed.updated_at
+    pending.deletion_error = diagnostic
+    pendingRows.push(observed)
+  }
+  const expectedNeighbor = expected.tables.project_index.rows.find(
     ({ local_project_key }) => local_project_key === neighborId,
-  )
-  const observedPending = actual.tables.project_file_lifecycle.rows.find(
-    ({ local_project_key }) => local_project_key === changedId,
   )
   const observedNeighbor = actual.tables.project_index.rows.find(
     ({ local_project_key }) => local_project_key === neighborId,
   )
-  for (const [original, observed] of [
-    [pending.updated_at, observedPending?.updated_at],
-    [neighbor.indexed_at, observedNeighbor?.indexed_at],
-  ]) {
-    assert.ok(
-      typeof observed === 'string' && Number.isFinite(Date.parse(observed)) && observed >= original,
-    )
-  }
-  pending.updated_at = observedPending.updated_at
-  pending.deletion_error = replacementDiagnostic
-  neighbor.indexed_at = observedNeighbor.indexed_at
+  assert.ok(
+    typeof observedNeighbor?.indexed_at === 'string' &&
+      Number.isFinite(Date.parse(observedNeighbor.indexed_at)) &&
+      observedNeighbor.indexed_at >= expectedNeighbor.indexed_at,
+  )
+  expectedNeighbor.indexed_at = observedNeighbor.indexed_at
   assert.deepEqual(actual, expected)
   return {
     completedIds,
-    pendingUpdatedAt: pending.updated_at,
-    neighborIndexedAt: neighbor.indexed_at,
+    pendingUpdatedAt: pendingRows[0].updated_at,
+    neighborIndexedAt: expectedNeighbor.indexed_at,
+    ...(retryPending ? { pendingRetry: pendingRows[1] } : {}),
   }
 }
 
-async function assertFileOutcomes(prepared, identity) {
-  const { projects, preservedOriginal, replacement, sentinel, workspace } = prepared
-  for (const { original } of [projects.present, projects.unlinked]) {
+async function assertFileOutcomes(prepared, identity, retryPending = false) {
+  const { projects, preservedOriginal, replacement, retryWorkspace, sentinel, workspace } = prepared
+  for (const { original } of [
+    projects.present,
+    projects.unlinked,
+    ...(retryPending ? [] : [projects.retry]),
+  ]) {
     await assert.rejects(lstat(original.path), { code: 'ENOENT' })
   }
   for (const pin of [
@@ -222,6 +251,7 @@ async function assertFileOutcomes(prepared, identity) {
     sentinel,
     projects.ordinary.original,
     projects.neighbor.original,
+    ...(retryPending ? [projects.retry.original] : []),
   ]) {
     assert.deepEqual(await fileWitness(pin.path, identity), pin)
   }
@@ -233,9 +263,10 @@ async function assertFileOutcomes(prepared, identity) {
     (await readdir(workspace.directoryPath)).sort(),
     ['changed.igs', 'Keep this file.txt', 'neighbor.igs', 'ordinary.igs'].sort(),
   )
+  assert.deepEqual(await readdir(retryWorkspace.directoryPath), retryPending ? ['retry.igs'] : [])
 }
 
-async function verifyHome(state, prepared, root, readPorts, label) {
+async function verifyHome(state, prepared, root, readPorts, label, retryPending = false) {
   const { page } = state
   const { projects } = prepared
   const ports = await readPorts(state)
@@ -270,12 +301,13 @@ async function verifyHome(state, prepared, root, readPorts, label) {
     .sort((a, b) => a.title.localeCompare(b.title))
   assert.deepEqual(
     actual,
-    ['changed', 'ordinary'].map((name) => ({
+    ['changed', ...(retryPending ? ['retry'] : []), 'ordinary'].map((name) => ({
       id: projects[name].project.localProjectKey,
       title: titles[name],
       trashId: projects[name].authority.trashId,
-      deletionStatus: name === 'changed' ? 'deleting' : 'trashed',
-      deletionError: name === 'changed' ? replacementDiagnostic : null,
+      deletionStatus: name === 'ordinary' ? 'trashed' : 'deleting',
+      deletionError:
+        name === 'changed' ? replacementDiagnostic : name === 'retry' ? permissionDiagnostic : null,
     })),
   )
   const changed = home.locator(`[data-project-id="${projects.changed.project.localProjectKey}"]`)
@@ -313,6 +345,32 @@ async function verifyHome(state, prepared, root, readPorts, label) {
   return { trash: actual, restoreRefusal: restore.error }
 }
 
+async function reviewPermissionRetry(page, { authority, project }, root) {
+  const row = page.locator(`[data-project-id="${project.localProjectKey}"]`)
+  await expect(row.getByText('Deletion pending', { exact: true })).toBeVisible()
+  await expect(row.getByText(permissionDiagnostic, { exact: true })).toBeVisible()
+  await expect(
+    row.getByRole('button', { name: `Restore ${titles.retry}`, exact: true }),
+  ).toBeDisabled()
+  const restore = await page.evaluate(
+    ({ id, trashId }) => window.api.projects.restoreProject(id, trashId),
+    { id: project.localProjectKey, trashId: authority.trashId },
+  )
+  assert.equal(restore.ok, false)
+  assert.equal(restore.error.code, 'PROJECT_TRASH_DELETE_PENDING')
+  await row.getByRole('button', { name: `Delete ${titles.retry} permanently`, exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Delete Project Permanently', exact: true })
+  await expect(dialog.getByText('retry.igs', { exact: true })).toBeVisible()
+  await expect(dialog.getByText(permissionDiagnostic, { exact: true })).toBeVisible()
+  const button = dialog.getByRole('button', { name: 'Retry Delete', exact: true })
+  await expect(button).toBeEnabled()
+  await page.screenshot({
+    path: path.join(root, 'retry-permission-pending.png'),
+    animations: 'disabled',
+  })
+  return { button, dialog, row, restoreRefusal: restore.error }
+}
+
 export async function runPackagedProjectTrashRecovery({
   root,
   appData,
@@ -337,10 +395,12 @@ export async function runPackagedProjectTrashRecovery({
   })
   assert.equal(await realpath(root), root)
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
+  assert.ok(process.getuid() > 0, 'The private permission control requires an unprivileged user.')
   const prepared = await seed(root, appData, identity)
   const before = await retainedDatabase(prepared.database, root, 'before-startup', identity)
   const initialLifecycle = before.snapshot.tables.project_file_lifecycle.rows
   assert.deepEqual(initialLifecycle.map(({ state }) => state).sort(), [
+    'deleting',
     'deleting',
     'deleting',
     'deleting',
@@ -355,8 +415,48 @@ export async function runPackagedProjectTrashRecovery({
     { flag: 'wx', mode: 0o600 },
   )
 
-  const first = await launch('project-trash-recovery')
-  const firstHome = await verifyHome(first, prepared, root, readPorts, 'startup')
+  const retryDirectory = prepared.retryWorkspace.directoryPath
+  const retry = prepared.projects.retry
+  const parent = await lstat(retryDirectory, { bigint: true })
+  assert.equal(await realpath(retryDirectory), retryDirectory)
+  assert.equal(path.dirname(retryDirectory), path.join(appData, 'workspaces'))
+  assert.ok(parent.isDirectory() && parent.uid === BigInt(process.getuid()))
+  assert.equal(parent.mode & 0o777n, 0o700n)
+  assert.deepEqual(retry.authority.parentWitness, {
+    dev: String(parent.dev),
+    ino: String(parent.ino),
+  })
+  let first
+  let firstHome
+  let beforeRepair
+  let review
+  await chmod(retryDirectory, 0o500)
+  try {
+    await assert.rejects(access(retryDirectory, constants.W_OK), { code: 'EACCES' })
+    first = await launch('project-trash-recovery')
+    firstHome = await verifyHome(first, prepared, root, readPorts, 'startup', true)
+    await assertFileOutcomes(prepared, identity, true)
+    beforeRepair = assertRecoveredSnapshot(
+      before.snapshot,
+      snapshotDatabase(prepared.database),
+      prepared,
+      true,
+    )
+    review = await reviewPermissionRetry(first.page, retry, root)
+  } finally {
+    const currentParent = await lstat(retryDirectory, { bigint: true })
+    assert.ok(
+      currentParent.isDirectory() &&
+        currentParent.dev === parent.dev &&
+        currentParent.ino === parent.ino,
+    )
+    await chmod(retryDirectory, Number(parent.mode & 0o777n))
+  }
+  assert.equal((await lstat(retryDirectory, { bigint: true })).mode, parent.mode)
+  await assertFileOutcomes(prepared, identity, true)
+  await review.button.click()
+  await expect(review.dialog).toBeHidden()
+  await expect(review.row).toHaveCount(0)
   await assertFileOutcomes(prepared, identity)
   await closeNormally(first)
   assert.ok(first.normalPhysicalExit && !first.forcedCleanup)
@@ -365,7 +465,10 @@ export async function runPackagedProjectTrashRecovery({
 
   const second = await launch('project-trash-recovery-restarted')
   const secondHome = await verifyHome(second, prepared, root, readPorts, 'restarted')
-  assert.deepEqual(secondHome, firstHome)
+  assert.deepEqual(secondHome, {
+    ...firstHome,
+    trash: firstHome.trash.filter(({ id }) => id !== retry.project.localProjectKey),
+  })
   await assertFileOutcomes(prepared, identity)
   await closeNormally(second)
   assert.ok(second.normalPhysicalExit && !second.forcedCleanup)
@@ -385,6 +488,13 @@ export async function runPackagedProjectTrashRecovery({
       recovered,
       repeated,
       home: secondHome,
+      retry: {
+        directory: retryDirectory,
+        pending: beforeRepair.pendingRetry,
+        restoredParentMode: Number(parent.mode & 0o777n),
+        restoreRefusal: review.restoreRefusal,
+        retiredProjectId: retry.project.localProjectKey,
+      },
     },
   }
 }

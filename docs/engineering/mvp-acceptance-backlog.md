@@ -268,6 +268,11 @@ entries record the state at their checkpoint.
    with a pending diagnostic and Restore refused. The ordinary Trash
    entry and the active neighbor survived both cold starts.
    [Packaged Trash startup recovery](./phase-5-packaged-project-trash-recovery-research.md)
+   A third committed deletion stayed pending when its owned workspace
+   lost write access. After access was restored while the AppImage was
+   open, Retry Delete finished exactly that operation. A cold start
+   confirmed the retirement and preserved the remaining entries.
+   [Packaged Retry Delete](./phase-5-packaged-project-trash-recovery-research.md#explicit-retry-after-restoring-workspace-permissions)
    The stock AppImage exported visible content and the primary Generation BBox
    through the installed CPU worker and KDE SaveFile. Cancel left no file, and
    the repeated content PNG matched byte-for-byte after restart.

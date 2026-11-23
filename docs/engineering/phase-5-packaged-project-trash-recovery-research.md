@@ -73,3 +73,38 @@ focused selection passed 82 tests with zero failures or skips. Removing
 the actual `ProjectService.initialize` recovery call in an isolated
 source copy left the committed file on disk. The existing startup test
 failed its expected absence check and passed after exact restoration.
+
+## Explicit Retry after restoring workspace permissions
+
+The follow-up used Studio base `8bcba3bdba1af783973e4ab798a984771421904e`
+and the clean InvokeAI revision `4875d96531ca6712b288f6e660fcbb34143408c1`.
+The current Invoke callers remain
+`invokeai/app/api/routers/images.py::delete_image`,
+`invokeai/app/services/images/images_default.py::delete` and
+`invokeai/app/services/image_files/image_files_disk.py`'s commit and
+startup recovery. The fixture uses Studio's existing committed-delete
+owner and its Retry Delete action.
+
+The AppImage recovered the two original startup cuts. A third committed
+Project lived in a separate private workspace. Its parent was searchable
+but lacked write permission at mode `0500`. Startup kept the exact file
+and the original committed authority, including trash and deletion IDs
+and parent and file witnesses. Restore returned `PROJECT_TRASH_DELETE_PENDING`.
+The fixture restored mode `0700` on the same parent while the first
+AppImage was open and activated **Retry Delete**.
+
+Only the intended Project disappeared from the restored directory. The
+replacement, displaced original, ordinary Trash item, active neighbor
+and sentinel kept their exact contents. Two normal closes and a cold
+reopen confirmed three retired keys and the two remaining Trash
+records. Four SQLite readbacks passed integrity and foreign-key checks.
+The final profile database matched the retained after-reopen body.
+
+The independent audit verified 12 files, 42 compiled ASAR members,
+21 application source pins, 23 runner source pins and all 18 enrolled
+process exits. The native scope ran for 11.513 seconds with a reported
+1.3 GiB peak, a 4 GiB cap and zero swap. All 82 focused tests passed
+with zero failures or skips. AppImage packaging, scoped ESLint,
+formatting and syntax checks passed. The raw build and private test
+profiles released 571,797,504 allocated bytes after retention. Closed
+databases, source pins, project copies and screenshots remain available.
