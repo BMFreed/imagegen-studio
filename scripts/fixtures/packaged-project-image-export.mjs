@@ -27,6 +27,8 @@ const smartLayerId = 'ebec8148-ab19-462d-9ccd-331aed2c8cb1'
 const activeVariantId = 'b291f539-810d-4e0a-a124-dd0638f6988a'
 const windowTitles = { canvas: 'Export As', bbox: 'Export Generation BBox' }
 const outputSizes = { canvas: [2075, 36], bbox: [64, 64] }
+const bboxName = 'primary generation box.png'
+const collisionDiagnostic = 'A file with that name already exists. Choose a different filename.'
 const pngOracle = fileURLToPath(
   new URL('./packaged-project-image-export-oracle.py', import.meta.url),
 )
@@ -38,19 +40,41 @@ async function assertOwnedFile(filename) {
   return { dev: stat.dev, ino: stat.ino }
 }
 
+async function existingPngWitness(filename, identity) {
+  assert.equal(await realpath(filename), filename)
+  const fileIdentity = async () => {
+    const info = await lstat(filename, { bigint: true })
+    assert.ok(info.isFile() && info.uid === BigInt(process.getuid()) && info.nlink === 1n)
+    return {
+      dev: String(info.dev),
+      ino: String(info.ino),
+      mode: String(info.mode),
+      mtimeNs: String(info.mtimeNs),
+      ctimeNs: String(info.ctimeNs),
+    }
+  }
+  const before = await fileIdentity()
+  const bytes = await identity(filename)
+  assert.deepEqual(await fileIdentity(), before)
+  return { ...bytes, ...before }
+}
+
 async function stageProject({ root, appData, ownedRunRoot, packageBefore, identity }) {
   const engineRun = path.join(ownedRunRoot, 'packaged-installed-engine/20261118')
-  assert.ok(root.startsWith(`${engineRun}/`) && path.basename(root) === 'native')
+  const run = path.dirname(root)
+  assert.equal(path.dirname(run), engineRun)
+  assert.match(path.basename(run), /^project-export-r[1-9]\d*$/)
+  assert.equal(path.basename(root), 'native')
   assert.ok(appData.startsWith(`${engineRun}/payloads/`))
   assert.equal(await realpath(appData), appData)
-  assert.deepEqual(packageBefore, {
-    path: path.join(
-      ownedRunRoot,
-      'packaged-noobai-preview/20261120/package-work/live/output/imagegen-studio-0.1.0-dev.1-x86_64.AppImage',
-    ),
-    sizeBytes: 147139886,
-    sha256: '555c6a7985ef1cad3b0427d97862aa3db94da3cbf0d4ffdc7a67da5201bfc5d8',
-  })
+  // The installed-engine wrapper writes this only after checking current sources,
+  // the stock-package manifest and all dist bytes against the sealed proof.
+  const receipt = path.join(run, 'engine-inputs.json')
+  await assertOwnedFile(receipt)
+  const { appImage, appImageSha256, packageProof } = JSON.parse(await readFile(receipt, 'utf8'))
+  assert.equal(appImage, packageBefore.path)
+  assert.equal(appImageSha256, packageBefore.sha256)
+  assert.deepEqual(packageProof?.appImage, packageBefore)
   const original = path.join(
     ownedRunRoot,
     'packaged-project-image-export-inputs/20261121/export-source.igs',
@@ -234,7 +258,7 @@ export async function runPackagedProjectImageExport({
   await mkdir(destinations, { mode: 0o700 })
   const observations = []
 
-  async function exportImage(state, region, outputName) {
+  async function exportImage(state, region, outputName, existingPng) {
     assert.deepEqual(await stagingNames(scratch), [])
     const { page } = state
     const destination = outputName ? path.join(destinations, outputName) : null
@@ -249,6 +273,7 @@ export async function runPackagedProjectImageExport({
       destination,
       trigger,
       windowTitle,
+      confirmExistingPng: existingPng !== undefined,
       onPresented: async () => {
         assert.equal(held, null)
         held = await inspectHeldExport({
@@ -267,7 +292,20 @@ export async function runPackagedProjectImageExport({
       .toBe(true)
     await expect.poll(() => stagingNames(scratch)).toEqual([])
     let published = null
-    if (destination) {
+    let collision = null
+    if (existingPng) {
+      assert.equal(destination, existingPng.path)
+      assert.notEqual(held.staged.sha256, existingPng.sha256)
+      await expect(page.getByText(collisionDiagnostic, { exact: true })).toBeVisible()
+      const destinationAfter = await existingPngWitness(destination, identity)
+      assert.deepEqual(destinationAfter, existingPng)
+      assert.deepEqual((await readdir(destinations)).sort(), [bboxName, 'visible canvas.png'])
+      collision = {
+        destinationBefore: existingPng,
+        destinationAfter,
+        rendererDiagnostic: collisionDiagnostic,
+      }
+    } else if (destination) {
       const [width, height] = outputSizes[region]
       await expect(
         page.getByText(`Exported ${outputName} (${width} × ${height}).`, { exact: true }),
@@ -285,6 +323,7 @@ export async function runPackagedProjectImageExport({
       ...held,
       published,
       workerExited: true,
+      ...(collision && { collision }),
     })
     return published
   }
@@ -311,7 +350,12 @@ export async function runPackagedProjectImageExport({
   await unchanged(first, tab, rows)
   const canvas = await exportImage(first, 'canvas', 'visible canvas.png')
   await unchanged(first, tab, rows)
-  await exportImage(first, 'bbox', 'primary generation box.png')
+  const bbox = await exportImage(first, 'bbox', bboxName)
+  await unchanged(first, tab, rows)
+  const existingPng = await existingPngWitness(bbox.path, identity)
+  assert.equal(existingPng.sha256, bbox.sha256)
+  assert.equal(existingPng.sizeBytes, bbox.sizeBytes)
+  await exportImage(first, 'canvas', bboxName, existingPng)
   await unchanged(first, tab, rows)
   await closeNormally(first)
   const saved = await retainOwnStore('after-export')
@@ -328,8 +372,9 @@ export async function runPackagedProjectImageExport({
   await closeNormally(second)
   const restarted = await retainOwnStore('after-export-restart')
   assert.deepEqual(saved.project, restarted.project)
+  assert.deepEqual(await existingPngWitness(bbox.path, identity), existingPng)
   assert.deepEqual((await readdir(destinations)).sort(), [
-    'primary generation box.png',
+    bboxName,
     'reopened canvas.png',
     'visible canvas.png',
   ])

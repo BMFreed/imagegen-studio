@@ -363,6 +363,7 @@ export async function driveKdeSaveChooser({
   trigger,
   onPresented,
   acceptDefault,
+  confirmExistingPng,
 }) {
   const suggestedName = saveNames.get(windowTitle)
   assert.ok(suggestedName, 'Use a qualified export or recovery dialog.')
@@ -370,6 +371,16 @@ export async function driveKdeSaveChooser({
   if (acceptDefault) {
     assert.ok(recovery && destination)
     assert.equal(path.basename(destination), 'ImageGen-Studio-0.2.0-Recovery.appimage')
+  }
+  if (confirmExistingPng) {
+    assert.equal(process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT, '1')
+    assert.ok(
+      !acceptDefault && destination && windowTitle === 'Export As' && state.name === 'first',
+    )
+    assert.equal(
+      destination,
+      path.join(process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS, 'exports/primary generation box.png'),
+    )
   }
   if (destination !== undefined && destination !== null) {
     const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
@@ -385,7 +396,13 @@ export async function driveKdeSaveChooser({
     assert.equal(await realpath(parent), parent)
     const directory = await lstat(parent)
     assert.ok(directory.isDirectory() && directory.uid === process.getuid())
-    await assert.rejects(lstat(destination), { code: 'ENOENT' })
+    if (confirmExistingPng) {
+      const file = await lstat(destination)
+      assert.ok(file.isFile() && file.uid === process.getuid() && file.nlink === 1)
+      assert.equal(await realpath(destination), destination)
+    } else {
+      await assert.rejects(lstat(destination), { code: 'ENOENT' })
+    }
   }
   return await drive({
     state,
@@ -397,6 +414,7 @@ export async function driveKdeSaveChooser({
     suggestedName,
     onPresented,
     acceptDefault,
+    confirmExistingPng,
   })
 }
 
@@ -410,6 +428,7 @@ async function drive({
   suggestedName,
   onPresented,
   acceptDefault,
+  confirmExistingPng,
 }) {
   const session = await assertPrivateWayland()
   await assertWaylandPeer(state.mainPid, session)
@@ -469,6 +488,7 @@ async function drive({
           ...(request.acceptLabel ? ['--accept-label', request.acceptLabel] : []),
           ...(filename ? ['--select', filename] : []),
           ...(acceptDefault && filename ? ['--accept-default'] : []),
+          ...(confirmExistingPng ? ['--owned-existing-png'] : []),
         ],
         { timeout: 15000 },
       )
@@ -499,6 +519,17 @@ async function drive({
       selectedPath: selectedPath ?? null,
       closed: true,
       ...(acceptDefault ? { acceptedDefaultName: path.basename(selectedPath) } : {}),
+      ...(confirmExistingPng
+        ? {
+            overwriteConfirmation: {
+              pid: kdePid,
+              title: 'Overwrite File?',
+              message: `The file "${path.basename(selectedPath)}" already exists. Do you wish to overwrite it?`,
+              action: 'Overwrite',
+              closed: true,
+            },
+          }
+        : {}),
     })
     const responseCode = await observeResponse(monitor, request, selectedPath)
     return {

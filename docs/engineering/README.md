@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Existing PNG selected through KDE SaveFile
+
+[Native export collision](./phase-5-packaged-project-image-export-research.md#existing-png-selected-through-the-kde-overwrite-prompt)
+passed the real KDE overwrite prompt and Studio's create-only refusal.
+The existing PNG kept its identity and bytes, and the installed
+CPU worker's profile was restored after both AppImage closes.
+
 ## Retrying a committed Project deletion
 
 [Packaged Retry Delete](./phase-5-packaged-project-trash-recovery-research.md#explicit-retry-after-restoring-workspace-permissions)

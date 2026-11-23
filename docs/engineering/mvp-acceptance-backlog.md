@@ -281,6 +281,11 @@ entries record the state at their checkpoint.
    through the installed CPU worker and KDE SaveFile. Cancel left no file, and
    the repeated content PNG matched byte-for-byte after restart.
    [Packaged image export](./phase-5-packaged-project-image-export-research.md)
+   A confirmed KDE SaveFile selection of an existing BBox PNG reached
+   Studio's create-only outcome. The existing bytes and inode survived,
+   the export scratch cleared and the original installed CPU profile
+   was restored.
+   [Native existing PNG refusal](./phase-5-packaged-project-image-export-research.md#existing-png-selected-through-the-kde-overwrite-prompt)
    The stock Model Manager removed one unshared IllustriousPhoto embedding
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.

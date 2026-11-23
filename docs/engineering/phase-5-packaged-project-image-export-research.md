@@ -109,3 +109,44 @@ The bounded user service uses 4 GiB, zero swap and a 220-second ceiling.
 The wrapper holds its restore claim if physical exit or byte continuity
 is uncertain. The original non-runtime entries stay in their holding
 directory while test state occupies the claimed path.
+
+## Existing PNG selected through the KDE overwrite prompt
+
+The follow-up built the stock AppImage with the current production inputs.
+Its SHA-256 is
+`2e038fbf206b55bcee32d8051e224634e6d9ade30e60d16d4415ec1ab39bfed6`.
+The package verifier checked all 42 compiled members. Its build tree
+included the committed Anima test fixture changes, with the exact
+production-input diff and binary hash retained in the package proof.
+An initial wrapper invocation refused the proof file's group-writable
+mode before acquiring the runtime lease. The new invocation used the
+same proof bytes with mode `0600`.
+
+InvokeAI revision `4875d96531ca6712b288f6e660fcbb34143408c1` still routes
+`workbench/canvas-operations/saveCanvasToGallery.ts` via
+`exportCanvasComposite.ts` and uploads the composite. The local
+destination in this Studio test goes through KDE and the existing
+create-only Main publication owner.
+
+The first AppImage lifetime created a 64×64 primary BBox PNG. A real
+Export As request staged a different 2075×36 PNG. The private driver
+selected the BBox file and confirmed the overwrite prompt belonging to
+the verified KDE backend. The portal returned success with that exact
+URI. Studio displayed the instruction to choose a different name.
+The existing file kept its bytes, inode, mode and modification and
+change times. The staged image and temporary publication file cleared.
+The neighboring export, live Project state, saved Projects and closed
+SQLite checks passed across two normal closes.
+
+Run `project-export-r3` uses the retained installed CPU worker. The
+wrapper restored all 112 original AppData entries with exact identity
+and bytes. The zero-swap scope ran for 30.351 seconds and reported a
+2.6 GiB peak under its 4 GiB limit. All 29 focused tests passed with zero
+failures or skips. The AppImage build, scoped ESLint, formatting and
+syntax checks passed.
+
+The independent audit verified five SaveFile traces, three published
+PNGs, three exact `.igs` copies, four SQLite bodies and all 112 restored
+AppData entries. All 18 enrolled AppImage process identities and five
+export workers had exited. Cleanup of the build and private profiles
+released 572,149,760 allocated bytes and rechecked 68 retained files.
