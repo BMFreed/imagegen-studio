@@ -12,7 +12,7 @@ export interface SafeStorageAdapter {
 }
 
 export type TokenStorageUnavailableReason =
-  'backend-error' | 'basic_text' | 'encryption-unavailable' | 'unknown'
+  'backend-error' | 'basic_text' | 'encryption-timeout' | 'encryption-unavailable' | 'unknown'
 
 export type TokenStorageAvailability =
   | { available: false; backend?: string; reason: TokenStorageUnavailableReason }
@@ -24,13 +24,18 @@ export type CivitaiTokenStoreStatus =
 
 export type CivitaiTokenStoreErrorCode =
   | 'TOKEN_INVALID'
+  | 'TOKEN_SECURE_STORAGE_TIMEOUT'
   | 'TOKEN_SECURE_STORAGE_UNAVAILABLE'
   | 'TOKEN_STORAGE_FAILED'
   | 'TOKEN_TOO_LONG'
   | 'TOKEN_UNREADABLE'
 
+export const CIVITAI_STORAGE_TIMEOUT_DETAIL =
+  'Secure storage did not respond. Open or unlock your system keyring, then restart ImageGen Studio before retrying.'
+
 const errorMessages: Record<CivitaiTokenStoreErrorCode, string> = {
   TOKEN_INVALID: 'The CivitAI token is empty or malformed.',
+  TOKEN_SECURE_STORAGE_TIMEOUT: CIVITAI_STORAGE_TIMEOUT_DETAIL,
   TOKEN_SECURE_STORAGE_UNAVAILABLE: 'Secure CivitAI token storage is unavailable.',
   TOKEN_STORAGE_FAILED: 'The CivitAI token could not be saved or removed.',
   TOKEN_TOO_LONG: 'The CivitAI token is too long.',
@@ -50,6 +55,8 @@ export class CivitaiTokenStoreError extends Error {
 /** An IPC input bound, not a claim about CivitAI's token format or length. */
 export const MAX_CIVITAI_TOKEN_BYTES = 4096
 const MAX_CIPHERTEXT_BYTES = 16 * 1024
+const WALLET_RESPONSE_TIMEOUT_MS = 60_000
+const LINUX_FIXED_KEY_PREFIX = Buffer.from('v10')
 type AtomicRename = (from: string, to: string) => Promise<void>
 
 /**
@@ -57,6 +64,7 @@ type AtomicRename = (from: string, to: string) => Promise<void>
  * saveToken; this class deliberately has no network access.
  */
 export class CivitaiTokenStore {
+  private availabilityProbe?: Promise<boolean | 'timeout'>
   private readonly directory: string
   private readonly filePath: string
   private pending: Promise<void> = Promise.resolve()
@@ -76,11 +84,11 @@ export class CivitaiTokenStore {
       return selected
     }
 
-    try {
-      if (!(await this.safeStorage.isAsyncEncryptionAvailable())) {
-        return { available: false, backend: selected.backend, reason: 'encryption-unavailable' }
-      }
-    } catch {
+    const availability = await this.probeAsyncAvailability()
+    if (availability === 'timeout') {
+      return { available: false, backend: selected.backend, reason: 'encryption-timeout' }
+    }
+    if (!availability) {
       return { available: false, backend: selected.backend, reason: 'encryption-unavailable' }
     }
     return selected
@@ -104,6 +112,16 @@ export class CivitaiTokenStore {
         const token = await this.readTokenUnlocked()
         return { backend: availability.backend, kind: token === null ? 'missing' : 'stored' }
       } catch (error) {
+        if (
+          error instanceof CivitaiTokenStoreError &&
+          error.code === 'TOKEN_SECURE_STORAGE_TIMEOUT'
+        ) {
+          return {
+            backend: availability.backend,
+            kind: 'unavailable',
+            reason: 'encryption-timeout',
+          }
+        }
         if (
           error instanceof CivitaiTokenStoreError &&
           error.code === 'TOKEN_SECURE_STORAGE_UNAVAILABLE'
@@ -228,6 +246,27 @@ export class CivitaiTokenStore {
     }
   }
 
+  private probeAsyncAvailability(): Promise<boolean | 'timeout'> {
+    if (this.availabilityProbe) {
+      return this.availabilityProbe
+    }
+    const native = Promise.resolve()
+      .then(() => this.safeStorage.isAsyncEncryptionAvailable())
+      .catch(() => false)
+    let timer: ReturnType<typeof setTimeout>
+    const deadline = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), WALLET_RESPONSE_TIMEOUT_MS)
+    })
+    this.availabilityProbe = Promise.race([native, deadline])
+    // Electron queues calls against one native encryptor request. Keep the expired result
+    // until that request settles so retry cannot queue callbacks or resume an expired Save.
+    void native.then(() => {
+      clearTimeout(timer)
+      this.availabilityProbe = undefined
+    })
+    return this.availabilityProbe
+  }
+
   private async readTokenUnlocked(): Promise<string | null> {
     await this.requireSecureStorage()
     if (!(await this.inspectDirectory(false))) {
@@ -253,7 +292,7 @@ export class CivitaiTokenStore {
       throw new CivitaiTokenStoreError('TOKEN_UNREADABLE')
     }
 
-    if (ciphertext.length === 0) {
+    if (ciphertext.length === 0 || usesLinuxFixedKey(ciphertext)) {
       throw new CivitaiTokenStoreError('TOKEN_UNREADABLE')
     }
     await this.requireSecureStorage()
@@ -291,12 +330,20 @@ export class CivitaiTokenStore {
   }
 
   private async requireSecureStorage(): Promise<void> {
-    if (!(await this.getAvailability()).available) {
-      throw new CivitaiTokenStoreError('TOKEN_SECURE_STORAGE_UNAVAILABLE')
+    const availability = await this.getAvailability()
+    if (!availability.available) {
+      throw new CivitaiTokenStoreError(
+        availability.reason === 'encryption-timeout'
+          ? 'TOKEN_SECURE_STORAGE_TIMEOUT'
+          : 'TOKEN_SECURE_STORAGE_UNAVAILABLE',
+      )
     }
   }
 
   private async writeCiphertext(ciphertext: Buffer): Promise<void> {
+    if (usesLinuxFixedKey(ciphertext)) {
+      throw new CivitaiTokenStoreError('TOKEN_SECURE_STORAGE_UNAVAILABLE')
+    }
     await this.inspectDirectory(true)
     const temporaryPath = path.join(this.directory, `.civitai-token.${randomUUID()}.tmp`)
     let handle: Awaited<ReturnType<typeof open>> | undefined
@@ -325,6 +372,15 @@ export function validateCivitaiToken(token: unknown): asserts token is string {
   if (Buffer.byteLength(token, 'utf8') > MAX_CIVITAI_TOKEN_BYTES) {
     throw new CivitaiTokenStoreError('TOKEN_TOO_LONG')
   }
+}
+
+function usesLinuxFixedKey(ciphertext: Buffer): boolean {
+  // Chromium's Linux POSIX fallback uses a fixed key, even if Electron reports
+  // a selected keyring backend and resolves its async availability check.
+  return (
+    process.platform === 'linux' &&
+    ciphertext.subarray(0, LINUX_FIXED_KEY_PREFIX.length).equals(LINUX_FIXED_KEY_PREFIX)
+  )
 }
 
 function isMissing(error: unknown): boolean {

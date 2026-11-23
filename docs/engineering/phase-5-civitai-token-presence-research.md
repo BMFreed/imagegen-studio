@@ -146,3 +146,81 @@ removed 1,069,580,288 allocated bytes of packaging and scratch data.
 The receipts and source pins remain under
 `runs/packaged-civitai-secure-token/20261123-r1` in the local artifact root.
 The temporary wallet and credential files were removed.
+
+## Bounding the first-wallet wait
+
+Studio base `83467f602b133f794d05666cf7820302009ed4f5`. The clean InvokeAI
+checkout was `4875d96531ca6712b288f6e660fcbb34143408c1`. The fresh check
+covered `invokeai/frontend/webv2/src/features/models/data/apiKeys.ts`,
+`ui/credentials/ApiKeysSection.tsx`, `ui/add-models/useInstallActions.ts`,
+`ui/install-queue/useInstallJobActions.ts` and `data/api.ts` under that
+feature. It followed the install request through
+`invokeai/app/api/routers/model_manager.py` to
+`invokeai/app/services/model_install/model_install_default.py`.
+Invoke uses account-scoped browser storage and passes the token on a matching
+CivitAI install or retry. System keyring initialization belongs to Studio's
+desktop integration.
+
+The isolated baseline trace recorded a D-Bus method return for `openAsync`
+on `/modules/kwalletd6`. The password dialog created and opened the wallet.
+The trace recorded `walletAsyncOpened` from `/ksecretd`, the internal daemon.
+The compatibility endpoint sent no corresponding signal during the 70-second
+observation. Chromium 152.0.7977.130, shipped with Electron 44.4.5, waits for
+a matching signal on the compatibility endpoint. The KDE wrapper suppresses
+the compatibility signal when its internal open fails. In KDE Frameworks
+6.24.0 a first lookup also reads a collection pointer after moving it into
+the cache. KDE 6.29.0 fixes that lookup and refreshes the collection list.
+A first Save against that version is still part of release qualification.
+[Chromium wallet call](https://chromium.googlesource.com/chromium/src/+/152.0.7977.130/components/os_crypt/async/browser/freedesktop_secret_key_provider.cc#608),
+[KDE wrapper](https://github.com/KDE/kwallet/blob/v6.24.0/src/runtime/kwalletd/kwalletd.cpp#L361-L378),
+[KDE 6.29.0](https://kde.org/announcements/frameworks/6/6.29.0/).
+
+The token store allows one minute for the shared Electron availability
+request. This is a Studio response deadline for a user-driven desktop
+prompt. Expiry releases the wait before CivitAI validation, encryption
+or filesystem writes. Retries share the expired result while the original
+native request is pending. An eventual native response lets a new
+explicit Save proceed. Missing-token status still uses backend selection
+without starting an availability request. An existing-token read reports
+the temporary failure and releases the store queue so Remove can proceed.
+[Electron initialization](https://github.com/electron/electron/blob/v44.4.5/shell/browser/api/electron_api_safe_storage.cc#L72-L128),
+[token store](../../src/main/models/civitai-token-store.ts).
+
+An independent Electron process using a private D-Bus session without
+keyring services selected `kwallet6`, reported async availability, and
+produced a `v10` ciphertext from Chromium's fixed-key POSIX provider. On
+Linux, the token store now rejects this tag before replacement, rotation
+or decryption. A pre-existing file stays intact until explicit Remove or
+successful secure replacement. Model Manager offers Remove when the
+check of a saved token fails.
+[Chromium POSIX provider](https://github.com/chromium/chromium/blob/152.0.7977.130/components/os_crypt/async/browser/posix_key_provider.cc),
+[Model Manager](../../src/renderer/components/ModelManager.vue).
+
+The availability regressions failed on the baseline due to unresolved
+operations. The fallback regression separately observed a missing
+refusal before the tag check was added. The passing cases verify queued
+removal, no implicit write or CivitAI request after late readiness,
+explicit retry and byte preservation during failed replacement and
+rotation.
+
+The stock AppImage replay used private KWin, D-Bus, wallet and app
+profiles. The empty-wallet case reached the existing Model Manager
+error and cleared the Save progress state after 60.6 seconds.
+Retry in that process returned the same error in 59 milliseconds, and the
+token file remained absent. The provisioned-wallet case passed real
+CivitAI Save and cold revalidation with native unlock and a 51-byte
+`v11` file in mode `0600`. Remove left no token, and cold missing left
+the wallet locked. A fourth launch admitted an old `v10` fixture only
+for explicit removal through Model Manager after the read refusal.
+The five AppImage lifetimes closed normally. The final focused
+selection passed 123 tests with zero failures or skips, and typecheck,
+scoped lint and AppImage packaging passed.
+
+The independently checked AppImage SHA-256 is
+`8f4dc56540074774094f290da810301e067d05c7b37ad560c65f646539a6629d`.
+The byte audit compared the embedded ASAR and unpacked members. It
+confirmed that the last packaging pass reordered only the declarations
+reported by lint in the compiled Main. The independent process check
+confirmed 45 enrolled AppImage processes had exited. Cleanup reclaimed
+2,175,561,728 allocated bytes. The compact receipts are under
+`runs/civitai-wallet-recovery/20261123` in the local artifact root.

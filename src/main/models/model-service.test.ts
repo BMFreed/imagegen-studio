@@ -222,6 +222,71 @@ function safeStorage(): SafeStorageAdapter {
   }
 }
 
+test('Save stops at a hung wallet and late readiness requires an explicit new Save', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'igs-model-wallet-timeout-'))
+  const database = openAppDatabase(root, migrations)
+  const storage = safeStorage()
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const service = new ModelService(
+    new ModelRepository(database.db),
+    new CivitaiClient(civitaiApi({ requests })),
+    new CivitaiTokenStore(storage, root),
+  )
+  let releaseWallet!: (available: boolean) => void
+  const wallet = new Promise<boolean>((resolve) => {
+    releaseWallet = resolve
+  })
+  let probes = 0
+  storage.isAsyncEncryptionAvailable = () => {
+    probes += 1
+    return wallet
+  }
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let result: unknown
+  const save = service.saveToken(TOKEN).then(
+    (status) => {
+      result = status
+    },
+    (error: unknown) => {
+      result = error
+    },
+  )
+  const readResult = () => result
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(probes, 1)
+    t.mock.timers.tick(59_999)
+    assert.equal(readResult(), undefined)
+    t.mock.timers.tick(1)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const timedOut = readResult()
+    assert.ok(
+      timedOut instanceof Error,
+      'Save should complete while the native request is pending.',
+    )
+    assert.match(timedOut.message, /Open or unlock your system keyring/)
+    await assert.rejects(service.saveToken(TOKEN), { code: 'TOKEN_SECURE_STORAGE_TIMEOUT' })
+    assert.equal(probes, 1)
+    assert.deepEqual(requests, [])
+    const filename = path.join(root, 'secrets', 'civitai-token.bin')
+    await assert.rejects(stat(filename), { code: 'ENOENT' })
+
+    releaseWallet(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual(requests, [])
+    await assert.rejects(stat(filename), { code: 'ENOENT' })
+
+    assert.equal((await service.saveToken(TOKEN)).kind, 'connected')
+    assert.deepEqual(requests, [{ authorization: `Bearer ${TOKEN}`, pathname: '/api/v1/me' }])
+    assert.equal((await stat(filename)).mode & 0o777, 0o600)
+  } finally {
+    releaseWallet(false)
+    await save
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 function civitaiApi(options: {
   family?: 'Anima' | 'Illustrious' | 'NoobAI' | 'SDXL 1.0'
   fileHash?: string

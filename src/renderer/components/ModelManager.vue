@@ -292,6 +292,7 @@ let pendingJobsRead: {
 
 const modelApi = () => globalThis.window.api?.models
 const isConnected = computed(() => tokenStatus.value?.kind === 'connected')
+const canRemoveToken = computed(() => isConnected.value || tokenStatus.value?.kind === 'failed')
 const filePreview = computed(() => (preview.value?.kind === 'select-file' ? preview.value : null))
 const selectedFile = computed(() =>
   filePreview.value?.files.find((file) => file.fileId === selectedFileId.value),
@@ -1276,7 +1277,7 @@ onBeforeUnmount(() => {
               </form>
               <div class="token-actions">
                 <NButton size="small" text @click="loadTokenStatus">Check connection</NButton>
-                <NButton v-if="isConnected" size="small" text type="error" @click="removeToken">
+                <NButton v-if="canRemoveToken" size="small" text type="error" @click="removeToken">
                   Remove token
                 </NButton>
               </div>

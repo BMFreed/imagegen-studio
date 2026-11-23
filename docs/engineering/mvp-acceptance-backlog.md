@@ -365,11 +365,13 @@ entries record the state at their checkpoint.
    [Fresh KDE token status](./phase-5-civitai-token-presence-research.md)
    With a provisioned, locked KDE wallet, the stock AppImage passed
    live CivitAI Save, cold unlock and revalidation, Remove and cold
-   missing. The no-wallet control stalled at Save after the KDE
-   creation dialog, before any account call or token file write.
-   Qualify automatic wallet creation and retry on the supported release
-   environments.
-   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#secure-save-cold-unlock-and-removal-on-kde)
+   missing. With an empty KWallet 6.24 profile, Save now reports a
+   timeout after the creation dialog and releases the controls.
+   Chromium's Linux fixed-key fallback is refused, and existing
+   fallback files can be removed from Model Manager. Qualify automatic
+   wallet creation on a supported system with the KDE Frameworks 6.29
+   collection fix.
+   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#bounding-the-first-wallet-wait)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

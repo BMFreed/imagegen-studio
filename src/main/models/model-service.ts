@@ -57,7 +57,11 @@ import {
   ANIMA_SOURCE_LICENSE,
   isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
-import { validateCivitaiToken } from './civitai-token-store.js'
+import {
+  CIVITAI_STORAGE_TIMEOUT_DETAIL,
+  CivitaiTokenStoreError,
+  validateCivitaiToken,
+} from './civitai-token-store.js'
 import { qualifyIllustriousEmbedding } from './illustrious-embedding-qualification.js'
 import { qualifyIllustriousLora } from './illustrious-lora-qualification.js'
 import { qualifyIllustriousVae } from './illustrious-vae-qualification.js'
@@ -443,6 +447,9 @@ export class ModelService {
   async getTokenStatus(): Promise<CivitaiTokenStatus> {
     const status = await this.tokenStore.getStatus()
     if (status.kind === 'unavailable') {
+      if (status.reason === 'encryption-timeout') {
+        return { detail: CIVITAI_STORAGE_TIMEOUT_DETAIL, kind: 'failed' }
+      }
       const detail =
         status.reason === 'basic_text'
           ? 'Secure token storage is unavailable: Linux selected the basic_text backend.'
@@ -462,7 +469,13 @@ export class ModelService {
       }
       await this.civitai.validateToken(token)
       return { detail: 'CivitAI token is connected.', kind: 'connected' }
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof CivitaiTokenStoreError &&
+        error.code === 'TOKEN_SECURE_STORAGE_TIMEOUT'
+      ) {
+        return { detail: error.message, kind: 'failed' }
+      }
       return {
         detail: 'CivitAI token could not be verified. Check the token or connection.',
         kind: 'failed',
@@ -1131,6 +1144,9 @@ export class ModelService {
     validateCivitaiToken(token)
     const availability = await this.tokenStore.getAvailability()
     if (!availability.available) {
+      if (availability.reason === 'encryption-timeout') {
+        throw new CivitaiTokenStoreError('TOKEN_SECURE_STORAGE_TIMEOUT')
+      }
       throw new ModelServiceError(
         'TOKEN_SECURE_STORAGE_UNAVAILABLE',
         'Secure CivitAI token storage is unavailable on this system.',

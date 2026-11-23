@@ -28,8 +28,9 @@ class TestSafeStorage implements SafeStorageAdapter {
     if (this.failDecrypt) {
       throw new Error('simulated OS key-store error')
     }
-    const iv = encrypted.subarray(0, 12)
-    const body = encrypted.subarray(12, -16)
+    assert.equal(encrypted.subarray(0, 3).toString(), 'v11')
+    const iv = encrypted.subarray(3, 15)
+    const body = encrypted.subarray(15, -16)
     const tag = encrypted.subarray(-16)
     const decipher = createDecipheriv('aes-256-gcm', this.key, iv)
     decipher.setAuthTag(tag)
@@ -47,6 +48,7 @@ class TestSafeStorage implements SafeStorageAdapter {
     const iv = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm', this.key, iv)
     return Buffer.concat([
+      Buffer.from('v11'),
       iv,
       cipher.update(plainText, 'utf8'),
       cipher.final(),
@@ -210,6 +212,41 @@ test('token status waits for the wallet when ciphertext is present', async () =>
   })
 })
 
+test('wallet timeout releases queued removal and preserves ciphertext until explicit removal', async (t) => {
+  await withDataRoot(async (root) => {
+    const safeStorage = new TestSafeStorage()
+    const store = new CivitaiTokenStore(safeStorage, root)
+    await store.saveToken('existing-token')
+    const ciphertext = await readFile(tokenPath(root))
+    const wallet = holdAsyncAvailability(safeStorage)
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    let statusResult: Awaited<ReturnType<typeof store.getStatus>> | undefined
+    const status = store.getStatus().then((result) => {
+      statusResult = result
+    })
+    let remove: Promise<void> | undefined
+    try {
+      await wallet.requested
+      remove = store.removeToken()
+      assert.deepEqual(await readFile(tokenPath(root)), ciphertext)
+      t.mock.timers.tick(60_000)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(statusResult, {
+        backend: 'gnome_libsecret',
+        kind: 'unavailable',
+        reason: 'encryption-timeout',
+      })
+      await remove
+      await assert.rejects(stat(tokenPath(root)), { code: 'ENOENT' })
+      assert.equal(safeStorage.decryptCalls, 0)
+    } finally {
+      wallet.release(false)
+      await Promise.all([status, remove])
+    }
+    assert.deepEqual(await store.getStatus(), { backend: 'gnome_libsecret', kind: 'missing' })
+  })
+})
+
 test('encrypted token survives store recreation and removal clears only ciphertext', async () => {
   await withDataRoot(async (root) => {
     const safeStorage = new TestSafeStorage()
@@ -237,6 +274,40 @@ test('encrypted token survives store recreation and removal clears only cipherte
     assert.deepEqual(await reopened.getStatus(), { backend: 'gnome_libsecret', kind: 'missing' })
   })
 })
+
+test(
+  'Linux rejects v10 fallback on Save, rotation and reads',
+  { skip: process.platform !== 'linux' },
+  async () => {
+    await withDataRoot(async (root) => {
+      const safeStorage = new TestSafeStorage()
+      safeStorage.backend = 'kwallet6'
+      const store = new CivitaiTokenStore(safeStorage, root)
+      await store.saveToken('original-token')
+      const filename = tokenPath(root)
+      const original = await readFile(filename)
+      const fallback = Buffer.from('v10fixture')
+      safeStorage.encryptStringAsync = async () => fallback
+      await assert.rejects(store.saveToken('replacement-token'), {
+        code: 'TOKEN_SECURE_STORAGE_UNAVAILABLE',
+      })
+      assert.deepEqual(await readFile(filename), original)
+
+      safeStorage.shouldReEncrypt = true
+      await assert.rejects(store.readToken(), { code: 'TOKEN_SECURE_STORAGE_UNAVAILABLE' })
+      assert.deepEqual(await readFile(filename), original)
+
+      await writeFile(filename, fallback)
+      const decryptCalls = safeStorage.decryptCalls
+      assert.equal((await store.getStatus()).kind, 'unreadable')
+      await assert.rejects(store.readToken(), { code: 'TOKEN_UNREADABLE' })
+      assert.equal(safeStorage.decryptCalls, decryptCalls)
+      assert.deepEqual(await readFile(filename), fallback)
+      await store.removeToken()
+      await assert.rejects(stat(filename), { code: 'ENOENT' })
+    })
+  },
+)
 
 test('failed replacement preserves the previous ciphertext and leaves no temporary file', async () => {
   await withDataRoot(async (root) => {

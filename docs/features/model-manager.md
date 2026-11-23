@@ -260,13 +260,13 @@ The CivitAI token status pill is the persistent entry point for token management
 The token is encrypted/decrypted only in Electron main process through
 `safeStorage`. With an eligible storage backend and an absent token file,
 the passive status read reports that a token is needed without requesting
-the wallet. Explicit Save checks the secure provider before validating the token
-with CivitAI. If Linux reports the insecure `basic_text` backend or secure
-storage is unavailable, token setup explains why saving is unavailable and
-refuses plaintext persistence. The connected status requires a securely
-stored, usable token; token-dependent import stays unavailable until that
-condition is met. The Vue prototype models the status UI only, not OS secret
-storage.
+the wallet. Explicit Save waits up to 60 seconds for the secure-storage provider
+before validating with CivitAI. If the provider does not respond, Model Manager
+shows how to reopen the system keyring and retry. A late response does not
+resume a timed-out Save. The app refuses the Linux `basic_text` backend and
+rejects Linux ciphertext made with Chromium's fixed-key fallback. A failed
+check of a saved token allows explicit Remove even when the token cannot be
+used. Token-dependent import requires a securely stored, usable token.
 
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 
