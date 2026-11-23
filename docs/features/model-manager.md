@@ -259,10 +259,11 @@ The CivitAI token status pill is the persistent entry point for token management
 
 The token is encrypted/decrypted only in Electron main process through
 `safeStorage`. With an eligible storage backend and an absent token file,
-the passive status read reports that a token is needed without requesting
-the wallet. Explicit Save waits up to 60 seconds for the secure-storage provider
-before validating with CivitAI. If the provider does not respond, Model Manager
-shows how to reopen the system keyring and retry. A late response does not
+the passive status read and token-dependent requests report that a token is
+needed without requesting the wallet. Explicit Save waits up to 60 seconds for
+the secure-storage provider before validating with CivitAI. If the provider
+does not respond, Model Manager shows how to reopen the system keyring and
+retry. A late response does not
 resume a timed-out Save. The app refuses the Linux `basic_text` backend and
 rejects Linux ciphertext made with Chromium's fixed-key fallback. A failed
 check of a saved token allows explicit Remove even when the token cannot be

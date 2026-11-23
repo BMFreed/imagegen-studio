@@ -268,7 +268,9 @@ export class CivitaiTokenStore {
   }
 
   private async readTokenUnlocked(): Promise<string | null> {
-    await this.requireSecureStorage()
+    if (!this.getSelectedBackendAvailability().available) {
+      throw new CivitaiTokenStoreError('TOKEN_SECURE_STORAGE_UNAVAILABLE')
+    }
     if (!(await this.inspectDirectory(false))) {
       return null
     }

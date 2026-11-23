@@ -271,3 +271,101 @@ both wallet daemon exits, and the signed package and AppImage identities.
 Cleanup reclaimed 1,363,542,016 allocated bytes. The package manifest,
 traces and receipts are under `runs/kwallet629-first-save/20261123` in
 the local artifact root.
+
+## First Save without restarting Studio
+
+The stock AppImage came from `66965364b1a7d038cdfbae5d580db515dd7a3400`.
+The comparison used private Wayland, D-Bus and wallet profiles. For
+KWallet 6.29, the 211 packages from the previous signed Ubuntu closure
+were reacquired and checked against the retained SHA-512 values.
+Running daemon binaries matched the verified package bodies.
+
+InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1` uses account-scoped
+browser storage. The fresh check covered
+`invokeai/frontend/webv2/src/features/models/data/apiKeys.ts`,
+`ui/credentials/ApiKeysSection.tsx`, `ui/add-models/useInstallActions.ts`,
+`ui/install-queue/useInstallJobActions.ts` and `data/api.ts` in that
+feature, followed by the `model_manager.py` router and model-install
+service. The prerequisite desktop wallet interaction belongs to Studio's
+Electron integration.
+
+### Secret Portal encryption
+
+In KWallet 6.29, launching the stock AppImage with Chromium's
+`SecretPortalKeyProviderUseForEncryption` flag let the first Save
+create the wallet and persist a 63-byte `v12` token file in mode
+`0600`. A cold read with the flag kept the ciphertext byte for byte.
+Turning the flag off allowed the next launch to read that `v12`
+file and rotate it to `v11`. Turning the flag back on read the
+`v11` file and rotated it to `v12`. CivitAI validation, Remove
+and cold missing passed in this cycle.
+
+All four portal calls in the bare AppImage cycle carried an empty
+application ID. A control with a discoverable private
+`imagegen-studio.desktop` file carried `imagegen-studio` on all
+four calls. KDE uses that ID as the wallet entry name. In a separate
+named cycle, removing the desktop file made the saved `v12` file
+unreadable while preserving its bytes. Restoring the desktop entry
+restored access to the unchanged credential. The launch flag therefore
+also changes the operational requirements for portable AppImage
+launches and key continuity.
+[Portal host identity](https://github.com/flatpak/xdg-desktop-portal/blob/1.21.1/src/xdp-app-info-host.c#L164-L285),
+[KDE portal key lookup](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletportalsecrets.cpp#L47-L75).
+
+KWallet 6.24 first Save still reached Studio's timeout with the flag.
+Chromium initializes the asynchronous providers serially and waits for
+the KWallet callback before asking the Secret Portal for a key.
+[Chromium provider initialization](https://chromium.googlesource.com/chromium/src/+/152.0.7977.130/components/os_crypt/async/browser/os_crypt_async.cc#145).
+
+### Creating the default wallet before Electron requests a key
+
+An independent test-only helper used the Secret Service
+`CreateCollection` and native KDE prompt on one D-Bus connection.
+It required an empty collection list and absent default alias before
+requesting creation. It checked the accepted prompt, the daemon identity
+and the default alias before returning. The helper ran after Studio
+opened and before its first asynchronous safeStorage request.
+The stock Save IPC then validated with live CivitAI and wrote a
+51-byte `v11` file in mode `0600` in the same application process
+on both KWallet 6.24 and 6.29. Cold unlock and revalidation kept the
+file byte for byte. Explicit Remove and cold missing also passed.
+The helper refused a second creation request with an existing wallet,
+and the token file stayed byte-identical.
+
+A KWallet 6.29 control dismissed the native password dialog. It
+produced neither a wallet file nor a token file. An explicit retry in
+the same application process created the wallet and saved a
+`v11` credential. KDE can write the alias configuration before the
+password dialog completes, so the cancellation observation covers
+the wallet and token files.
+[Secret Service creation and prompt protocol](https://specifications.freedesktop.org/secret-service/latest/org.freedesktop.Secret.Service.html#org.freedesktop.Secret.Service.CreateCollection),
+[KDE prompt implementation](https://github.com/KDE/kwallet/blob/v6.29.0/src/runtime/ksecretd/kwalletfreedesktopprompt.cpp#L34-L108).
+
+Production integration of wallet creation remains open. It requires a
+packaged Secret Service client, an explicit Save owner for the dialog,
+and concurrent default-alias ownership controls.
+
+The token store now checks for a stored file before requesting the
+asynchronous provider during a token-dependent read. Backend selection
+still refuses insecure and unavailable selectors. Both absent-file
+regressions reached the async wallet on the baseline, then passed with
+no async call after the change. The valid ciphertext reader still
+requires secure storage before decryption and rotation.
+[Token store](../../src/main/models/civitai-token-store.ts).
+
+The rebuilt AppImage received a public CivitAI preview request before
+the helper ran. It returned `CIVITAI_TOKEN_REQUIRED` in 3 milliseconds.
+The D-Bus trace shows the helper's `CreateCollection` and successful
+prompt completion before the first key-provider request. Save then
+passed in the same process. Cold unlock, Remove and cold missing passed
+in subsequent launches. Typecheck, scoped ESLint, AppImage packaging
+and 125 focused tests passed with zero failures or skips.
+
+The comparison AppImage SHA-256 was
+`9fc107b22bc0bdc29bdcd018030bf6a5e51a52e80bb0ab03eca31dc904aebe6b`.
+The rebuilt AppImage SHA-256 was
+`b8afb3e8ec17a23ed79788059fcf2235b13068b4b891506e93c528b9937bc334`.
+The run receipts cover 26 normal AppImage closes and 234 enrolled
+process exits. Cleanup reclaimed 1,605,885,952 allocated bytes.
+The receipts are under `runs/civitai-portal-encryption/20261123` and
+`runs/civitai-missing-token-read/20261123` in the local artifact root.

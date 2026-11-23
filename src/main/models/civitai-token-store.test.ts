@@ -159,6 +159,23 @@ for (const directory of ['missing', 'existing'] as const) {
       }
     })
   })
+
+  test(`readToken returns null ${state} without probing the wallet`, async () => {
+    await withDataRoot(async (root) => {
+      const safeStorage = new TestSafeStorage()
+      const wallet = holdAsyncAvailability(safeStorage)
+      if (directory === 'existing') {
+        await mkdir(path.dirname(tokenPath(root)), { mode: 0o700 })
+      }
+      const read = new CivitaiTokenStore(safeStorage, root).readToken()
+      try {
+        assert.equal(await Promise.race([read, wallet.requested]), null)
+      } finally {
+        wallet.release(true)
+        await read
+      }
+    })
+  })
 }
 
 test('a backend lookup failure remains unavailable without probing the wallet', async () => {

@@ -371,9 +371,14 @@ entries record the state at their checkpoint.
    fallback files can be removed from Model Manager. Isolated Ubuntu
    KWallet 6.29 created the first wallet. Studio refused the first Save.
    Closing Studio and opening it again in the same profile restored
-   secure Save with live CivitAI. One-action setup on an empty wallet
-   profile remains open.
-   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#first-save-with-kwallet-629)
+   secure Save with live CivitAI. An isolated test helper also created
+   an empty wallet before the first Electron key request. Stock Save
+   then wrote `v11` in the same process on KWallet 6.24 and 6.29.
+   The Secret Portal alternative wrote `v12`. Its read failed when the
+   named desktop entry disappeared and recovered when it returned.
+   One-action setup requires integrating the wallet creation step into
+   the existing Save owner.
+   [Secure Save and wallet bootstrap](./phase-5-civitai-token-presence-research.md#first-save-without-restarting-studio)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
