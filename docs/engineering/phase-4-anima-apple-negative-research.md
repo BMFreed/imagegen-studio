@@ -188,10 +188,11 @@ requests and reports are retained. Cleanup of the two attempts reclaimed
 ## Named-subject spatial comparison
 
 The follow-up fixes the passing baseline's source, seed, installed
-engine, model, mask owners, sampling and all positive prompts. It uses
-separate projects for an empty-local-negative replay, `(red apple)2.0`
-on the apple mask, and the identical negative on the mug mask. The
-previous baseline provides a pinned decoded-pixel replay control.
+engine, model, mask owners, sampling and all positive prompts. It saves
+and reopens the same Project for each case and retains each snapshot.
+The cases are an empty-local-negative replay, `(red apple)2.0` on the apple
+mask, and the identical negative on the mug mask. The previous baseline
+provides a pinned decoded-pixel replay control.
 Both spatial controls must preserve the apple, mug and scene. Both
 condition-blind readers must see the treated apple disappear or become
 substantially less recognizable, with the mug and scene preserved. An
@@ -210,3 +211,37 @@ probe, with no change in worker behavior.
 
 The 242 focused tests passed without failures or skips. Typecheck, scoped
 ESLint and formatting checks, and the app build passed.
+
+### Installed spatial result
+
+Run `anima-apple-negative-anchored-spatial/20261123-r1` used Studio
+`64c3dc3d7200f7970ccbc3fdf233a525a7eaef9e`. Three requests completed, 25
+Heun evaluations each. The new baseline matched the earlier PNG byte
+for byte. Both anonymous orders produced the same observations. The
+baseline and mug-mask control kept both subjects and the scene. The
+apple-mask treatment also kept a recognizable red apple with stem and
+leaf, a blue loop-handle mug, and the continuous tabletop and wall.
+There were differences in the apple's highlights, while its shape and
+recognizability persisted. The visual result is **NOT_QUALIFIED** for
+this source, seed and weight.
+
+The fixed 13,572-pixel ROI contained 9,906 red pixels in the input,
+10,219 in the matched baseline, 10,370 with the negative on the apple
+mask, and 10,053 with it on the mug mask. The visual criterion uses
+recognizable subjects. This color count is a secondary measurement.
+
+The read-only audit passed 539 assertions. It checked exact replay,
+both negative owners and weighted prompt spans, the retained Project
+snapshots and closed SQLite, 77 installed files, 17 signed configuration
+files and physical exit of the controller and three workers. Peak group
+memory was 9,157,402,624 bytes. Maximum sampled VRAM by case was
+6,944 / 6,558 / 6,558 MiB. The unit finished in 129.579 seconds with
+zero OOM events. This exercised the installed Studio worker. There is
+no direct Invoke execution of this matched apple scene yet. The prior
+[direct Invoke scarf case](./phase-4-anima-negative-invoke-control-research.md)
+used different source and subject prompts.
+
+The three PNGs, source, blind observations, frozen requests and Project
+snapshots remain available. The verified 8-entry archive retains the
+closed payload. Cleanup released 6,045,696 allocated bytes of scratch
+and blind copies. Human review and broader visual utility remain open.

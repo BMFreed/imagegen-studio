@@ -43,9 +43,11 @@ in all outputs. The baseline and right-mask control lost both subjects,
 leaving the spatial visual verdict inconclusive.
 [The named-subject baseline](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects)
 passed on installed CUDA. Both visual readers saw the apple and mug on
-their original sides in the coherent scene. The
-[matched spatial comparison](./phase-4-anima-apple-negative-research.md#named-subject-spatial-comparison)
-keeps the passing baseline and tests both local negative owners.
+their original sides in the coherent scene. In the
+[matched spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result),
+the baseline replayed exactly and the negative on either mask left the
+apple recognizable. The three requests passed and selective suppression
+remains unqualified for this source and seed.
 
 ## Anima tabletop placement with shared scene context
 

@@ -162,10 +162,14 @@ entries record the state at their checkpoint.
    The matched follow-up names the apple and mug in their respective
    local positives. The installed CUDA baseline passed on the frozen
    source and seed. Both visual readers recognized both objects on their
-   original sides. The matched local-negative comparison is the next
-   visual gate for this scene.
+   original sides. The three-request follow-up replayed the baseline
+   byte for byte and preserved both subjects in the right-mask control.
+   The apple remained recognizable with the negative on its own mask as
+   well. Selective suppression stays unqualified on this source and seed.
+   A matched run of the current Invoke denoiser on the same prepared apple
+   source would distinguish a Studio difference from shared behavior.
    [Baseline with named subjects](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects),
-   [spatial comparison](./phase-4-anima-apple-negative-research.md#named-subject-spatial-comparison).
+   [spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result).
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

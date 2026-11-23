@@ -1120,6 +1120,11 @@ remain compatible with the earlier positive lane. An ordinary global negative wi
 local-empty regional blocks remains valid without the new capability. Authoring and
 inheritance are never rewritten to manufacture compatibility.
 
+The [matched installed Anima IMG check](../../../engineering/phase-4-anima-apple-negative-research.md#installed-spatial-result)
+verified both local negative owners with a stable, repeatable baseline.
+The weighted negative on the apple's mask left the apple recognizable in
+the fixed scene. This case leaves visual suppression unqualified.
+
 ## Vue Prototype Coverage
 
 The `regional-guidance` scenario includes an entity with an owned mock region, positive prompt, automatic global-negative setting, one reference-image record and a compatibility warning.
