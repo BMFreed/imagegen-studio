@@ -217,12 +217,14 @@ entries record the state at their checkpoint.
    separate native startup confirmed the previous worker remained runnable.
    A separate packaged control reached candidate activation, observed
    actual worker refusal, restored the previous pointer byte for byte
-   and reopened the original ready runtime. The next local check is stock
-   AppImage startup after an installation owner dies before pointer
-   publication or during post-activation qualification. Verify safe claim
-   release in the first case and a retained recovery claim with Repair
-   refused in the second. Repeat on the shipping artifact and supported host
-   matrix when the publisher is available.
+   and reopened the original ready runtime. After a real installation owner
+   died before pointer publication, the stock AppImage kept the previous
+   pointer and cleared the dead claim. After death during post-activation
+   qualification, it kept the candidate pointer, journal and claim and showed
+   that recovery was required. The saved Project reopened in both cases. A
+   separate manager check with an empty release loader refused the uncertain
+   Repair before contacting that loader. Repeat on the shipping artifact and
+   supported host matrix when the publisher is available.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
    assembly floor, the exact cached and extracted runtime and LaMa. Repair
@@ -231,6 +233,7 @@ entries record the state at their checkpoint.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md),
    [Packaged rollback](./phase-5-packaged-runtime-rollback-research.md),
+   [Packaged startup after installer death](./phase-5-packaged-runtime-installation-recovery-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).

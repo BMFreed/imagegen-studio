@@ -298,6 +298,9 @@ while the new pointer remains active. The separate
 [packaged rollback control](../engineering/phase-5-packaged-runtime-rollback-research.md)
 then confirms a candidate worker refusal after activation, restoration of
 the exact previous pointer and normal reopen with the previous runtime.
+The [stock startup after installer death](../engineering/phase-5-packaged-runtime-installation-recovery-research.md)
+check distinguishes the recoverable pre-publication cut from the retained
+post-activation qualification cut. Both preserved the slots and saved Project.
 Shipping delivery and the supported host matrix remain open.
 
 [Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)

@@ -56,6 +56,7 @@ const componentAction = componentRepair !== undefined ? 'repair' : componentRemo
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
 const workspaceChooser = offlineProject === 'workspace-chooser'
+const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
 const modelInstallCrash = offlineProject === 'model-install-interruption'
 const modelInstallHistory = offlineProject === 'model-install-history'
 const modelInstallRetry = offlineProject === 'model-install-retry'
@@ -77,10 +78,19 @@ const nativeWaylandKeyboard =
     modelInstallHistory ||
     homeScale)
 assert.ok(
-  !kdeChooser || portableChooser || projectExport || nativeWaylandKeyboard || workspaceChooser,
+  !kdeChooser ||
+    portableChooser ||
+    projectExport ||
+    nativeWaylandKeyboard ||
+    workspaceChooser ||
+    runtimeInstallationRecovery,
   'The private Wayland launcher requires a supported packaged case.',
 )
 assert.ok(!workspaceChooser || kdeChooser, 'Use a private KDE Wayland session for folder choice.')
+assert.ok(
+  !runtimeInstallationRecovery || kdeChooser,
+  'Use a private KDE Wayland session for runtime recovery.',
+)
 assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
@@ -200,6 +210,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'home-recovery-keyboard',
         'home-scale',
         'workspace-chooser',
+        'runtime-installation-recovery',
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-history',
@@ -506,6 +517,7 @@ const offlineProjectFixture = {
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'home-scale': 'packaged-home-scale',
   'workspace-chooser': 'packaged-workspace-chooser',
+  'runtime-installation-recovery': 'packaged-runtime-installation-recovery',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-history': 'packaged-model-install-history',
@@ -527,6 +539,8 @@ const offlineProjectScope = {
     'Stock AppImage measures rendering and Home interactions over an owned indexed Project catalog.',
   'workspace-chooser':
     'Stock AppImage registers and locates a saved workspace through the native KDE folder picker.',
+  'runtime-installation-recovery':
+    'Stock AppImage inspects an interrupted runtime installation and preserves its owned data.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
@@ -797,6 +811,21 @@ if (workspaceChooser)
       'src/renderer/App.vue',
       'src/renderer/components/AddWorkspaceModal.vue',
       'src/renderer/components/HomeView.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (runtimeInstallationRecovery)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-runtime-installation-cut.ts',
+      'src/main/index.ts',
+      'src/main/runtime/index.ts',
+      'src/main/runtime/offline-runtime-assembly.ts',
+      'src/main/runtime/runtime-installation.ts',
+      'src/main/projects/project-session.ts',
+      'src/preload/index.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/RuntimeNotice.vue',
+      'src/renderer/components/RuntimeSetupModal.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (offlineProject === 'trash-recovery')
@@ -1733,6 +1762,9 @@ async function runOwnedProjectProfile() {
     }
     if (workspaceChooser) {
       return { offlineProjectResult: await fixture.runPackagedWorkspaceChooser(args) }
+    }
+    if (runtimeInstallationRecovery) {
+      return { offlineProjectResult: await fixture.runPackagedRuntimeInstallationRecovery(args) }
     }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)
