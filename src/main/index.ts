@@ -225,6 +225,7 @@ import { releaseCanceledWindowCloseFences } from './projects/project-generation-
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectImageExportError } from './projects/project-image-export.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
+import { ProjectLaunchPaths } from './projects/project-launch-paths.js'
 import {
   parseProjectLayerImageUrl,
   streamSavedProjectLayer,
@@ -418,6 +419,9 @@ if (!gotInstanceLock) {
   app.quit()
 } else {
   let mainWindow: BrowserWindow | null = null
+  const launchPaths = new ProjectLaunchPaths()
+  const applicationArgumentsAt = app.isPackaged ? 1 : 2
+  launchPaths.enqueue(process.argv.slice(applicationArgumentsAt), process.cwd())
   let closeDatabase: (() => Promise<void>) | null = null
   let generationShutdown: GenerationAppShutdown | null = null
   let exitReady = false
@@ -425,7 +429,19 @@ if (!gotInstanceLock) {
   const walletSetupAbort = new AbortController()
   let walletSetup: ReturnType<typeof bootstrapKWallet> | undefined
 
-  app.on('second-instance', () => {
+  function notifyLaunchImportAvailable() {
+    if (
+      launchPaths.hasPending &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      !mainWindow.webContents.isDestroyed()
+    ) {
+      mainWindow.webContents.send(ipcChannels.projects.launchImportAvailable)
+    }
+  }
+
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    const queued = launchPaths.enqueue(argv.slice(applicationArgumentsAt), workingDirectory)
     if (!mainWindow || mainWindow.isDestroyed()) {
       return
     }
@@ -434,6 +450,9 @@ if (!gotInstanceLock) {
     }
     mainWindow.show()
     mainWindow.focus()
+    if (queued) {
+      notifyLaunchImportAvailable()
+    }
   })
 
   app.on('window-all-closed', () => app.quit())
@@ -1990,6 +2009,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.revealProject,
         ipcChannels.projects.revealWorkspace,
         ipcChannels.projects.selectImport,
+        ipcChannels.projects.takeLaunchImport,
         ipcChannels.projects.trashProject,
         ipcChannels.projects.updateWorkspace,
       ])
@@ -2606,17 +2626,9 @@ if (!gotInstanceLock) {
             expectedJobId as string,
           ),
       )
-      registerProjectHandler(ipcChannels.projects.selectImport, noArgs, async () => {
+      const selectProjectImport = async (sourcePath: string) => {
         const previouslyOpen = new Set(projectService.getOpenTabs().map((tab) => tab.id))
-        const selection = await dialog.showOpenDialog(window, {
-          filters: [{ extensions: ['igs'], name: 'ImageGen Studio Projects' }],
-          properties: ['openFile'],
-          title: 'Import Project',
-        })
-        if (selection.canceled || selection.filePaths.length !== 1) {
-          return null
-        }
-        const imported = await projectService.selectImport(selection.filePaths[0])
+        const imported = await projectService.selectImport(sourcePath)
         if (imported.kind === 'opened' && imported.result.kind === 'opened') {
           const warning = await reconcileOpenedProject(
             imported.result.tab.id,
@@ -2629,6 +2641,24 @@ if (!gotInstanceLock) {
           }
         }
         return imported
+      }
+      registerProjectHandler(ipcChannels.projects.selectImport, noArgs, async () => {
+        const selection = await dialog.showOpenDialog(window, {
+          filters: [{ extensions: ['igs'], name: 'ImageGen Studio Projects' }],
+          properties: ['openFile'],
+          title: 'Import Project',
+        })
+        return selection.canceled || selection.filePaths.length !== 1
+          ? null
+          : await selectProjectImport(selection.filePaths[0])
+      })
+      registerProjectHandler(ipcChannels.projects.takeLaunchImport, noArgs, async () => {
+        const sourcePath = launchPaths.take()
+        try {
+          return sourcePath === null ? null : await selectProjectImport(sourcePath)
+        } finally {
+          notifyLaunchImportAvailable()
+        }
       })
       registerProjectHandler(
         ipcChannels.projects.finishImport,

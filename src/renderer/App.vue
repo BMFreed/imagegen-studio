@@ -176,6 +176,11 @@ type HomePresentationIntent = {
 }
 type HomeOpenIntent = HomePresentationIntent & { projectId: string; trigger?: HTMLElement }
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
+type ImportPresentation = {
+  destinationId: string
+  homeIntent: HomePresentationIntent | null
+  selection: ProjectImportSelection
+}
 type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string | null }
 type PendingAcceptance = {
   candidateIds: string[]
@@ -234,6 +239,7 @@ type PendingProjectAction =
   | {
       kind:
         | 'create'
+        | 'import-cancel'
         | 'import-finish'
         | 'import-select'
         | 'recover'
@@ -562,6 +568,10 @@ const removeMissingProjectEligible = computed(() => {
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importHomeIntent = ref<HomePresentationIntent | null>(null)
+const launchImportRequested = ref(false)
+const launchImportWaitingForDraft = ref(false)
+const deferredLaunchImport = shallowRef<ImportPresentation | null>(null)
+let unsubscribeLaunchImport: (() => void) | undefined
 const importChoice = ref<'copy' | 'move'>('move')
 const importWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
 const importWorkspaceOptions = computed(() =>
@@ -3697,6 +3707,19 @@ function closeHome() {
   }
 }
 
+async function settleProjectDraftBeforeSwitch(tabId: string): Promise<boolean> {
+  try {
+    await flushProjectDraft(tabId)
+    return true
+  } catch (cause) {
+    setTabError(
+      tabId,
+      `Could not finish the Project draft before switching tabs. ${errorMessage(cause)}`,
+    )
+    return false
+  }
+}
+
 async function activateDocument(documentId: string): Promise<boolean> {
   const switchingDuringHistoryOpen =
     acceptedHistoryOpening.value && pendingProjectAction.value?.kind === 'open'
@@ -3723,13 +3746,9 @@ async function activateDocument(documentId: string): Promise<boolean> {
   if (previous) {
     pendingProjectAction.value = { kind: 'history', tabId: previous.id }
     try {
-      await flushProjectDraft(previous.id)
-    } catch (cause) {
-      setTabError(
-        previous.id,
-        `Could not finish the Project draft before switching tabs. ${errorMessage(cause)}`,
-      )
-      return false
+      if (!(await settleProjectDraftBeforeSwitch(previous.id))) {
+        return false
+      }
     } finally {
       pendingProjectAction.value = null
     }
@@ -4707,50 +4726,197 @@ async function rebuildProjectPreview(projectId: string) {
   }
 }
 
-async function selectImport() {
-  if (pendingProjectAction.value !== null || importTransfer.value) {
+const launchImportInteractionBlocked = computed(() =>
+  Boolean(
+    windowClosePending.value ||
+    importTransfer.value ||
+    recoveryDecision.value ||
+    closingTabId.value ||
+    showNewProject.value ||
+    showAddWorkspace.value ||
+    showMoveProject.value ||
+    showRenameProject.value ||
+    showProjectTrashAction.value ||
+    showWorkspaceSettings.value ||
+    showRemoveWorkspace.value ||
+    showRemoveMissingProject.value ||
+    modelManagerOpen.value ||
+    presetManagerOpen.value ||
+    presetApplyOpen.value ||
+    presetModelHandoff.value ||
+    applicationUpdatesOpen.value ||
+    runtimeSetupOpen.value ||
+    savedAcceptedResultsOpen.value ||
+    projectView.value?.hasOpenDialog() ||
+    acceptedHistoryOpening.value ||
+    generationQueueOpen.value ||
+    queueResultOpeningId.value ||
+    pendingSmartReview.value ||
+    pendingAcceptance.value ||
+    pendingGeneration.value,
+  ),
+)
+const activeLaunchDraftInvalid = computed(() =>
+  Boolean(activeTab.value && draftValidity.value[activeTab.value.id] === false),
+)
+const launchImportReady = computed(
+  () =>
+    (launchImportRequested.value || deferredLaunchImport.value !== null) &&
+    !launchImportWaitingForDraft.value &&
+    !activeLaunchDraftInvalid.value &&
+    !launchImportInteractionBlocked.value &&
+    pendingProjectAction.value === null,
+)
+
+function requestLaunchImport() {
+  launchImportWaitingForDraft.value = false
+  launchImportRequested.value = true
+}
+
+watch(
+  launchImportReady,
+  (ready) => {
+    if (ready) {
+      void selectProjectImport('launch')
+    }
+  },
+  { flush: 'post' },
+)
+
+watch([() => activeTab.value?.id, activeLaunchDraftInvalid], ([, invalid]) => {
+  if (!invalid) {
+    launchImportWaitingForDraft.value = false
+  }
+})
+
+watch(windowClosePending, (closing) => {
+  // A take refused by the close gate leaves its path queued in Main.
+  if (!closing && unsubscribeLaunchImport) {
+    requestLaunchImport()
+  }
+})
+
+function showProjectImportError(message: string) {
+  if (activeDocument.value === 'home') {
+    homeError.value = message
+  } else {
+    globalNotice.value = message
+  }
+}
+
+async function presentProjectImport(
+  { destinationId, homeIntent, selection }: ImportPresentation,
+  fromLaunch: boolean,
+) {
+  if (selection.kind === 'opened') {
+    if (selection.result.kind === 'opened') {
+      const responseTab = selection.result.tab
+      // An intervening modal can delay presentation while Main publishes a newer snapshot.
+      const currentTab = fromLaunch
+        ? projectTabs.value.find((tab) => tab.id === responseTab.id)
+        : undefined
+      if (!currentTab || currentTab.documentId === responseTab.documentId) {
+        const tab = currentTab ?? responseTab
+        if (homeIntent) {
+          focusHomeOpenedTab(tab, homeIntent)
+        } else {
+          focusTab(tab)
+        }
+      }
+      if (responseTab.storageWarning) {
+        globalNotice.value = responseTab.storageWarning
+      }
+    } else {
+      recoveryDecision.value = selection.result
+      homeRecoveryIntent.value = homeIntent
+        ? { ...homeIntent, projectId: selection.result.projectId }
+        : null
+      recoveryError.value = null
+    }
+    await refreshProjects()
+    return
+  }
+  importChoice.value = 'move'
+  importWorkspaceId.value = destinationId
+  importTransfer.value = selection
+  importHomeIntent.value = homeIntent
+  importDialogVisible.value = true
+}
+
+function selectImport() {
+  return selectProjectImport('picker')
+}
+
+async function selectProjectImport(origin: 'launch' | 'picker') {
+  const fromLaunch = origin === 'launch'
+  if (
+    rendererDisposed ||
+    pendingProjectAction.value !== null ||
+    importTransfer.value ||
+    recoveryDecision.value ||
+    windowClosePending.value ||
+    (fromLaunch ? !launchImportReady.value : deferredLaunchImport.value)
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'import-select' }
-  const homeIntent = captureHomePresentationIntent()
-  const destinationId = defaultProjectWorkspaceId(
-    workspaces.value,
-    selectedTrashView.value ? null : selectedWorkspaceId.value,
-  )
-  void refreshWorkspaces()
-  homeError.value = null
   try {
-    const selection = await apiValue(() => projectApi().selectImport())
-    if (!selection) {
-      return
-    }
-    if (selection.kind === 'opened') {
-      if (selection.result.kind === 'opened') {
-        if (homeIntent) {
-          focusHomeOpenedTab(selection.result.tab, homeIntent)
-        } else {
-          focusTab(selection.result.tab)
-        }
-        if (selection.result.tab.storageWarning) {
-          globalNotice.value = selection.result.tab.storageWarning
-        }
-      } else {
-        recoveryDecision.value = selection.result
-        homeRecoveryIntent.value = homeIntent
-          ? { ...homeIntent, projectId: selection.result.projectId }
-          : null
-        recoveryError.value = null
+    if (fromLaunch && activeTab.value) {
+      // Keep the request in Main if the current Project cannot finish its draft.
+      launchImportWaitingForDraft.value = true
+      if (!(await settleProjectDraftBeforeSwitch(activeTab.value.id))) {
+        return
       }
-      await refreshProjects()
+      launchImportWaitingForDraft.value = false
+    }
+    if (
+      fromLaunch &&
+      (rendererDisposed || launchImportInteractionBlocked.value || activeLaunchDraftInvalid.value)
+    ) {
       return
     }
-    importChoice.value = 'move'
-    importWorkspaceId.value = destinationId
-    importTransfer.value = selection
-    importHomeIntent.value = homeIntent
-    importDialogVisible.value = true
+    let presentation = fromLaunch ? deferredLaunchImport.value : null
+    if (!presentation) {
+      const homeIntent = captureHomePresentationIntent()
+      const destinationId = defaultProjectWorkspaceId(
+        workspaces.value,
+        selectedTrashView.value ? null : selectedWorkspaceId.value,
+      )
+      if (!fromLaunch) {
+        void refreshWorkspaces()
+        homeError.value = null
+      } else {
+        // Notifications arriving while this take is in flight request the next path.
+        launchImportRequested.value = false
+      }
+      const selection = await apiValue(() =>
+        fromLaunch ? projectApi().takeLaunchImport() : projectApi().selectImport(),
+      )
+      if (rendererDisposed || !selection) {
+        return
+      }
+      presentation = { destinationId, homeIntent, selection }
+    }
+    if (fromLaunch) {
+      if (
+        launchImportInteractionBlocked.value ||
+        activeLaunchDraftInvalid.value ||
+        (activeTab.value && projectHasPendingDraft(activeTab.value.id))
+      ) {
+        deferredLaunchImport.value = presentation
+        return
+      }
+      deferredLaunchImport.value = null
+      if (presentation.selection.kind === 'transfer-required') {
+        void refreshWorkspaces()
+      }
+      homeError.value = null
+    }
+    await presentProjectImport(presentation, fromLaunch)
   } catch (cause) {
-    homeError.value = errorMessage(cause)
+    if (!rendererDisposed && !windowClosePending.value) {
+      showProjectImportError(errorMessage(cause))
+    }
   } finally {
     pendingProjectAction.value = null
   }
@@ -4761,15 +4927,18 @@ async function cancelImport() {
   if (!transfer || !importDialogVisible.value || pendingProjectAction.value !== null) {
     return
   }
+  pendingProjectAction.value = { kind: 'import-cancel' }
   importDialogVisible.value = false
   importHomeIntent.value = null
   try {
     const result = await projectApi().cancelImport(transfer.importId)
     if (!result.ok) {
-      homeError.value = result.error.message
+      showProjectImportError(result.error.message)
     }
   } catch (cause) {
-    homeError.value = errorMessage(cause)
+    showProjectImportError(errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
   }
 }
 
@@ -4821,7 +4990,7 @@ async function finishImport() {
   } catch (cause) {
     // Import selections are one-use in main, including failed attempts. Return to the picker.
     importDialogVisible.value = false
-    homeError.value = errorMessage(cause)
+    showProjectImportError(errorMessage(cause))
   } finally {
     pendingProjectAction.value = null
   }
@@ -6454,6 +6623,18 @@ onMounted(() => {
   } catch (cause) {
     globalNotice.value = errorMessage(cause)
   }
+  try {
+    const projects = globalThis.window.api?.projects
+    if (
+      typeof projects?.onLaunchImportAvailable === 'function' &&
+      typeof projects.takeLaunchImport === 'function'
+    ) {
+      unsubscribeLaunchImport = projects.onLaunchImportAvailable(requestLaunchImport)
+      requestLaunchImport()
+    }
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  }
   globalThis.window.addEventListener('keydown', onAppKeydown)
   void runRuntimeAction('check')
   void refreshHome()
@@ -6490,6 +6671,7 @@ onBeforeUnmount(() => {
   unsubscribeModelCatalog?.()
   unsubscribeStatus?.()
   unsubscribeSetupProgress?.()
+  unsubscribeLaunchImport?.()
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()
   unsubscribeGeneration?.()

@@ -58,6 +58,7 @@ const homeScale = offlineProject === 'home-scale'
 const workspaceChooser = offlineProject === 'workspace-chooser'
 const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
 const savedResults = offlineProject === 'saved-results'
+const projectLaunch = offlineProject === 'project-launch'
 const fuseMode = process.env.IMAGEGEN_LINUX_PACKAGE_FUSE
 const appImageFuse = fuseMode === '1'
 const modelInstallCrash = offlineProject === 'model-install-interruption'
@@ -87,7 +88,8 @@ assert.ok(
     nativeWaylandKeyboard ||
     workspaceChooser ||
     runtimeInstallationRecovery ||
-    savedResults,
+    savedResults ||
+    projectLaunch,
   'The private Wayland launcher requires a supported packaged case.',
 )
 assert.ok(!workspaceChooser || kdeChooser, 'Use a private KDE Wayland session for folder choice.')
@@ -96,8 +98,9 @@ assert.ok(
   'Use a private KDE Wayland session for runtime recovery.',
 )
 assert.ok(
-  fuseMode === undefined || (appImageFuse && kdeChooser && (workspaceChooser || savedResults)),
-  'Use IMAGEGEN_LINUX_PACKAGE_FUSE=1 for the private KDE workspace chooser or saved-results case.',
+  fuseMode === undefined ||
+    (appImageFuse && kdeChooser && (workspaceChooser || savedResults || projectLaunch)),
+  'Use IMAGEGEN_LINUX_PACKAGE_FUSE=1 with a supported private KDE case.',
 )
 assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
@@ -220,6 +223,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'workspace-chooser',
         'runtime-installation-recovery',
         'saved-results',
+        'project-launch',
         'queue-startup-recovery',
         'model-install-startup',
         'model-install-history',
@@ -528,6 +532,7 @@ const offlineProjectFixture = {
   'workspace-chooser': 'packaged-workspace-chooser',
   'runtime-installation-recovery': 'packaged-runtime-installation-recovery',
   'saved-results': 'packaged-saved-results',
+  'project-launch': 'packaged-project-launch',
   'queue-startup-recovery': 'packaged-queue-startup-recovery',
   'model-install-startup': 'packaged-model-install-startup',
   'model-install-history': 'packaged-model-install-history',
@@ -553,6 +558,8 @@ const offlineProjectScope = {
     'Stock AppImage inspects an interrupted runtime installation and preserves its owned data.',
   'saved-results':
     'Stock AppImage navigates to exact saved results in owned Projects without changing their contents.',
+  'project-launch':
+    'Stock AppImage routes explicit Project path arguments to the single existing Project owner.',
   'queue-startup-recovery':
     'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
   'model-install-startup':
@@ -840,6 +847,18 @@ if (savedResults)
       'src/preload/index.ts',
       'src/renderer/App.vue',
       'src/renderer/components/AcceptedResultsBrowser.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (projectLaunch)
+  sourcePaths.push(
+    ...[
+      'src/main/index.ts',
+      'src/main/projects/project-launch-paths.ts',
+      'src/main/projects/project-service.ts',
+      'src/preload/index.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/ProjectView.vue',
+      'src/shared/api.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (runtimeInstallationRecovery)
@@ -1204,7 +1223,7 @@ async function connect(state) {
   return state.page
 }
 
-async function launch(name, selectedAppImage = appImage) {
+async function launch(name, selectedAppImage = appImage, projectArguments = []) {
   // Chromium leaves this discovery file after a normal close. The previous
   // process has settled before launch; never connect a new lifetime to its port.
   for (const directory of [appData, profile]) {
@@ -1268,6 +1287,7 @@ async function launch(name, selectedAppImage = appImage) {
               : ['--disable-features=DbusSecretPortal', '--password-store=basic']),
           ]
         : []),
+      ...projectArguments,
     ],
     { cwd, env: launchEnvironment, stdio: ['ignore', 'pipe', 'pipe'] },
   )
@@ -1303,7 +1323,9 @@ async function launch(name, selectedAppImage = appImage) {
     )
     state.aggregateLimits = assertAggregate(state.checks)
   }
-  await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
+  if (projectArguments.length === 0) {
+    await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
+  }
   if (fuseObserver) {
     state.appImageMount = await fuseObserver.captureAppImageFuse({
       mainPid: state.mainPid,
@@ -1322,6 +1344,63 @@ async function launch(name, selectedAppImage = appImage) {
     rendererUrl: page.url(),
   })
   return state
+}
+
+async function launchSecondary(state, projectArguments, workingDirectory = cwd) {
+  assert.ok(projectLaunch && state.normalPhysicalExit !== true)
+  assert.ok(
+    strictDescendant(root, workingDirectory) &&
+      (await realpath(workingDirectory)) === workingDirectory,
+  )
+  const secondaryConfig = path.join(root, 'secondary-config')
+  await mkdir(secondaryConfig, { recursive: true, mode: 0o700 })
+  const before = await readFile(`/proc/${state.mainPid}/stat`, 'utf8')
+  const child = spawn(
+    appImage,
+    [kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11', ...projectArguments],
+    {
+      cwd: workingDirectory,
+      env: { ...environment, XDG_CONFIG_HOME: secondaryConfig },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  )
+  let stderr = ''
+  child.stderr.on('data', (chunk) => {
+    stderr = (stderr + chunk.toString()).slice(-8192)
+  })
+  const completed = new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code, signal) => resolve({ code, signal }))
+  })
+  try {
+    const exit = await bounded(completed, 12_000, 'Secondary packaged application exit')
+    assert.deepEqual(exit, { code: 0, signal: null }, stderr)
+    const after = await readFile(`/proc/${state.mainPid}/stat`, 'utf8')
+    const started = (text) => text.slice(text.lastIndexOf(') ') + 2).split(' ')[19]
+    assert.equal(started(before), started(after))
+    const session = await state.browser.newBrowserCDPSession()
+    try {
+      const info = await session.send('SystemInfo.getProcessInfo')
+      assert.deepEqual(
+        info.processInfo.filter((entry) => entry.type === 'browser').map(({ id }) => id),
+        [state.mainPid],
+      )
+    } finally {
+      await session.detach()
+    }
+    const evidence = {
+      pid: child.pid,
+      exit,
+      primaryPid: state.mainPid,
+      primaryStart: started(after),
+      workingDirectory,
+    }
+    records.push({ name: 'Secondary AppImage exits while the primary stays open', ...evidence })
+    return evidence
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+    await bounded(completed, 8000, 'Secondary packaged application settlement')
+  }
 }
 
 async function readPorts(state) {
@@ -1816,6 +1895,11 @@ async function runOwnedProjectProfile() {
     }
     if (savedResults) {
       return { offlineProjectResult: await fixture.runPackagedSavedResults(args) }
+    }
+    if (projectLaunch) {
+      return {
+        offlineProjectResult: await fixture.runPackagedProjectLaunch({ ...args, launchSecondary }),
+      }
     }
     if (offlineProject === 'queue-startup-recovery') {
       return await fixture.runPackagedQueueStartupRecovery(args)

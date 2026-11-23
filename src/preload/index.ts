@@ -1869,6 +1869,11 @@ const api: StudioApi = {
       ipcRenderer.on(ipcChannels.projects.generationProgress, handler)
       return () => ipcRenderer.removeListener(ipcChannels.projects.generationProgress, handler)
     },
+    onLaunchImportAvailable: (listener) => {
+      const handler = () => listener()
+      ipcRenderer.on(ipcChannels.projects.launchImportAvailable, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.projects.launchImportAvailable, handler)
+    },
     onTabsChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {
         if (Array.isArray(tabs) && tabs.every(isProjectTab)) {
@@ -1983,6 +1988,8 @@ const api: StudioApi = {
       ),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
+    takeLaunchImport: () =>
+      invokeProject(ipcChannels.projects.takeLaunchImport, [], isProjectImportSelection),
     trashProject: (projectId) =>
       invokeProject(ipcChannels.projects.trashProject, [projectId], isVoid),
     undo: (tabId) => invokeProject(ipcChannels.projects.undo, [tabId], isProjectTab),

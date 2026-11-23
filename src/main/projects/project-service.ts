@@ -3607,7 +3607,7 @@ export class ProjectService {
     return this.toTab(tabId, coordinator)
   }
 
-  /** Call only with a path returned by Electron's main-process file picker. */
+  /** Accept an explicit path from the main-process file picker or operating system launch. */
   async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
     await this.initialize()
     const selected = await inspectImportSource(sourcePath)

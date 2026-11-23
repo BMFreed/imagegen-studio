@@ -236,6 +236,7 @@ export const ipcChannels = {
     getSmartResultPresetData: 'projects:get-smart-result-preset-data',
     importRasterImage: 'projects:import-raster-image',
     importRegionalGuidanceReferenceImage: 'projects:import-regional-guidance-reference-image',
+    launchImportAvailable: 'projects:launch-import-available',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
     listHomeCatalog: 'projects:list-home-catalog',
@@ -274,6 +275,7 @@ export const ipcChannels = {
     setGenerationVae: 'projects:set-generation-vae',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
+    takeLaunchImport: 'projects:take-launch-import',
     trashProject: 'projects:trash',
     undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
@@ -788,6 +790,7 @@ export interface ProjectApi {
   ) => () => void
   onGenerationChanged: (listener: () => void) => () => void
   onGenerationProgress: (listener: (snapshot: GenerationProgressSnapshot) => void) => () => void
+  onLaunchImportAvailable: (listener: () => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   pruneGenerationQueue: (statuses: GenerationQueueTerminalStatus[]) => Promise<ApiResult<number>>
@@ -844,6 +847,7 @@ export interface ProjectApi {
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+  takeLaunchImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   trashProject: (projectId: string) => Promise<ApiResult<void>>
   undo: (tabId: string) => Promise<ApiResult<ProjectTab>>
   updateGenerationDraft: (

@@ -376,7 +376,10 @@ function focusRegionalReferenceImport(owner: ProjectRegionalGuidanceOwner) {
     layersPanel.value?.focusRegionalReferenceImport(owner)
   }
 }
-defineExpose({ focusPresetApply, focusPresetSave, focusRegionalReferenceImport })
+function hasOpenDialog() {
+  return acceptedResultsOpen.value || dynamicPreviewOpen.value
+}
+defineExpose({ focusPresetApply, focusPresetSave, focusRegionalReferenceImport, hasOpenDialog })
 const rasterLayers = computed(() => rasterLayerViews(props.tab.layers))
 const ordinaryAcceptedLayerIds = computed(() => {
   const rasterIds = new Set(

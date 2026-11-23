@@ -315,6 +315,14 @@ entries record the state at their checkpoint.
    all 34 history results survived reopen. All five FUSE mounts released on
    ordinary close. Clean-machine setup and the shipping host matrix remain open.
    [Stock FUSE and Saved generations](./phase-5-stock-appimage-fuse-research.md)
+   On this KDE Wayland host, the stock AppImage now opens a managed `.igs`
+   from the command line at cold launch and forwards a relative path from
+   a second process to the existing window. It reuses an open tab with
+   unsaved edits, waits for open dialogs, and uses the ordinary Copy or
+   Move confirmation for an external file. The exact Projects and closed
+   index survived cancellation and reopen. Test file associations and deep
+   links separately when shipping their desktop integration.
+   [Project path handoff](./phase-5-project-launch-research.md)
    Stock AppImage Home blocks Trash while the Project is open. After close it
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project
@@ -426,6 +434,14 @@ entries record the state at their checkpoint.
    were refused, and both Projects saved and reopened. Repeat the refusal
    on the shipping candidate across the supported clean-install and upgrade
    matrix. [Packaged installed worker refusal](./phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
+   Join the historical DB29 refusal and local staged Repair in one owned
+   profile. Review Repair through the AppImage UI, verify the distinct
+   compatible slot and run the next startup against it. Check preservation
+   of the historical Project, frozen Retry inputs and previous slot across
+   the repair. This uses the local signed qualification backend. The
+   historical fixture has a synthetic model file. Trained inference
+   requires a separate pinned model control.
+   [Repair qualification](./phase-5-packaged-runtime-setup-repair-research.md)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Both NoobAI EPS and V-prediction also passed
    Add, Undo, Redo, explicit Save and reopen after one real packaged generation
