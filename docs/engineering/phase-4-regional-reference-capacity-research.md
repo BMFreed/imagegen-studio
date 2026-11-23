@@ -198,3 +198,36 @@ reports. It released 558,219,264 allocated bytes from both temporary
 directories and both generated `.igs` snapshots after verifying their
 member digests. The large synthetic PNG and package bodies were disposed.
 All 55 retained evidence files matched after cleanup.
+
+## Exact stored PNG byte boundaries
+
+InvokeAI source was rechecked at clean `4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/app/api/routers/images.py` and
+`invokeai/app/services/image_files/image_files_disk.py` decode the original.
+`invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts`
+calls `addRegionalGuidance.ts` to bind the image and its owner mask.
+`invokeai/app/invocations/sd/ip_adapter.py` and
+`invokeai/app/invocations/sd/denoise_latents.py` load the vision model and
+consume the original pixels. Studio's existing 32/96 MiB stored-PNG
+policy defines the acceptance boundary here.
+
+The fixture first imports three 512×512 originals through the actual CPU
+worker. It adopts five exact-length PNG variants through the real Project
+edit and asset owners, with regular Save, close and reopen. Each variant
+uses the corresponding canonical RGBA plane and sRGB ICC plus a private
+`vpAg` chunk with valid CRC before `IEND`. The imported region, reference,
+thumbnail and mask identities stay consistent between the two saved states.
+This controls PNG file length at the package boundary. The earlier near-limit
+run covers large decoded geometry and measured normalizer outputs.
+
+| Saved state | First PNG | Second PNG | Third PNG | Total bytes |
+| --- | ---: | ---: | ---: | ---: |
+| One byte above the per-file limit | 33,554,433 | 33,554,431 | 33,554,432 | 100,663,296 |
+| At both limits | 33,554,432 | 33,554,432 | 33,554,432 | 100,663,296 |
+
+The first state isolates the per-file rule. A total strictly above 96 MiB
+with at most three items entails an individual limit violation. The
+`20261123-r2` attempt stopped at the shared test pin reader's 32 MiB
+ceiling, before Main or worker startup. The corrected R3 test reader
+admits exactly one additional byte for this profile's fixture input.
+R3 reuses the five exact R2 PNGs and preserves the failed attempt receipt.

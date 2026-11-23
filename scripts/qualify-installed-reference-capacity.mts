@@ -158,12 +158,18 @@ if (fixture.storedReferences) {
   )
   assert.deepEqual(fixture.storedReferences.accepted[2], fixture.storedReferences.refused[2])
 }
-for (const pin of imagePins) {
+const verifyImagePin = async (pin: FilePin) => {
   assert.ok(
     pin.byteSize < (originalBoundaries || exactStoredBytes ? 36 : 1) * 1024 ** 2 &&
       pin.path.startsWith(path.join(artifactRoot, 'runs') + path.sep),
   )
-  await verify({ path: pin.path, sha256: pin.sha256, sizeBytes: pin.byteSize })
+  // Read the adjacent refused original so Generate owns the 32 MiB refusal.
+  const bytes = await bytesAt(pin.path, 32 * 1024 ** 2 + (exactStoredBytes ? 1 : 0))
+  assert.equal(bytes.length, pin.byteSize, pin.path)
+  assert.equal(sha(bytes), pin.sha256, pin.path)
+}
+for (const pin of imagePins) {
+  await verifyImagePin(pin)
 }
 
 const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
@@ -281,7 +287,7 @@ try {
     await verify(pin)
   }
   for (const pin of imagePins) {
-    await verify({ path: pin.path, sha256: pin.sha256, sizeBytes: pin.byteSize })
+    await verifyImagePin(pin)
   }
 } catch (error) {
   preservation = error
