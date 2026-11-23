@@ -3,10 +3,14 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { crc32, deflateSync } from 'node:zlib'
 
 import { expect } from '@playwright/test'
 
+import { openAppDatabase } from '../../src/main/db/database.ts'
 import { saveIgsPackage } from '../../src/main/projects/igs-package.ts'
+import { ProjectIndexRepository } from '../../src/main/projects/project-index.ts'
 import {
   createEmptyProjectDocumentV1,
   parseProjectDocumentV1,
@@ -18,8 +22,8 @@ import {
   regularFile,
 } from './packaged-noobai-import-chooser.mjs'
 
-const canvas = { height: 2, width: 2, x: 0, y: 0 }
-// The real 2×2 encodings in igs-package.test.ts. Projects vary in identity, not image size.
+const migrations = fileURLToPath(new URL('../../src/main/db/migrations/', import.meta.url))
+// Keep the real 2×2 encodings from igs-package.test.ts for the control workload.
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
   'base64',
@@ -28,8 +32,58 @@ const thumbnail = Buffer.from(
   'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
   'base64',
 )
-const pngSha256 = createHash('sha256').update(png).digest('hex')
 const thumbnailSha256 = createHash('sha256').update(thumbnail).digest('hex')
+
+function rasterFixture(size, bytes) {
+  return {
+    canvas: { height: size, width: size, x: 0, y: 0 },
+    png: bytes,
+    pngSha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+}
+
+const tinyRaster = rasterFixture(2, png)
+
+function pngChunk(name, data) {
+  const type = Buffer.from(name, 'ascii')
+  const chunk = Buffer.alloc(12 + data.length)
+  chunk.writeUInt32BE(data.length)
+  type.copy(chunk, 4)
+  data.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), 8 + data.length)
+  return chunk
+}
+
+function largeRasterFixture() {
+  const size = 1024
+  const rowBytes = size * 3
+  const texturedRows = size / 4
+  const texture = createHash('shake256', { outputLength: rowBytes * texturedRows })
+    .update('ImageGen Studio Home scale fixture v1')
+    .digest()
+  const rows = Buffer.alloc((rowBytes + 1) * size)
+  for (let y = 0; y < size; y++) {
+    const offset = y * (rowBytes + 1) + 1
+    if (y < texturedRows) {
+      texture.copy(rows, offset, y * rowBytes, (y + 1) * rowBytes)
+    } else {
+      rows.fill(y >>> 2, offset, offset + rowBytes)
+    }
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(size, 0)
+  header.writeUInt32BE(size, 4)
+  header[8] = 8 // Bits per channel.
+  header[9] = 2 // RGB.
+  const bytes = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+  assert.ok(bytes.length >= 768 * 1024 && bytes.length < 1024 * 1024)
+  return rasterFixture(size, bytes)
+}
 
 const writeJson = async (root, name, value) =>
   await writeFile(path.join(root, name), JSON.stringify(value, null, 2) + '\n', {
@@ -47,7 +101,8 @@ function scaleProjectTitle(index) {
   return `Scale Project ${String(index).padStart(4, '0')}`
 }
 
-async function writeScaleProject(filename, index, title, revision, identity) {
+async function writeScaleProject(filename, index, title, revision, identity, raster, workspaceId) {
+  const { canvas, png, pngSha256 } = raster
   const suffix = String(index).padStart(12, '0')
   const documentId = `2385c134-dc60-4fce-8ba5-${suffix}`
   const layerId = `9f310111-d280-4db3-9351-${suffix}`
@@ -91,36 +146,44 @@ async function writeScaleProject(filename, index, title, revision, identity) {
     id: `project-v1-${createHash('sha256').update(filename).digest('hex')}`,
     revision,
     title,
+    workspaceId,
   }
 }
 
-async function stageProject(workspace, index, identity) {
+async function stageProject(workspace, index, identity, raster) {
   const title = scaleProjectTitle(index)
-  const filename = path.join(workspace, `${title}.igs`)
+  const filename = path.join(workspace.directoryPath, `${title}.igs`)
   const revision = `e98c6d46-5794-4dbb-9424-${String(index).padStart(12, '0')}`
-  return await writeScaleProject(filename, index, title, revision, identity)
+  return await writeScaleProject(filename, index, title, revision, identity, raster, workspace.id)
 }
 
-async function stageProjects(workspace, count, identity) {
+async function stageProjects(workspaces, identity, raster) {
   const files = []
-  for (let index = 1; index <= count; index++) {
-    files.push(await stageProject(workspace, index, identity))
+  for (const workspace of workspaces) {
+    for (let index = 0; index < workspace.projectCount; index++) {
+      files.push(await stageProject(workspace, files.length + 1, identity, raster))
+    }
   }
   return files
 }
 
-async function assertSavedState(workspace, database, files, identity, missing) {
-  assert.deepEqual(
-    (await readdir(workspace)).sort(),
-    files.map(({ bytes }) => path.basename(bytes.path)).sort(),
-  )
+async function assertSavedState(workspaces, database, files, identity, missing) {
+  for (const { directoryPath, id } of workspaces) {
+    assert.deepEqual(
+      (await readdir(directoryPath)).sort(),
+      files
+        .filter((file) => file.workspaceId === id)
+        .map(({ bytes }) => path.basename(bytes.path))
+        .sort(),
+    )
+  }
   for (const { bytes } of files) {
     await regularFile(bytes.path)
     assert.deepEqual(await identity(bytes.path), bytes)
   }
 
   const snapshot = indexSnapshot(database)
-  const expected = files.map(({ bytes, documentId, id, revision, title }) => ({
+  const expected = files.map(({ bytes, documentId, id, revision, title, workspaceId }) => ({
     bytes: bytes.sizeBytes,
     diagnostic: null,
     documentId,
@@ -131,7 +194,7 @@ async function assertSavedState(workspace, database, files, identity, missing) {
     revision,
     title,
     trashedAt: null,
-    workspace: 'uncategorized',
+    workspace: workspaceId,
   }))
   if (missing) {
     const { original, detached } = missing
@@ -149,7 +212,7 @@ async function assertSavedState(workspace, database, files, identity, missing) {
       revision: original.revision,
       title: original.title,
       trashedAt: null,
-      workspace: 'uncategorized',
+      workspace: original.workspaceId,
     })
   }
   expected.sort((left, right) => left.id.localeCompare(right.id))
@@ -195,6 +258,14 @@ async function measureRefresh(page, refresh, cards, count, root, name) {
     )
     await expect(cards).toHaveCount(count)
     await framePair(page)
+    // A failed catalog read can settle the busy button and keep the previous cards.
+    await expect(
+      page
+        .getByRole('region', { exact: true, name: 'Home' })
+        .getByText(
+          /^(Project action failed|Workspace list unavailable|Workspace needs attention|Trash unavailable)$/,
+        ),
+    ).toHaveCount(0)
   } catch (error) {
     await writeJson(root, `${name}-refresh-failure.json`, {
       ms: performance.now() - start,
@@ -212,8 +283,8 @@ async function measureRefresh(page, refresh, cards, count, root, name) {
   }
 }
 
-async function assertCards(cards, files) {
-  await expect(cards).toHaveCount(files.length)
+async function assertCards(cards, files, timeout) {
+  await expect(cards).toHaveCount(files.length, { timeout })
   const actual = await cards.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute('aria-label')).sort(),
   )
@@ -246,6 +317,8 @@ async function verifyExternalRefresh(page, root, workspace, files, identity) {
     `${original.title} Revised`,
     'e98c6d46-5794-4dbb-9425-000000000001',
     identity,
+    tinyRaster,
+    workspace.id,
   )
   assert.equal(replacement.documentId, original.documentId)
   assert.equal(replacement.id, original.id)
@@ -253,10 +326,11 @@ async function verifyExternalRefresh(page, root, workspace, files, identity) {
   assert.notEqual(replacement.bytes.sha256, original.bytes.sha256)
 
   const addedIndex = files.length + 1
-  await assert.rejects(lstat(path.join(workspace, `${scaleProjectTitle(addedIndex)}.igs`)), {
-    code: 'ENOENT',
-  })
-  const added = await stageProject(workspace, addedIndex, identity)
+  await assert.rejects(
+    lstat(path.join(workspace.directoryPath, `${scaleProjectTitle(addedIndex)}.igs`)),
+    { code: 'ENOENT' },
+  )
+  const added = await stageProject(workspace, addedIndex, identity, tinyRaster)
   const detachedDirectory = path.join(root, 'refresh-detached')
   await mkdir(detachedDirectory, { mode: 0o700 })
   const detachedPath = path.join(detachedDirectory, path.basename(missing.bytes.path))
@@ -293,7 +367,7 @@ async function verifyExternalRefresh(page, root, workspace, files, identity) {
   }
 }
 
-async function measureHome(state, root, files, launchStart) {
+async function measureHome(state, root, files, launchStart, canvas) {
   const { page } = state
   const visibleAt = state.homeVisibleAt ?? performance.now()
   const spawnAt = state.spawnedAt ?? launchStart
@@ -304,12 +378,8 @@ async function measureHome(state, root, files, launchStart) {
   const select = (title) => grid.getByRole('button', { exact: true, name: `Select ${title}` })
   const count = files.length
 
-  await expect(cards).toHaveCount(count, { timeout: 60_000 })
+  await assertCards(cards, files, 60_000)
   await expect(grid).toBeVisible()
-  const cardNames = await cards.evaluateAll((elements) =>
-    elements.map((element) => element.getAttribute('aria-label')).sort(),
-  )
-  assert.deepEqual(cardNames, files.map(({ title }) => `Select ${title}`).sort())
   await framePair(page)
   const cardsReadyAt = performance.now()
   const viewportBeforeResize = await page.evaluate(() => ({
@@ -434,6 +504,98 @@ async function measureHome(state, root, files, launchStart) {
   }
 }
 
+async function prepareWorkspaces(appData, projectCount, linked) {
+  const defaultWorkspace = {
+    directoryPath: path.join(appData, 'workspaces/Uncategorized'),
+    displayName: 'Uncategorized',
+    id: 'uncategorized',
+    projectCount: linked ? 32 : projectCount,
+  }
+  await mkdir(defaultWorkspace.directoryPath, { mode: 0o700, recursive: true })
+  const workspaces = [defaultWorkspace]
+  if (linked) {
+    const database = openAppDatabase(appData, migrations)
+    try {
+      const repository = new ProjectIndexRepository(database.db)
+      const uncategorized = await repository.ensureDefaultWorkspace(appData)
+      assert.equal(uncategorized.directoryPath, defaultWorkspace.directoryPath)
+      assert.equal(uncategorized.id, defaultWorkspace.id)
+      // Use current workspace registration, then leave discovery to the packaged app.
+      for (const displayName of ['Scale Alpha', 'Scale Beta']) {
+        const directoryPath = path.join(appData, 'workspaces', displayName)
+        await mkdir(directoryPath, { mode: 0o700 })
+        const workspace = await repository.addWorkspace(
+          { color: 'teal', displayName },
+          directoryPath,
+        )
+        assert.equal(workspace.directoryPath, directoryPath)
+        workspaces.push({ ...workspace, projectCount: 48 })
+      }
+      assert.deepEqual(await repository.listProjects(), [])
+    } finally {
+      await database.close()
+    }
+  }
+  for (const { directoryPath } of workspaces) {
+    assert.equal(await realpath(directoryPath), directoryPath)
+    assert.deepEqual(await readdir(directoryPath), [])
+  }
+  return workspaces
+}
+
+async function measureWorkspaceNavigation(state, root, workspaces, files) {
+  const { page } = state
+  const home = page.getByRole('region', { exact: true, name: 'Home' })
+  const nav = home.getByRole('complementary', { exact: true, name: 'Workspace navigation' })
+  const grid = home.getByRole('list', { exact: true, name: 'Project grid' })
+  const cards = grid.getByRole('button', { name: /^Select / })
+  const refresh = home.getByRole('button', { exact: true, name: 'Refresh projects' })
+  const aggregate = nav.getByRole('button', { exact: true, name: 'Projects' })
+  await home.getByRole('textbox', { exact: true, name: 'Search projects' }).fill('')
+  await expect(aggregate).toHaveAttribute('aria-pressed', 'true')
+  await assertCards(cards, files, 60_000)
+  const timings = []
+  for (const [index, workspace] of workspaces.entries()) {
+    const { directoryPath, displayName, id, projectCount } = workspace
+    const expected = files.filter((file) => file.workspaceId === id)
+    assert.equal(expected.length, projectCount)
+    const button = nav.getByRole('button', { exact: true, name: `${displayName} ${projectCount}` })
+    await expect(button).toHaveAttribute('title', directoryPath)
+    const start = performance.now()
+    await button.click()
+    await expect(button).toHaveAttribute('aria-pressed', 'true')
+    await assertCards(cards, expected, 60_000)
+    await expect(refresh).not.toHaveAttribute('aria-busy', 'true', { timeout: 60_000 })
+    await framePair(page)
+    const result = { displayName, id, projectCount, selectMs: performance.now() - start }
+    // One scoped refresh exercises counts and card membership without adding three more scans.
+    if (index === workspaces.length - 1) {
+      result.refresh = await measureRefresh(
+        page,
+        refresh,
+        cards,
+        projectCount,
+        root,
+        `${state.name}-scoped`,
+      )
+      await assertCards(cards, expected, 60_000)
+    }
+    timings.push(result)
+  }
+  const start = performance.now()
+  await aggregate.click()
+  await expect(aggregate).toHaveAttribute('aria-pressed', 'true')
+  await assertCards(cards, files, 60_000)
+  await framePair(page)
+  const aggregateMs = performance.now() - start
+  for (const { displayName, projectCount } of workspaces) {
+    await expect(
+      nav.getByRole('button', { exact: true, name: `${displayName} ${projectCount}` }),
+    ).toBeVisible()
+  }
+  return { aggregateMs, workspaces: timings }
+}
+
 export async function runPackagedHomeScale({
   root,
   appData,
@@ -443,9 +605,18 @@ export async function runPackagedHomeScale({
   closeNormally,
   identity,
 }) {
-  assert.ok(['32', '512'].includes(process.env.IMAGEGEN_HOME_SCALE_PROJECTS))
+  const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
+  const linked = profile === 'linked-tiny' || profile === 'linked-raster'
+  const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
+  assert.ok(
+    linked
+      ? countArgument === '128'
+      : profile === undefined && ['32', '512'].includes(countArgument),
+    'Use 32 or 512 with the default fixture, or 128 with linked-tiny/linked-raster.',
+  )
+  assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
-  const projectCount = Number(process.env.IMAGEGEN_HOME_SCALE_PROJECTS)
+  const projectCount = Number(countArgument)
   const proof = JSON.parse(
     await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
   )
@@ -463,17 +634,23 @@ export async function runPackagedHomeScale({
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   assert.equal(await realpath(path.dirname(appData)), path.dirname(appData))
   await assert.rejects(lstat(appData), { code: 'ENOENT' })
-  const workspace = path.join(appData, 'workspaces/Uncategorized')
   const database = path.join(appData, 'database/app.sqlite')
-  await mkdir(workspace, { mode: 0o700, recursive: true })
-  assert.equal(await realpath(workspace), workspace)
-  assert.deepEqual(await readdir(workspace), [])
-
-  const files = await stageProjects(workspace, projectCount, identity)
+  const workspaces = await prepareWorkspaces(appData, projectCount, linked)
+  const raster = profile === 'linked-raster' ? largeRasterFixture() : tinyRaster
+  const files = await stageProjects(workspaces, identity, raster)
+  assert.equal(files.length, projectCount)
+  const { canvas, png, pngSha256 } = raster
   const input = {
     files,
-    preview: { height: canvas.height, pngSha256, thumbnailSha256, width: canvas.width },
+    preview: {
+      height: canvas.height,
+      pngBytes: png.length,
+      pngSha256,
+      thumbnailSha256,
+      width: canvas.width,
+    },
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
+    ...(linked && { profile, workspaces }),
   }
   await writeJson(root, 'home-scale-input.json', input)
 
@@ -484,15 +661,18 @@ export async function runPackagedHomeScale({
     const state = await launch(name)
     let measured
     try {
-      measured = await measureHome(state, root, files, launchStart)
+      measured = await measureHome(state, root, files, launchStart, canvas)
+      if (linked) {
+        measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)
+      }
       if (name === 'indexed-restart' && process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === '1') {
-        freshness = await verifyExternalRefresh(state.page, root, workspace, files, identity)
+        freshness = await verifyExternalRefresh(state.page, root, workspaces[0], files, identity)
       }
     } finally {
       await closeNormally(state)
     }
     const checked = await assertSavedState(
-      workspace,
+      workspaces,
       database,
       freshness?.expectedFiles ?? files,
       identity,

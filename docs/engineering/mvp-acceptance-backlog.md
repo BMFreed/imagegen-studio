@@ -443,9 +443,14 @@ entries record the state at their checkpoint.
    512-card indexed restart from 11.21 to 8.72 seconds and its Refresh from
    6.85 to 3.69 seconds. The latter run independently confirmed that explicit
    Refresh picked up a replacement, a new file and a moved file. The fixtures
-   use small synthetic Projects on this host. Qualify larger Rasters and
-   multiple large workspaces on the supported host matrix.
+   use small synthetic Projects on this host. A matched 128-Project check
+   across three folders also passed with 1024×1024 Rasters and merged previews.
+   It measured 5.72 seconds to the complete list on indexed restart and 2.48
+   seconds for aggregate Refresh. All three scoped views, a scoped Refresh,
+   Inspector previews and the closed indexes passed. Qualify larger populations
+   with large multi-layer Projects and the supported host matrix.
    [Home catalog performance](./phase-5-packaged-home-scale-research.md#packaged-comparison)
+   [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
