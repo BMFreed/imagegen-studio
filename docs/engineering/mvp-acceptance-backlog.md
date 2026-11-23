@@ -154,9 +154,10 @@ entries record the state at their checkpoint.
    [Anima tabletop placement](./phase-4-anima-countertop-scene-research.md)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
-   all three saved Projects, exact decoded source pixels and local
-   negative owners. The three CUDA calls and blind visual scores are the
-   remaining checks for this one-seed trial.
+   exact decoded source pixels and local negative owners. Three installed
+   CUDA calls finished. Both blind readers found a wooden box in all
+   outputs. Baseline and spatial control lost both original subjects, so
+   local negative utility stays open for this trial.
    [Anima red-apple negative](./phase-4-anima-apple-negative-research.md)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware

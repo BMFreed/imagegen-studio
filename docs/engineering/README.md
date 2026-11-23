@@ -14,12 +14,12 @@ passed all five Install Queue focus transitions with secure storage
 unavailable. The X11 missing-token control also passed. Both runs preserved
 the installed embedding across a cold reopen.
 
-## Anima red-apple negative preparation
+## Anima red-apple negative trial
 
-[Red-apple IMG preparation](./phase-4-anima-apple-negative-research.md)
-verified the same source pixels, saved Projects and frozen prompt owners
-for the baseline, left treatment and right spatial control. CUDA and
-blind visual review remain open.
+[Red-apple IMG](./phase-4-anima-apple-negative-research.md) completed all
+three installed CUDA cases. Both blind readers identified a wooden box
+in all outputs. The baseline and right-mask control lost both subjects,
+leaving the spatial visual verdict inconclusive.
 
 ## Anima tabletop placement with shared scene context
 

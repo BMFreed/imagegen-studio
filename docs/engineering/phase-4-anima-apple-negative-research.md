@@ -92,10 +92,32 @@ closed with zero denoising requests after 30.118 seconds.
 The final focused app subset passed 238 tests with zero failures or skips.
 Typecheck, scoped ESLint and the application build passed.
 
-## CUDA and visual verdict
+## Installed CUDA and visual verdict
 
-A separate host GPU workload reduced available GPU memory and system
-memory below the preflight for the bounded CUDA run. This checkpoint
-ends at CPU preparation. Run the same three cases with fresh bounds
-and current source pins, then score the original PNGs blind. The prior
-visual gate and product promise statuses stay open.
+R2 deferred CUDA at preflight. R3 rebound the same source and contract
+to Studio `8bcba3bdba1af783973e4ab798a984771421904e`.
+The three cases completed on the installed worker in 165.401 seconds,
+with 25 evaluations each. Peak sampled VRAM was 6,946 MiB. The
+zero-swap scope reached its 12 GiB limit with zero OOM events. All three
+workers and their controller exited. The independent audit passed 969
+assertions, including exact source pixels, saved Projects, 77 installed
+pins, 17 signed configuration pins and all three model bodies.
+
+Both blind readers identified a dark wooden box in the center of all
+three outputs. The pale wood surface and blue wall remained. Both the
+baseline and the right-mask control lost the apple and mug. The left
+treatment also showed neither object. The preregistered visual result
+is **INCONCLUSIVE** because the controls lost the objects that the
+experiment meant to track.
+
+The original apple ROI contained 9,906 red pixels. It contained 1,913
+after baseline, 24 after the left treatment and 74 after the right
+treatment. The readers identified no apple in any of those regions.
+The run measures this source, seed and recipe. Visual suppression and
+the product promise remain open. A matched baseline that retains the
+subjects is the remaining prerequisite for another spatial test.
+
+The run retains the original PNGs, blind observations, condition map,
+comparison, exact captured inputs and three saved Projects. The verified
+8-entry archive preserves the closed payload, including SQLite. Scratch
+and blind copies released 5,996,544 allocated bytes.
