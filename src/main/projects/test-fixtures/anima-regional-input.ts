@@ -97,6 +97,14 @@ const INSTALLED_VISUAL_SCENES = {
       'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
     ],
   },
+  'countertop-subject-weight': {
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
+    regionalTexts: [
+      '(a red apple with a small green leaf)1.5 on a continuous pale wooden tabletop in front of a plain light blue wall',
+      '(a blue ceramic mug with a loop handle)1.5 on a continuous pale wooden tabletop in front of a plain light blue wall',
+    ],
+  },
   'festival-stall': {
     globalPositive:
       'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot',

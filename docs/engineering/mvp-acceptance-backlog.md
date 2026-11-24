@@ -153,6 +153,12 @@ entries record the state at their checkpoint.
    sides. One centered and overlapped the pair, and one omitted the apple.
    The two-seed visual gate and local negative remain open.
    [Anima tabletop placement](./phase-4-anima-countertop-scene-research.md)
+   A matched tabletop follow-up raised both local subject spans to 1.5.
+   The ordinary controls replayed exactly, and all four new regional PNGs
+   retained the background. The same two of four placements passed.
+   The 123 assigned frame still overlapped the subjects at the center
+   and the 124 swapped frame still omitted the apple.
+   [Weighted tabletop subjects](./phase-4-anima-countertop-subject-weight-research.md)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

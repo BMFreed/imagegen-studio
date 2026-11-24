@@ -76,6 +76,15 @@ const scenePrompts = {
       mug: 'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
     },
   },
+  'countertop-subject-weight': {
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
+    regionalPositives: {
+      apple:
+        '(a red apple with a small green leaf)1.5 on a continuous pale wooden tabletop in front of a plain light blue wall',
+      mug: '(a blue ceramic mug with a loop handle)1.5 on a continuous pale wooden tabletop in front of a plain light blue wall',
+    },
+  },
   'festival-stall': {
     globalPositive:
       'anime illustration of a Japanese festival stall, one continuous wooden display shelf across the lower foreground, open display space, visible backdrop, medium wide shot',
@@ -211,6 +220,7 @@ function sceneRegionalInputs(
   recipe: CurrentCanvasRegionalRecipe,
   positive: string,
   regionalTexts: readonly [string, string],
+  weightedSubjects: boolean,
 ) {
   const texts =
     testCase.variant === 'ordinary'
@@ -243,10 +253,16 @@ function sceneRegionalInputs(
       expected.fill(255, row * bbox.width + x, row * bbox.width + x + width)
     }
     assert.deepEqual(Buffer.from(alpha), expected)
+    let interpretation = plainPrompt(text)
+    if (weightedSubjects) {
+      const { apple, mug } = scenePrompts['countertop-scene'].regionalPositives
+      interpretation =
+        text === regionalTexts[0] ? literalPrompt(apple, 35, 1.5) : literalPrompt(mug, 37, 1.5)
+    }
     return {
       compiled: {
         polarity: 'positive',
-        prompt: plainPrompt(text),
+        prompt: interpretation,
         sourceId: regionId(index),
         text,
       },
@@ -390,6 +406,7 @@ const ownerFiles = [
   'scripts/qualify-installed-reference-img-utility.mts',
   'src/main/projects/test-fixtures/anima-regional-input.ts',
   'src/main/projects/project-current-canvas-anima-regional-input.ts',
+  'src/shared/projects/anima-prompt-weighting.ts',
   'src/main/projects/generation-worker-client.ts',
   'worker-python/src/imagegen_worker/anima_regional.py',
   'worker-python/src/imagegen_worker/anima_regional_worker.py',
@@ -401,6 +418,7 @@ const invokeFiles = [
   'invokeai/app/invocations/anima/anima_denoise.py',
   'invokeai/app/invocations/text_encoder/anima_text_encoder.py',
   'invokeai/backend/anima/regional_prompting.py',
+  'invokeai/backend/anima/prompt_weighting.py',
   'invokeai/backend/anima/anima_transformer_patch.py',
   'invokeai/backend/krea2/regional_prompting.py',
 ]
@@ -640,7 +658,13 @@ async function main() {
             assert.equal(prepared.context.target.sha256, targetSha)
             const regional =
               'seed' in testCase
-                ? sceneRegionalInputs(testCase, recipe, selectedGlobalPositive, regionalTexts)
+                ? sceneRegionalInputs(
+                    testCase,
+                    recipe,
+                    selectedGlobalPositive,
+                    regionalTexts,
+                    sceneName === 'countertop-subject-weight',
+                  )
                 : regionalInputs(testCase, recipe, equalWeight ? 1.5 : 0.75)
             const support = sampledSupport(testCase, recipe)
             assert.deepEqual(compiledPrompts, [
