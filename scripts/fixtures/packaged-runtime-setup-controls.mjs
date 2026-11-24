@@ -144,11 +144,20 @@ async function verifyExpanded(root, manifest) {
 }
 
 /** This transport exists only in the isolated harness. No public endpoint or redirected URL. */
-export async function preparePackagedRuntimeSetupControl({ root, mode, inputs }) {
+export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, protocolRepair }) {
   assert.ok(
-    ['incompatible', 'cancel', 'corrupt', 'disk', 'success', 'rollback'].includes(mode),
+    [
+      'incompatible',
+      'cancel',
+      'corrupt',
+      'disk',
+      'success',
+      'rollback',
+      'protocol-repair',
+    ].includes(mode),
     mode,
   )
+  assert.equal(Boolean(protocolRepair), mode === 'protocol-repair')
   const runs = path.join(
     os.homedir(),
     '.codex/artifacts/imagegen-studio/runs/packaged-runtime-setup',
@@ -156,8 +165,8 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
   assert.ok(root.startsWith(`${runs}/`) && path.resolve(root) === root)
   assert.equal(await realpath(root), root)
   assert.equal((await lstat(root)).uid, process.getuid())
-  const dataRoot = path.join(root, 'data/imagegen-studio')
-  await absence(dataRoot)
+  const dataRoot = protocolRepair?.appData ?? path.join(root, 'data/imagegen-studio')
+  if (!protocolRepair) await absence(dataRoot)
   const runtime = path.join(dataRoot, 'runtime')
   const downloads = path.join(dataRoot, 'cache/runtime-downloads')
   const cache = path.join(downloads, 'qualification-runtime-transport')
@@ -183,6 +192,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
     disk: ['/runtime.zip', '/big-lama.pt'],
     success: ['/runtime.zip', '/big-lama.pt', '/big-lama.pt'],
     rollback: ['/runtime.zip', '/big-lama.pt', '/big-lama.pt'],
+    'protocol-repair': ['/runtime.zip', '/big-lama.pt'],
   }[mode]
   const sources = new Map([
     ['/runtime.zip', inputs.archive],
@@ -291,6 +301,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
           trustedKeys: metadataPin(inputs.trustedKeys),
           unsupportedDriverProbe: mode === 'incompatible',
           ...(mode === 'rollback' ? { postActivationCudaFault: true } : {}),
+          ...(protocolRepair ? { repairDataRoot: dataRoot } : {}),
         },
         null,
         2,
@@ -306,8 +317,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
     config,
     stop,
     async runSuccess({ launch, closeNormally }) {
-      assert.ok(mode === 'success' || mode === 'rollback')
-      return await runPackagedRuntimeSetupSuccess({
+      const context = {
         root,
         dataRoot,
         inputs,
@@ -318,6 +328,15 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
         verifyExpanded,
         launch,
         closeNormally,
+      }
+      if (protocolRepair) {
+        const { runPackagedRuntimeProtocolRepair } =
+          await import('./packaged-runtime-protocol-repair.mjs')
+        return await runPackagedRuntimeProtocolRepair({ ...context, profile: protocolRepair })
+      }
+      assert.ok(mode === 'success' || mode === 'rollback')
+      return await runPackagedRuntimeSetupSuccess({
+        ...context,
         rollback: mode === 'rollback',
       })
     },

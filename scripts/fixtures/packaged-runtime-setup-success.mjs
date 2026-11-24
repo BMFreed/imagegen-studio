@@ -97,7 +97,7 @@ function assertTransfer(request, route, input) {
   })
 }
 
-async function observeSetup(page, mode, rollback = false) {
+async function observeSetup(page, mode, rollback = false, downloadRuntime = mode === 'install') {
   await page.evaluate(() => {
     const stages = []
     const stop = globalThis.api.runtime.onInstallationProgressChanged(({ operation }) => {
@@ -138,7 +138,7 @@ async function observeSetup(page, mode, rollback = false) {
   const stages = await page.evaluate(() => globalThis.readPackagedSetupSuccessStages())
   const required = [
     'preparing-runtime',
-    ...(mode === 'install' ? ['downloading-runtime'] : []),
+    ...(downloadRuntime ? ['downloading-runtime'] : []),
     'extracting-runtime',
     'installing-outpaint',
     'copying-runtime',
@@ -152,7 +152,7 @@ async function observeSetup(page, mode, rollback = false) {
     index = stages.indexOf(stage, index + 1)
     assert.notEqual(index, -1, `Expected ${stage} in ${stages.join(', ')}`)
   }
-  assert.equal(stages.includes('downloading-runtime'), mode === 'install')
+  assert.equal(stages.includes('downloading-runtime'), downloadRuntime)
   return { terminal, stages }
 }
 
@@ -164,6 +164,8 @@ async function sync(directory) {
     await descriptor.close()
   }
 }
+
+export { assertReady, assertTransfer, bytesAvailable, fileReceipt, observeSetup, snapshotSlot }
 
 async function parkOutpaint(file, destination, pin) {
   await fileReceipt(file, pin)

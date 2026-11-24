@@ -45,6 +45,7 @@ interface SetupConfig {
   appVersion: typeof appVersion
   port: number
   postActivationCudaFault: boolean
+  repairDataRoot?: string
   runtimeEnvelope: BytePin
   schemaVersion: 1
   transportEnvelope: BytePin
@@ -74,7 +75,6 @@ export async function createPackagedRuntimeSetupManager(
   assertChild(qualificationRuns, configPath)
   const run = path.dirname(configPath)
   assert.notEqual(run, qualificationRuns)
-  assert.equal(dataRoot, path.join(run, 'data/imagegen-studio'))
   assert.equal(dataRoot, roots.appDataDir)
   for (const directory of [run, dataRoot]) {
     assert.equal(await realpath(directory), directory)
@@ -82,6 +82,23 @@ export async function createPackagedRuntimeSetupManager(
     assert.ok(info.isDirectory() && info.uid === uid)
   }
   const config = readConfig(await pinnedBytes(configPath, uid, 16 * 1024))
+  if (config.repairDataRoot === undefined) {
+    assert.equal(dataRoot, path.join(run, 'data/imagegen-studio'))
+  } else {
+    // The historical venv embeds absolute paths. Its canonical AppData path
+    // is mounted over the owned state for this one private fixture.
+    assert.match(path.basename(run), /^protocol-repair(?:-r(?:[2-9]|[1-9]\d+))?$/)
+    assert.equal(dataRoot, config.repairDataRoot)
+    assertChild(path.join(artifacts, 'runs/packaged-installed-engine'), dataRoot)
+    assert.equal(path.basename(dataRoot), 'imagegen-studio')
+    const state = path.join(path.dirname(run), `${path.basename(run)}-state`)
+    assert.equal(await realpath(state), state)
+    const [owned, mounted] = await Promise.all(
+      [state, dataRoot].map((directory) => lstat(directory, { bigint: true })),
+    )
+    assert.ok(owned.isDirectory() && owned.uid === BigInt(uid))
+    assert.deepEqual([mounted.dev, mounted.ino], [owned.dev, owned.ino])
+  }
   const repairFault = config.postActivationCudaFault
     ? createPostActivationCudaFault(roots, uid)
     : undefined
@@ -365,6 +382,7 @@ function readConfig(bytes: Buffer): SetupConfig {
         'appVersion',
         'port',
         'postActivationCudaFault',
+        'repairDataRoot',
         'runtimeEnvelope',
         'schemaVersion',
         'transportEnvelope',
@@ -385,10 +403,17 @@ function readConfig(bytes: Buffer): SetupConfig {
       typeof value.postActivationCudaFault === 'boolean',
   )
   assert.ok(!(value.unsupportedDriverProbe === true && value.postActivationCudaFault === true))
+  assert.ok(
+    value.repairDataRoot === undefined ||
+      (typeof value.repairDataRoot === 'string' &&
+        value.unsupportedDriverProbe !== true &&
+        value.postActivationCudaFault !== true),
+  )
   return {
     appVersion,
     port,
     postActivationCudaFault: value.postActivationCudaFault === true,
+    repairDataRoot: value.repairDataRoot,
     runtimeEnvelope: readPin(value.runtimeEnvelope),
     schemaVersion: 1,
     transportEnvelope: readPin(value.transportEnvelope),

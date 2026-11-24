@@ -434,14 +434,14 @@ entries record the state at their checkpoint.
    were refused, and both Projects saved and reopened. Repeat the refusal
    on the shipping candidate across the supported clean-install and upgrade
    matrix. [Packaged installed worker refusal](./phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
-   Join the historical DB29 refusal and local staged Repair in one owned
-   profile. Review Repair through the AppImage UI, verify the distinct
-   compatible slot and run the next startup against it. Check preservation
-   of the historical Project, frozen Retry inputs and previous slot across
-   the repair. This uses the local signed qualification backend. The
-   historical fixture has a synthetic model file. Trained inference
-   requires a separate pinned model control.
-   [Repair qualification](./phase-5-packaged-runtime-setup-repair-research.md)
+   The local signed qualification AppImage joined DB29 upgrade, installed
+   protocol-2 refusal and explicit staged Repair in one owned profile.
+   A distinct protocol-1 slot reached Ready again on cold startup. The
+   original slot, historical Raster and frozen Retry inputs survived.
+   Explicit Save produced both CPU previews and the exact package reopened.
+   The historical model is synthetic. Shipping-host and trained inference
+   checks retain their separate gates.
+   [Historical protocol Repair](./phase-5-packaged-runtime-protocol-repair-research.md)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Both NoobAI EPS and V-prediction also passed
    Add, Undo, Redo, explicit Save and reopen after one real packaged generation

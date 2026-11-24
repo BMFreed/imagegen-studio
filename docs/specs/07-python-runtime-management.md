@@ -725,6 +725,13 @@ preserved the canceled row and frozen files. Explicit Save retained the
 edited prompt and the historical Raster under an unavailable preview, then
 reopened the same package. [Installed worker evidence](../engineering/phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
 
+The local signed qualification AppImage joined the DB29 upgrade and
+protocol-2 refusal with explicit Repair in one profile. The previous slot
+and frozen Retry inputs survived, the new protocol-1 slot reached Ready
+after cold restart, and the historical Raster saved with rendered CPU
+previews and reopened. The historical model was synthetic.
+[Historical protocol Repair](../engineering/phase-5-packaged-runtime-protocol-repair-research.md)
+
 ### Application database backup
 
 [Startup SQLite backup](../engineering/phase-5-database-migration-backup-research.md)

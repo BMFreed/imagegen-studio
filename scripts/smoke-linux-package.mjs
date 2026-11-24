@@ -39,6 +39,7 @@ import {
 const execute = promisify(execFile)
 const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
+const protocolRepair = runtimeSetupControl === 'protocol-repair'
 const noobaiPreviewMode = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
 const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
 const noobaiComponentModes = ['lora', 'embedding', 'vae']
@@ -277,9 +278,15 @@ assert.equal(
 )
 assert.ok(
   runtimeSetupControl === undefined ||
-    (['incompatible', 'cancel', 'corrupt', 'disk', 'success', 'rollback'].includes(
-      runtimeSetupControl,
-    ) &&
+    ([
+      'incompatible',
+      'cancel',
+      'corrupt',
+      'disk',
+      'success',
+      'rollback',
+      'protocol-repair',
+    ].includes(runtimeSetupControl) &&
       !trainedFixture &&
       !historicalFixture &&
       !installedEngineReport &&
@@ -601,7 +608,13 @@ if (noobaiCatalog) {
   assert.equal(predecessor.noobaiInstallation.normalPhysicalExits, 2)
   assert.deepEqual(predecessor.packageBefore, await identity(appImage))
 }
+const protocolRepairProfile = protocolRepair
+  ? await (
+      await import('./fixtures/packaged-runtime-protocol-repair.mjs')
+    ).readProtocolRepairProfile({ root, appImage, identity })
+  : null
 const appData =
+  protocolRepairProfile?.appData ??
   legacyNoobaiProfile?.appData ??
   engine?.dataRoot ??
   path.join(noobaiCatalog ?? root, 'data/imagegen-studio')
@@ -1030,6 +1043,27 @@ if (runtimeSetupControl) {
   ]) {
     sourcePaths.push(path.join(repo, `scripts/fixtures/${fixture}.mjs`))
   }
+}
+if (protocolRepair) {
+  sourcePaths.push(
+    ...[
+      'scripts/prepare-packaged-runtime-setup.mjs',
+      'scripts/fixtures/packaged-runtime-setup-backend.ts',
+      'scripts/fixtures/packaged-runtime-protocol-repair.mjs',
+      'scripts/fixtures/packaged-runtime-protocol-repair-state.mjs',
+      'scripts/fixtures/packaged-runtime-protocol-repair-profile.py',
+      'scripts/fixtures/packaged-runtime-protocol-repair-namespace.sh',
+      'scripts/fixtures/packaged-worker-protocol.mjs',
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+      'scripts/fixtures/application-state-upgrade-controls.mjs',
+      'scripts/fixtures/application-state-upgrade-native.mjs',
+      'src/main/db/migrations/0030_model_reference_identity.sql',
+      'src/main/projects/igs-package.ts',
+      'src/main/runtime/index.ts',
+      'src/main/index.ts',
+      'worker-python/src/imagegen_worker/srgb.icc',
+    ].map((name) => path.join(repo, name)),
+  )
 }
 if (noobaiPreviewMode)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-preview-ui.mjs'))
@@ -2171,6 +2205,7 @@ try {
       root,
       mode: runtimeSetupControl,
       inputs,
+      protocolRepair: protocolRepairProfile,
     })
   }
   if (updateCheckMode) {
@@ -2207,10 +2242,12 @@ try {
       ? await (async () => {
           let result
           const fullLifecycle =
-            runtimeSetupControl === 'success' || runtimeSetupControl === 'rollback'
+            runtimeSetupControl === 'success' ||
+            runtimeSetupControl === 'rollback' ||
+            protocolRepair
           if (fullLifecycle) {
             result = await setupControl.runSuccess({ launch, closeNormally })
-            assert.equal(lifetimes.length, 4)
+            assert.equal(lifetimes.length, protocolRepair ? 2 : 4)
             assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
           } else {
             const state = await launch(runtimeSetupControl)
