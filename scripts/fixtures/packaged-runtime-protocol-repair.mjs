@@ -1,8 +1,12 @@
 /** Joined historical database upgrade, installed protocol refusal and reviewed runtime Repair. */
 import assert from 'node:assert/strict'
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
+import { expect } from '@playwright/test'
+
+import { snapshotDatabase } from './application-state-upgrade-fixture.mjs'
 import { prepareHistoricalProtocolRepair } from './packaged-runtime-protocol-repair-state.mjs'
 import {
   assertReady,
@@ -285,4 +289,100 @@ export async function runPackagedRuntimeProtocolRepair({
     restarted,
     requests: structuredClone(requests),
   }
+}
+
+/** Add one trained control after retaining both unmodified historical lifetimes. */
+export async function runTrainedAfterProtocolRepair({
+  root,
+  dataRoot,
+  repair,
+  launch,
+  closeNormally,
+  identity,
+  bindWorker,
+}) {
+  const { prepareRepairedTrainedModel } =
+    await import('./packaged-runtime-protocol-repair-model.mjs')
+  const { runRepairedTrainedGeneration } = await import('./packaged-signed-trained-generation.mjs')
+  const runtime = path.join(dataRoot, 'runtime')
+  const pointerFile = path.join(runtime, 'current-runtime.json')
+  const journalFile = path.join(runtime, 'runtime-installation.json')
+  const pointerBytes = await readFile(pointerFile)
+  const pointer = JSON.parse(pointerBytes)
+  assert.equal(pointer.runtimeId, repair.cold.runtimeId)
+  assert.equal(pointerBytes.toString('base64'), repair.journal.candidatePointer)
+  const databasePath = path.join(dataRoot, 'database/app.sqlite')
+  const historical = snapshotDatabase(databasePath, { closed: true })
+  const [prior] = historical.tables.generation_queue_item.rows
+  assert.equal(historical.tables.generation_queue_item.rows.length, 1)
+  assert.equal(prior.status, 'canceled')
+  assert.equal(prior.status_sequence, repair.restarted.queueStatusSequence)
+  const { fixture, source, registration } = await prepareRepairedTrainedModel({ dataRoot, root })
+  const trained = {
+    fixture: { ...fixture, runtimeId: pointer.runtimeId },
+    databasePath,
+    python: pointer.pythonExecutable,
+    pythonPath: await realpath(pointer.pythonExecutable),
+  }
+  const state = await launch('protocol-repair-trained')
+  const main = await inspectProtocolMain(state.mainPid)
+  const otherProjectTitle = repair.opened.title
+  await state.page.getByRole('button', { name: `Open ${otherProjectTitle}`, exact: true }).click()
+  await expect(state.page.getByRole('tab', { name: otherProjectTitle, exact: true })).toBeVisible()
+  const job = await runRepairedTrainedGeneration({
+    state: {
+      page: state.page,
+      pid: state.mainPid,
+      checks: state.checks,
+    },
+    trained,
+    root,
+    bindWorker: () => bindWorker(state),
+    otherProjectTitle,
+    prior,
+  })
+  await closeNormally(state)
+  const closed = snapshotDatabase(databasePath, { closed: true })
+  assert.equal(closed.integrityCheck, 'ok')
+  assert.deepEqual(closed.foreignKeyCheck, [])
+  assert.deepEqual(closed.schema, historical.schema)
+  for (const [name, table] of Object.entries(historical.tables)) {
+    const after = closed.tables[name]
+    for (const row of table.rows) {
+      if (name === 'project_index') {
+        const [indexed] = after.rows.filter(
+          ({ local_project_key }) => local_project_key === row.local_project_key,
+        )
+        assert.ok(indexed)
+        // Opening the Project and refreshing Home advance these two catalog timestamps.
+        for (const key of ['last_opened_at', 'indexed_at']) {
+          assert.ok(Date.parse(indexed[key]) >= Date.parse(row[key]), key)
+        }
+        assert.deepEqual(
+          { ...indexed, last_opened_at: row.last_opened_at, indexed_at: row.indexed_at },
+          row,
+        )
+      } else {
+        assert.ok(
+          after.rows.some((value) => JSON.stringify(value) === JSON.stringify(row)),
+          `Preserve historical row in ${name}`,
+        )
+      }
+    }
+  }
+  const unchangedFiles = [...repair.startup.frozen, repair.restarted.project, repair.startup.backup]
+  for (const { path: file, sha256, sizeBytes } of unchangedFiles) {
+    assert.deepEqual(await identity(file), { path: file, sha256, sizeBytes })
+  }
+  assert.deepEqual(await readFile(pointerFile), pointerBytes)
+  assert.deepEqual(JSON.parse(await readFile(journalFile, 'utf8')), repair.journal)
+  assert.deepEqual(await snapshotSlot(runtime, pointer), repair.slot)
+  const model = await identity(fixture.files[0].path)
+  assert.equal(model.sha256, fixture.files[0].sha256)
+  assert.equal(model.sizeBytes, fixture.files[0].byteSize)
+  const finalDatabase = path.join(root, 'after-repair-trained.sqlite')
+  await copyFile(databasePath, finalDatabase, constants.COPYFILE_EXCL)
+  const database = await identity(finalDatabase)
+  assert.deepEqual(database, { ...(await identity(databasePath)), path: finalDatabase })
+  return { main, job, database, source, model, registration }
 }

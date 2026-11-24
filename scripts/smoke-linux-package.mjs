@@ -40,6 +40,10 @@ const execute = promisify(execFile)
 const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
 const protocolRepair = runtimeSetupControl === 'protocol-repair'
+const protocolRepairTrainedFlag = process.env.IMAGEGEN_LINUX_PACKAGE_PROTOCOL_REPAIR_TRAINED
+const protocolRepairTrained = protocolRepairTrainedFlag === '1'
+assert.ok(protocolRepairTrainedFlag === undefined || (protocolRepair && protocolRepairTrained))
+const boundedTrained = Boolean(trainedFixture || protocolRepairTrained)
 const noobaiPreviewMode = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
 const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
 const noobaiComponentModes = ['lora', 'embedding', 'vae']
@@ -104,7 +108,7 @@ assert.ok(
   'Use IMAGEGEN_LINUX_PACKAGE_FUSE=1 with a supported private KDE case.',
 )
 assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeWaylandKeyboard)
-const nativeMemoryGiB = trainedFixture ? 12 : 4
+const nativeMemoryGiB = boundedTrained ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
   : runtimeSetupControl
@@ -1065,6 +1069,18 @@ if (protocolRepair) {
     ].map((name) => path.join(repo, name)),
   )
 }
+if (protocolRepairTrained) {
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-runtime-protocol-repair-model.mjs',
+      'scripts/fixtures/packaged-installed-models.mjs',
+      'scripts/fixtures/packaged-installed-trained-generation.mjs',
+      'scripts/fixtures/packaged-signed-trained-generation.mjs',
+      'src/main/db/database.ts',
+      'src/main/models/model-repository.ts',
+    ].map((name) => path.join(repo, name)),
+  )
+}
 if (noobaiPreviewMode)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-preview-ui.mjs'))
 if (noobaiInstall)
@@ -1111,7 +1127,7 @@ function assertAggregate(checks) {
   for (const check of checks) {
     for (const group of check.groups) {
       assert.equal(group.swapMax, '0')
-      const limit = trained && !ownedScopes.has(group.group) ? 2 : nativeMemoryGiB
+      const limit = boundedTrained && !ownedScopes.has(group.group) ? 2 : nativeMemoryGiB
       assert.ok(
         /^\d+$/.test(group.memoryMax) && BigInt(group.memoryMax) <= BigInt(limit) * 1024n ** 3n,
       )
@@ -1120,7 +1136,7 @@ function assertAggregate(checks) {
   }
   const aggregate = [...groups.values()].reduce((total, value) => total + value, 0n)
   assert.ok(
-    aggregate <= BigInt(trained ? 14 : 8) * 1024n ** 3n,
+    aggregate <= BigInt(boundedTrained ? 14 : 8) * 1024n ** 3n,
     'Observed native groups exceed the qualification aggregate bound.',
   )
   return { memoryMaxBytes: String(aggregate), groups: [...groups.keys()], zeroSwap: true }
@@ -1215,7 +1231,7 @@ async function connect(state) {
     } finally {
       await session.detach()
     }
-    if (trained) {
+    if (boundedTrained) {
       const expectedScope = `app-imagegen\\x2dstudio-${state.mainPid}.scope`
       await expect
         .poll(
@@ -2247,7 +2263,30 @@ try {
             protocolRepair
           if (fullLifecycle) {
             result = await setupControl.runSuccess({ launch, closeNormally })
-            assert.equal(lifetimes.length, protocolRepair ? 2 : 4)
+            if (protocolRepairTrained) {
+              await writeJson('historical-repair-complete.json', result)
+              const { runTrainedAfterProtocolRepair } =
+                await import('./fixtures/packaged-runtime-protocol-repair.mjs')
+              const trainedAfterRepair = await runTrainedAfterProtocolRepair({
+                root,
+                dataRoot: appData,
+                repair: result,
+                launch,
+                closeNormally,
+                identity,
+                async bindWorker(state) {
+                  state.checks.push(
+                    await boundQualificationProcess(state.mainPid, {
+                      deadlineSeconds: nativeDeadlineSeconds,
+                      execute: boundedExecute,
+                    }),
+                  )
+                  state.aggregateLimits = assertAggregate(state.checks)
+                },
+              })
+              result = { ...result, trainedAfterRepair }
+            }
+            assert.equal(lifetimes.length, protocolRepairTrained ? 3 : protocolRepair ? 2 : 4)
             assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
           } else {
             const state = await launch(runtimeSetupControl)
@@ -2505,7 +2544,7 @@ try {
           privateDesktop
         ? {}
         : { defaultProviderUnavailable: true }),
-    nativeInferenceQualified: Boolean(trainedGeneration),
+    nativeInferenceQualified: Boolean(trainedGeneration || runtimeSetup?.trainedAfterRepair),
     shippingTrustQualified: false,
     cleanMachineInstallQualified: false,
     applicationUpdateQualified: false,

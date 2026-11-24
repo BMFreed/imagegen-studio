@@ -118,3 +118,71 @@ closed DB30 bodies, the unchanged frozen inputs and staging inventory,
 and all 3,072 decoded preview pixels. Both lifetime receipts and the
 wrapper scope showed physical exit. Compact evidence is retained under
 `runs/packaged-runtime-setup/20261124-protocol-repair`.
+
+## Trained CUDA control on the repaired slot
+
+Production base `b6e1ea4526d78aa8c2999505b4f166ccd2b290e1`.
+The follow-up adds one bounded trained lifetime to the same owned DB29
+Repair scenario. It first retains both historical lifetimes and then
+registers the already available exact NoobAI EPS checkpoint using the
+verified catalog publisher. The catalog borrows the 6,938,040,416-byte
+file at its canonical path. The closed-profile comparison allows just
+the three expected catalog rows at registration.
+
+Fresh InvokeAI source at `4875d96531ca6712b288f6e660fcbb34143408c1`
+includes `model_install_default.py::register_path` and `_register`
+under `invokeai/app/services/model_install`, the SDXL caller and
+`buildSDGraph` in `invokeai/frontend/webv2/src/features/generation/core/graph.ts`,
+and `DenoiseLatentsInvocation.invoke` in `invokeai/app/invocations/sd/denoise_latents.py`.
+The queue caller is `invokeai/app/api/routers/session_queue.py::enqueue_batch`
+and its `session_queue_default.py` implementation. The clean Invoke Launcher
+`c267bdb439519216b277a7a8c6ad408b9d79efce` still connects Repair through
+`src/renderer/features/InstallFlow/state.ts` and `src/main/install-manager.ts`.
+This test reuses the existing Studio generation, Repair and catalog owners.
+
+The trained case uses the [signed CUDA control](./phase-5-signed-appimage-cuda-research.md)
+with a blank 256×256 target, three Euler/Normal steps, CFG 4, fixed seed 0,
+and embedded VAE. It requires the same frozen target PNG, result PNG and
+decoded pixels. It observes the candidate interpreter's exact process on
+CUDA, saves only after explicit Add, and reopens the accepted Project.
+The historical queue row and files must survive, including the DB29
+backup and the original saved Raster package.
+
+The first trained run matched the retained target and result PNGs, reached
+explicit Add, Save and reopen, and closed all three lifetimes normally.
+Its final fixture check rejected the renewed historical index timestamp.
+The closed database comparison showed that the historical Project row
+advanced only `last_opened_at` and `indexed_at`. The replay requires these
+two timestamps to advance monotonically and every other historical Project
+field to match. It also checks SQLite integrity, foreign keys and the
+unchanged schema after the third close.
+
+The final replay `20261124-protocol-repair-trained-r2` passed in 271 seconds
+with three normal AppImage exits. The mounted historical slot, repaired
+pointer and journal, frozen Retry row and files, and saved historical
+Raster package survived the additional generation. The accepted index
+contains the one new trained result.
+
+The new slot's installed CUDA worker ran steps 1–3 and reached a sampled
+7,434 MiB of VRAM. The trained AppImage cgroup peak was 9,225,080,832 bytes.
+Each lifetime used a 12 GiB AppImage scope and a 2 GiB controller service
+with zero swap. The repair lifetime reached the AppImage cap with no OOM.
+The target and 126,590-byte output matched the earlier control exactly.
+The saved Raster's decoded output SHA-256 is
+`e4c63ccbf468d39643e73ad43ed3b3c1bb08f5821524f9526c78602a28b5e3e0`.
+
+The replay reused the verified AppImage bytes from the first attempt.
+AppImage SHA-256
+`f71b79b60a86b0749cb6a8db4f105153263f9417996953340468ac5e54137aff`.
+Its ASAR matched the earlier local Repair package. Coverage is one NoobAI
+EPS TXT request on the local RTX 4080 and qualification transport.
+
+Independent readback matched the embedded ASAR and 42 build members,
+26 native source pins, the signed wheel's 73 installed worker files and
+the full borrowed checkpoint. It checked the checkpoint and online
+backup at DB29 and the closed reopen and trained stores at DB30.
+It decoded the stored Raster and previews, checked the native process
+identities and confirmed the same target and result bytes as the prior
+control. Typecheck, app build, scoped lint and 99 focused tests passed.
+Both attempts retain their compact evidence under
+`runs/packaged-runtime-setup/20261124-protocol-repair-trained[-r2]`.

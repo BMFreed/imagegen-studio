@@ -439,8 +439,11 @@ entries record the state at their checkpoint.
    A distinct protocol-1 slot reached Ready again on cold startup. The
    original slot, historical Raster and frozen Retry inputs survived.
    Explicit Save produced both CPU previews and the exact package reopened.
-   The historical model is synthetic. Shipping-host and trained inference
-   checks retain their separate gates.
+   A third AppImage lifetime used the repaired slot for one real NoobAI EPS
+   CUDA job with a separate exact checkpoint. Both PNGs matched the earlier
+   control. Add, Save and reopen retained the accepted Raster and provenance,
+   while the historical canceled job and its frozen inputs survived.
+   Repeat on the shipping artifact and supported host matrix.
    [Historical protocol Repair](./phase-5-packaged-runtime-protocol-repair-research.md)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Both NoobAI EPS and V-prediction also passed

@@ -124,12 +124,24 @@ async function verifyEntry(state, fixture) {
   return status
 }
 
-async function runJob({ state, trained, requested, projectFile, prior, root, bindWorker }) {
+async function runJob({
+  state,
+  trained,
+  requested,
+  projectFile,
+  prior,
+  historicalRow,
+  root,
+  bindWorker,
+  evidenceName = `trained-${state.version === '0.2.0' ? 'b' : 'c'}-generation`,
+}) {
   const { page } = state
   const { fixture, databasePath } = trained
   const { project, tab } = requested
   await expect(page.locator('input[aria-label="Images per click"]')).toHaveValue('1')
-  const priorRows = prior ? [prior.row] : []
+  assert.ok(!(historicalRow && prior))
+  const priorRow = prior?.row ?? historicalRow
+  const priorRows = priorRow ? [priorRow] : []
   const priorReceipts = prior ? [prior.receipt] : []
   const initial = snapshotDatabase(databasePath).tables
   assert.deepEqual(initial.generation_queue_item.rows, priorRows)
@@ -158,10 +170,10 @@ async function runJob({ state, trained, requested, projectFile, prior, root, bin
       async () => {
         const rows = snapshotDatabase(databasePath).tables.generation_queue_item.rows
         assert.deepEqual(
-          rows.filter((item) => item.id === prior?.row.id),
+          rows.filter((item) => item.id === priorRow?.id),
           priorRows,
         )
-        const newRows = rows.filter((item) => item.id !== prior?.row.id)
+        const newRows = rows.filter((item) => item.id !== priorRow?.id)
         assert.ok(newRows.length <= 1, 'Generate must admit exactly one new job.')
         row = newRows[0]
         if (!row) {
@@ -218,13 +230,13 @@ async function runJob({ state, trained, requested, projectFile, prior, root, bin
   }
   const receipts = snapshotDatabase(databasePath).tables.generation_candidate_receipt.rows
   assert.deepEqual(
-    receipts.filter((item) => item.queue_item_id === prior?.row.id),
+    receipts.filter((item) => item.queue_item_id === priorRow?.id),
     priorReceipts,
   )
   assert.equal(receipts.length, priorReceipts.length + 1)
   const receipt = receipts.find((item) => item.queue_item_id === row.id)
   assert.ok(receipt)
-  const evidence = path.join(root, `trained-${state.version === '0.2.0' ? 'b' : 'c'}-generation`)
+  const evidence = path.join(root, evidenceName)
   await mkdir(evidence, { mode: 0o700 })
   await retainGeneration({
     row,
@@ -268,11 +280,9 @@ async function runJob({ state, trained, requested, projectFile, prior, root, bin
   return { row, candidate, receipt, progress, worker, gpuSamples, evidence }
 }
 
-export async function runSignedTrainedBefore({ state, trained, root, bindWorker }) {
-  assert.equal(state.version, '0.2.0')
+async function createSavedProject(state, trained, root, savedName) {
   const { page } = state
   const { fixture } = trained
-  const status = await verifyEntry(state, fixture)
   await page.getByRole('button', { name: 'Open Home', exact: true }).click()
   const requested = await createAndAuthor(page, fixture, root, 1)
   const { project } = requested
@@ -284,12 +294,25 @@ export async function runSignedTrainedBefore({ state, trained, root, bindWorker 
   assert.ok(projectFile)
   assert.equal(path.dirname(projectFile), path.join(fixture.appData, 'workspaces/Uncategorized'))
   assert.equal(path.extname(projectFile), '.igs')
-  const saved = await retainPackage(projectFile, path.join(root, 'trained-after-b-save.igs'))
+  const saved = await retainPackage(projectFile, path.join(root, savedName))
   const { project: savedProject } = await readIgsPackage(saved.copy.path)
   assert.equal(savedProject.documentId, requested.tab.documentId)
   assert.equal(savedProject.documentRevision, requested.tab.documentRevision)
   assert.deepEqual(savedProject.layers, [])
+  return { requested, projectFile, saved }
+}
 
+export async function runSignedTrainedBefore({ state, trained, root, bindWorker }) {
+  assert.equal(state.version, '0.2.0')
+  const { page } = state
+  const status = await verifyEntry(state, trained.fixture)
+  const { requested, projectFile, saved } = await createSavedProject(
+    state,
+    trained,
+    root,
+    'trained-after-b-save.igs',
+  )
+  const { project } = requested
   const job = await runJob({ state, trained, requested, projectFile, root, bindWorker })
   const generated = await readTab(page, project.id)
   assert.equal(generated.dirty, false)
@@ -352,7 +375,94 @@ export async function runSignedTrainedAfter({
     root,
     bindWorker,
   })
-  assert.deepEqual(await packageWitness(projectFile), before.saved.original)
+  return await acceptAndReopen({
+    state,
+    trained,
+    root,
+    requested,
+    projectFile,
+    initialPackage: before.saved.original,
+    savedName: 'trained-after-c-save.igs',
+    status,
+    job,
+    otherProjectTitle,
+  })
+}
+
+export async function runRepairedTrainedGeneration({
+  state,
+  trained,
+  root,
+  bindWorker,
+  otherProjectTitle,
+  prior,
+}) {
+  assert.equal(prior.status, 'canceled')
+  const status = await verifyEntry(state, trained.fixture)
+  const { requested, projectFile, saved } = await createSavedProject(
+    state,
+    trained,
+    root,
+    'trained-after-repair-before-generation.igs',
+  )
+  const job = await runJob({
+    state,
+    trained,
+    requested,
+    projectFile,
+    historicalRow: prior,
+    root,
+    bindWorker,
+    evidenceName: 'trained-after-repair-generation',
+  })
+  const accepted = await acceptAndReopen({
+    state,
+    trained,
+    root,
+    requested,
+    projectFile,
+    initialPackage: saved.original,
+    savedName: 'trained-after-repair-accepted.igs',
+    status,
+    job,
+    otherProjectTitle,
+  })
+  const tables = snapshotDatabase(trained.databasePath).tables
+  const queue = tables.generation_queue_item.rows
+  assert.equal(queue.length, 2)
+  assert.deepEqual(
+    queue.find(({ id }) => id === prior.id),
+    prior,
+  )
+  assert.deepEqual(
+    queue.find(({ id }) => id === job.row.id),
+    job.row,
+  )
+  assert.deepEqual(tables.generation_candidate_receipt.rows, [job.receipt])
+  const [result, ...otherResults] = tables.project_accepted_result_index.rows
+  assert.equal(otherResults.length, 0)
+  assert.equal(result.local_project_key, accepted.projectId)
+  assert.equal(result.document_revision, accepted.reopenedRevision)
+  assert.equal(result.model_file_sha256, trained.fixture.model.ref.fileSha256)
+  return { ...accepted, beforeGeneration: saved, historicalQueueRow: prior, acceptedIndex: result }
+}
+
+async function acceptAndReopen({
+  state,
+  trained,
+  root,
+  requested,
+  projectFile,
+  initialPackage,
+  savedName,
+  status,
+  job,
+  otherProjectTitle,
+}) {
+  const { page } = state
+  const { fixture } = trained
+  const { project, tab } = requested
+  assert.deepEqual(await packageWitness(projectFile), initialPackage)
   assert.deepEqual((await readTab(page, project.id)).layers, [])
 
   await page.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
@@ -369,7 +479,7 @@ export async function runSignedTrainedAfter({
     layer.id,
   )
   assertPortableConfiguration(acceptedData.generationConfiguration, requested, fixture)
-  assert.deepEqual(await packageWitness(projectFile), before.saved.original)
+  assert.deepEqual(await packageWitness(projectFile), initialPackage)
   await expect
     .poll(
       async () => (await call(page, 'projects', 'listGenerationResults', project.id)).candidates,
@@ -377,8 +487,8 @@ export async function runSignedTrainedAfter({
     .toEqual([])
   const savedTab = await saveProject(page, project, accepted.documentRevision)
   assert.deepEqual(savedTab.generationDraft, tab.generationDraft)
-  const saved = await retainPackage(projectFile, path.join(root, 'trained-after-c-save.igs'))
-  assert.notEqual(saved.original.sha256, before.saved.original.sha256)
+  const saved = await retainPackage(projectFile, path.join(root, savedName))
+  assert.notEqual(saved.original.sha256, initialPackage.sha256)
   const { stdout } = await execute(
     trained.python,
     [
