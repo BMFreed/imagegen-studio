@@ -69,7 +69,19 @@ if (homeScaleSoftwareMode !== undefined) {
   )
 }
 const workspaceChooser = offlineProject === 'workspace-chooser'
+const workspaceTrashRestore = offlineProject === 'workspace-trash-restore'
 const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
+const runtimeInstallationWarmRecheck = process.env.IMAGEGEN_RUNTIME_INSTALLATION_WARM_RECHECK
+assert.ok(
+  runtimeInstallationWarmRecheck === undefined ||
+    (runtimeInstallationWarmRecheck === '1' && runtimeInstallationRecovery),
+)
+const softwareRenderer =
+  homeScaleSoftware || workspaceTrashRestore || runtimeInstallationWarmRecheck === '1'
+assert.ok(
+  !softwareRenderer || (kdeChooser && process.env.LIBGL_ALWAYS_SOFTWARE === '1'),
+  'Use a private KDE session and software Mesa.',
+)
 const savedResults = offlineProject === 'saved-results'
 const projectLaunch = offlineProject === 'project-launch'
 const fuseMode = process.env.IMAGEGEN_LINUX_PACKAGE_FUSE
@@ -100,12 +112,16 @@ assert.ok(
     projectExport ||
     nativeWaylandKeyboard ||
     workspaceChooser ||
+    workspaceTrashRestore ||
     runtimeInstallationRecovery ||
     savedResults ||
     projectLaunch,
   'The private Wayland launcher requires a supported packaged case.',
 )
-assert.ok(!workspaceChooser || kdeChooser, 'Use a private KDE Wayland session for folder choice.')
+assert.ok(
+  !(workspaceChooser || workspaceTrashRestore) || kdeChooser,
+  'Use a private KDE Wayland session for folder choice.',
+)
 assert.ok(
   !runtimeInstallationRecovery || kdeChooser,
   'Use a private KDE Wayland session for runtime recovery.',
@@ -234,6 +250,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'home-recovery-keyboard',
         'home-scale',
         'workspace-chooser',
+        'workspace-trash-restore',
         'runtime-installation-recovery',
         'saved-results',
         'project-launch',
@@ -549,6 +566,7 @@ const offlineProjectFixture = {
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
   'home-scale': 'packaged-home-scale',
   'workspace-chooser': 'packaged-workspace-chooser',
+  'workspace-trash-restore': 'packaged-workspace-chooser',
   'runtime-installation-recovery': 'packaged-runtime-installation-recovery',
   'saved-results': 'packaged-saved-results',
   'project-launch': 'packaged-project-launch',
@@ -573,6 +591,8 @@ const offlineProjectScope = {
     'Stock AppImage measures rendering and Home interactions over an owned indexed Project catalog.',
   'workspace-chooser':
     'Stock AppImage registers and locates a saved workspace through the native KDE folder picker.',
+  'workspace-trash-restore':
+    'Stock AppImage preserves Trash across workspace unregister and restores the exact Project after native folder registration.',
   'runtime-installation-recovery':
     'Stock AppImage preserves a live runtime installation and inspects recovery after its owner exits.',
   'saved-results':
@@ -847,7 +867,7 @@ if (offlineProjectFixture)
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
   )
-if (workspaceChooser)
+if (workspaceChooser || workspaceTrashRestore)
   sourcePaths.push(
     ...[
       'src/main/index.ts',
@@ -860,6 +880,13 @@ if (workspaceChooser)
       'src/renderer/App.vue',
       'src/renderer/components/AddWorkspaceModal.vue',
       'src/renderer/components/HomeView.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (workspaceTrashRestore)
+  sourcePaths.push(
+    ...[
+      'src/main/db/migrations/0027_project_file_lifecycle.sql',
+      'src/main/projects/project-trash-store.ts',
     ].map((file) => path.join(repo, file)),
   )
 if (savedResults)
@@ -1338,7 +1365,7 @@ async function launch(name, selectedAppImage = appImage, projectArguments = []) 
       kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
       // Exercise unavailable secure storage by default. The opt-in uses the stock
       // credential providers with the same private KWin and software graphics.
-      ...(kdeChooser && (modelInstallHistory || homeScaleSoftware) ? ['--disable-gpu'] : []),
+      ...(softwareRenderer || (kdeChooser && modelInstallHistory) ? ['--disable-gpu'] : []),
       ...(kdeChooser && modelInstallHistory && !kdeDefaultWallet
         ? ['--disable-features=DbusSecretPortal', '--password-store=basic']
         : []),
@@ -1378,7 +1405,7 @@ async function launch(name, selectedAppImage = appImage, projectArguments = []) 
     )
     state.aggregateLimits = assertAggregate(state.checks)
   }
-  if (homeScaleSoftware) {
+  if (softwareRenderer) {
     const session = await state.browser.newBrowserCDPSession()
     try {
       const { gpu } = await session.send('SystemInfo.getInfo')
@@ -1956,6 +1983,9 @@ async function runOwnedProjectProfile() {
     if (workspaceChooser) {
       return { offlineProjectResult: await fixture.runPackagedWorkspaceChooser(args) }
     }
+    if (workspaceTrashRestore) {
+      return { offlineProjectResult: await fixture.runPackagedWorkspaceTrashRestore(args) }
+    }
     if (runtimeInstallationRecovery) {
       return { offlineProjectResult: await fixture.runPackagedRuntimeInstallationRecovery(args) }
     }
@@ -2438,6 +2468,11 @@ try {
       assert.deepEqual(
         lifetimes.map(({ name }) => name),
         ['live', 'first', 'reopened'],
+      )
+    } else if (workspaceTrashRestore) {
+      assert.deepEqual(
+        lifetimes.map(({ name }) => name),
+        ['workspace-unregistered', 'trash-restored'],
       )
     } else {
       assert.equal(

@@ -175,3 +175,44 @@ Cleanup freed 588,738,560 allocated bytes by removing the private mutation
 build, fixture profiles and scratch. The receipt rechecked 209 evidence
 files and includes 31 copies of exact runtime metadata and slot contents.
 The reusable stock package stays at its original path.
+
+## Check again after installer exit in the open AppImage
+
+Studio base `50302db8`. Read the clean InvokeAI checkout at
+`64ff2c600f04d220e470fdaeec570bd402af42a7`, including
+`invokeai/app/services/model_install/install_staging_ledger.py`,
+`model_install_default.py::start` and `_restore_incomplete_installs` and
+their service construction through `services/model_manager/model_manager_default.py`,
+`services/invoker.py` and `app/api/dependencies.py`. Invoke's ledger
+preserves claims while the owner is live and rechecks ownership before
+sweeping. The test exercises the existing Studio Runtime Notice → runtime
+status IPC → controller path in the same Electron process.
+
+The fixture opens the saved Project while the installer is live, observes
+the stock Repair refusal and reaps the exact owned installer while the
+Project stays open. The real **Check again** action runs in the same
+AppImage PID and start identity. The test observes the renderer's pending
+and settled states and reads the runtime files before issuing a separate
+status IPC.
+
+- Before pointer publication (`20261125-r6`), **Check again** keeps the
+  previous pointer and candidate temporary. It changes the journal to
+  `rolled-back`, removes the dead claim and shows the invalid-runtime
+  detail for the previous inert slot.
+- During post-activation qualification (`20261125-r7`), the recovery
+  detail stays visible. The candidate pointer, `post-qualifying` journal
+  and claim remain unchanged.
+
+Each warm result matched two subsequent cold launches. All six lifetimes
+opened the same saved Project and closed normally with an empty generation
+queue. Chromium reported software composition throughout. Replay uses the
+existing private launcher instructions with
+`IMAGEGEN_RUNTIME_INSTALLATION_WARM_RECHECK=1` and software Mesa.
+
+The independent readback matched 19 source pins per run, six Project
+copies, six closed SQLite snapshots, all 60 AppImage process identities
+and both exited installer identities. The recorded directory chooser
+helper was unused in these runs and was pinned to the tracked bytes
+before its later workspace-specific fix. The higher sampled peak was
+1,442,402,304 bytes under the 4 GiB zero-swap limit. All 485 focused
+tests passed. The same LaMa and actual host preflight opt-ins were skipped.

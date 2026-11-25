@@ -92,3 +92,49 @@ that exact oracle. The prior attempts are preserved separately.
 This local result exercises starting with an existing directory in the picker
 on the current KDE Wayland host. The shipping desktop matrix and creation of
 a new directory from the chooser remain separate checks.
+
+## Restore Trash after re-registering its workspace
+
+Studio base `50302db8`. The clean InvokeAI checkout was
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. Read
+`invokeai/frontend/webv2/src/workbench/launchpad/projects/useProjectCardActions.ts`
+and its `workbench/projects/library.ts` and `workbench/projects/api.ts`
+callers through `invokeai/app/api/routers/projects.py` and
+`invokeai/app/services/project_records/project_records_default.py`. Project
+deletion there uses a server record and preserves its media. Studio's own
+Home contract defines local workspace registration and the reversible Trash
+record. This check uses those existing owners.
+
+The AppImage registered an owned folder with two Projects via KDE OpenFile,
+moved one closed Project to Trash and removed the workspace registration.
+The normal close kept the exact Trash row and both files. A cold launch
+refused Restore with `PROJECT_NOT_FOUND` and asked for the original folder.
+Adding a different folder with the old display name and a byte-identical
+copy of the trashed `.igs` still refused Restore. Adding the exact original
+folder under a new display name allowed Restore.
+
+The returned Project opened with its original local key, document ID,
+revision, inode and bytes. Its neighbor and the other folder's copy stayed
+intact. Both lifetimes closed normally. The closed SQLite snapshots preserve
+the exact Trash row before recovery and record its removal, the three
+expected catalog entries and no queue changes after Restore.
+
+The first run `20261125-r1` received the exact original folder from KDE.
+The test driver then encountered a disappearing AT-SPI control while
+checking dialog closure. The scoped driver fix retries that exact stale
+control read during directory dialog closure and requires a fresh
+successful absence observation. The portal handle and exact URI checks
+still run. `20261125-r2` passed all three native folder selections and both
+refusals, with software composition confirmed by Chromium. See
+`runs/packaged-workspace-trash-restore` in the artifact root.
+
+The passing run used the existing stock package, SHA-256
+`bead81dfeb229ee31d174fd0793cf479aa53e8284ef4ceefc914c0ff175c9078`.
+Its private 4 GiB zero-swap scope peaked at 1,366,253,568 bytes. The independent
+audit matched 20 source pins, three native portal exchanges, three Project
+copies, two closed SQLite snapshots and 20 physically exited AppImage process
+identities. All 135 focused workspace and Trash tests passed.
+
+The combined workspace and warm-runtime cleanup released 30,220,288 allocated
+bytes from the exact owned profiles and scratch paths. It rechecked 155
+evidence files and kept the existing shared AppImage at its original path.

@@ -350,3 +350,282 @@ export async function runPackagedWorkspaceChooser({
   )
   return result
 }
+
+function trashLifecycle(filename) {
+  const db = new Database(filename, { readonly: true, fileMustExist: true })
+  try {
+    return {
+      trash: db.prepare('SELECT * FROM project_file_lifecycle ORDER BY local_project_key').all(),
+      retired: db
+        .prepare(
+          'SELECT local_project_key FROM project_identity_retired_key ORDER BY local_project_key',
+        )
+        .all(),
+    }
+  } finally {
+    db.close()
+  }
+}
+
+async function addWorkspaceFolder(state, name, source) {
+  const dialog = state.page.getByRole('dialog', { exact: true, name: 'Add Workspace' })
+  await homeOf(state).getByRole('button', { exact: true, name: 'Add Workspace' }).click()
+  await dialog.getByRole('textbox', { exact: true, name: 'Workspace name' }).fill(name)
+  const choice = await driveKdeDirectoryChooser({
+    state,
+    source,
+    windowTitle: 'Add Workspace',
+    trigger: dialog.getByRole('button', { exact: true, name: 'Choose Folder and Add' }),
+  })
+  await expect(dialog).toHaveCount(0)
+  return choice
+}
+
+async function showWorkspaceTrash(state) {
+  const home = homeOf(state)
+  await home.getByRole('button', { name: /^Trash(?:\s+\d+)?$/ }).click()
+  await expect(home.getByRole('heading', { exact: true, name: 'Trash' })).toBeVisible()
+  await home.getByRole('button', { exact: true, name: 'List view' }).click()
+  return home
+}
+
+export async function runPackagedWorkspaceTrashRestore({
+  root,
+  appData,
+  ownedRunRoot,
+  packageBefore,
+  launch,
+  closeNormally,
+  identity,
+}) {
+  const proof = JSON.parse(
+    await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
+  )
+  assert.equal(proof.schemaVersion, 1)
+  assert.ok(proof.package.path.startsWith(ownedRunRoot + path.sep))
+  await assertOfflineProjectDesktop({
+    root,
+    ownedRunRoot,
+    packageBefore,
+    expectedPackage: proof.package,
+    scenario: 'workspace-trash-restore',
+    suite: 'packaged-workspace-trash-restore',
+  })
+  assert.equal(await realpath(root), root)
+  assert.equal(appData, path.join(root, 'data/imagegen-studio'))
+  await assert.rejects(lstat(appData), { code: 'ENOENT' })
+
+  const original = path.join(root, 'Original Collection')
+  const wrong = path.join(root, 'Different Collection')
+  const scratch = path.join(root, 'project-fixture-scratch')
+  const renamedRegistration = 'Restored Collection'
+  for (const directory of [original, wrong, scratch]) {
+    await mkdir(directory, { mode: 0o700 })
+    assert.equal(await realpath(directory), directory)
+  }
+  const database = path.join(appData, 'database/app.sqlite')
+  const targetPath = path.join(original, 'Harbor.igs')
+  const neighborPath = path.join(original, 'Dune.igs')
+  const target = {
+    ...(await projectFile(targetPath, 'Harbor sketch', scratch)),
+    file: await fileWitness(targetPath, identity),
+  }
+  const neighbor = {
+    ...(await projectFile(neighborPath, 'Dune study', scratch)),
+    file: await fileWitness(neighborPath, identity),
+  }
+  const copyPath = path.join(wrong, path.basename(targetPath))
+  await copyFile(targetPath, copyPath, constants.COPYFILE_EXCL)
+  const duplicate = {
+    ...target,
+    id: 'project-v1-' + createHash('sha256').update(copyPath).digest('hex'),
+    file: await fileWitness(copyPath, identity),
+  }
+  assert.equal(duplicate.file.sha256, target.file.sha256)
+  assert.notEqual(duplicate.file.inode, target.file.inode)
+  async function assertSourceFiles() {
+    for (const { file } of [target, neighbor, duplicate]) {
+      assert.deepEqual(await fileWitness(file.path, identity), file)
+    }
+  }
+
+  const chooser = []
+  const first = await launch('workspace-unregistered')
+  await expect(workspaceRow(first, 'Uncategorized 0')).toBeVisible()
+  const initial = snapshot(database)
+  assert.equal(initial.workspaces.length, 1)
+  assert.equal(initial.workspaces[0].id, 'uncategorized')
+  assert.deepEqual(initial.catalog, { accepted: [], jobs: 0, projects: [], receipts: 0, seeds: 0 })
+  assert.deepEqual(initial.bindings, [])
+  chooser.push(await addWorkspaceFolder(first, displayName, original))
+  await assertView(first, [target, neighbor], original)
+  const registered = snapshot(database)
+  const workspace = registered.workspaces.find(({ directory }) => directory === original)
+  assert.match(workspace.id, /^[0-9a-f-]{36}$/)
+  expectCatalog(registered, workspace, [target, neighbor], appData)
+
+  await homeOf(first)
+    .getByRole('button', { exact: true, name: `${target.title} project actions` })
+    .click()
+  await first.page
+    .locator('.n-dropdown-option-body__label')
+    .filter({ hasText: /^Move to Trash$/ })
+    .click()
+  const trashDialog = first.page.getByRole('dialog', { exact: true, name: 'Move Project to Trash' })
+  await trashDialog.getByRole('button', { exact: true, name: 'Move to Trash' }).click()
+  await expect(trashDialog).toBeHidden()
+  await assertView(first, [neighbor], original)
+  const firstTrash = await showWorkspaceTrash(first)
+  const row = firstTrash.locator(`[data-project-id="${target.id}"]`)
+  await expect(row).toHaveCount(1)
+  const lifecycle = trashLifecycle(database)
+  assert.deepEqual(lifecycle.retired, [])
+  assert.equal(lifecycle.trash.length, 1)
+  const [trashed] = lifecycle.trash
+  const trashId = trashed.trash_id
+  assert.match(trashId, /^[0-9a-f-]{36}$/)
+  await expect(row).toHaveAttribute('data-trash-id', trashId)
+  assert.equal(trashed.state, 'trashed')
+  assert.equal(trashed.local_project_key, target.id)
+  assert.equal(trashed.canonical_path, targetPath)
+  assert.equal(trashed.workspace_directory_path, original)
+  assert.equal(trashed.workspace_name, displayName)
+  assert.equal(trashed.file_missing, 0)
+  assert.equal(trashed.delete_operation_id, null)
+
+  await homeOf(first)
+    .getByRole('button', { exact: true, name: `${displayName} workspace actions` })
+    .click()
+  await first.page
+    .locator('.n-dropdown-option-body__label')
+    .filter({ hasText: /^Remove Workspace$/ })
+    .click()
+  const remove = first.page.getByRole('dialog', { exact: true, name: 'Remove Workspace' })
+  await remove.getByRole('button', { exact: true, name: 'Remove Workspace' }).click()
+  await expect(remove).toBeHidden()
+  await expect(workspaceRow(first, `${displayName} 1`)).toHaveCount(0)
+  await expect(
+    (await showWorkspaceTrash(first)).locator(`[data-project-id="${target.id}"]`),
+  ).toHaveAttribute('data-trash-id', trashId)
+  assert.deepEqual(trashLifecycle(database), lifecycle)
+  await assertSourceFiles()
+  await closeNormally(first)
+  const unregisteredIndex = await retainIndex(root, database, 'workspace-unregistered', identity)
+  assert.deepEqual(
+    {
+      catalog: unregisteredIndex.catalog,
+      workspaces: unregisteredIndex.workspaces,
+      bindings: unregisteredIndex.bindings,
+    },
+    initial,
+  )
+  assert.deepEqual(trashLifecycle(unregisteredIndex.bytes.path), lifecycle)
+
+  const second = await launch('trash-restored')
+  const refusalMessage =
+    'The original workspace is no longer registered. Add that exact folder again before restoring this Project.'
+  async function assertRestoreRefusal() {
+    const home = await showWorkspaceTrash(second)
+    await expect(home.locator(`[data-project-id="${target.id}"]`)).toHaveAttribute(
+      'data-trash-id',
+      trashId,
+    )
+    assert.deepEqual(trashLifecycle(database), lifecycle)
+    const before = snapshot(database)
+    await home.getByRole('button', { exact: true, name: `Restore ${target.title}` }).click()
+    await expect(home.getByText('Project action failed', { exact: true })).toBeVisible()
+    await expect(home.getByText(refusalMessage, { exact: true })).toBeVisible()
+    const response = await second.page.evaluate(
+      ({ id, trashId }) => window.api.projects.restoreProject(id, trashId),
+      { id: target.id, trashId },
+    )
+    assert.deepEqual(response, {
+      ok: false,
+      error: { code: 'PROJECT_NOT_FOUND', message: refusalMessage },
+    })
+    assert.deepEqual(snapshot(database), before)
+    assert.deepEqual(trashLifecycle(database), lifecycle)
+    await assertSourceFiles()
+    return response.error
+  }
+
+  const afterRestart = await assertRestoreRefusal()
+  assert.deepEqual(snapshot(database), initial)
+  await second.page.screenshot({ path: path.join(root, 'restore-unregistered-refusal.png') })
+  chooser.push(await addWorkspaceFolder(second, displayName, wrong))
+  await homeOf(second).getByRole('button', { exact: true, name: 'Grid view' }).click()
+  await assertView(second, [duplicate], wrong)
+  const wrongIndex = snapshot(database)
+  const wrongWorkspace = wrongIndex.workspaces.find(({ directory }) => directory === wrong)
+  assert.notEqual(wrongWorkspace.id, workspace.id)
+  expectCatalog(wrongIndex, wrongWorkspace, [duplicate], appData)
+  const afterWrongFolder = await assertRestoreRefusal()
+
+  chooser.push(await addWorkspaceFolder(second, renamedRegistration, original))
+  const readdedNav = workspaceRow(second, `${renamedRegistration} 1`)
+  await expect(readdedNav).toHaveAttribute('title', original)
+  await expect(readdedNav).toHaveAttribute('aria-pressed', 'true')
+  const readded = snapshot(database)
+  const originalAgain = readded.workspaces.find(({ directory }) => directory === original)
+  assert.match(originalAgain.id, /^[0-9a-f-]{36}$/)
+  assert.notEqual(originalAgain.id, workspace.id)
+  assert.equal(originalAgain.displayName, renamedRegistration)
+  const expectedProjects = (originalProjects) =>
+    [
+      ...expectedCatalog(originalAgain, originalProjects).projects,
+      ...expectedCatalog(wrongWorkspace, [duplicate]).projects,
+    ].sort((a, b) => a.id.localeCompare(b.id))
+  assert.deepEqual(readded.catalog, {
+    ...initial.catalog,
+    projects: expectedProjects([neighbor]),
+  })
+  assert.deepEqual(trashLifecycle(database), lifecycle)
+  const readyTrash = await showWorkspaceTrash(second)
+  await readyTrash.getByRole('button', { exact: true, name: `Restore ${target.title}` }).click()
+  await expect(readyTrash.getByText('Trash is empty', { exact: true })).toBeVisible()
+  await expect(workspaceRow(second, `${renamedRegistration} 2`)).toBeVisible()
+  await expect(readyTrash.getByText('Project action failed', { exact: true })).toHaveCount(0)
+  assert.deepEqual(trashLifecycle(database), { trash: [], retired: [] })
+  const restoredCatalog = { ...initial.catalog, projects: expectedProjects([target, neighbor]) }
+  assert.deepEqual(snapshot(database), { ...readded, catalog: restoredCatalog })
+  await workspaceRow(second, `${renamedRegistration} 2`).click()
+  await openProject(second, target)
+  const reopened = await second.page.evaluate((id) => window.api.projects.open(id), target.id)
+  assert.equal(reopened.ok, true)
+  assert.equal(reopened.value.kind, 'opened')
+  assert.equal(reopened.value.tab.id, target.id)
+  assert.equal(reopened.value.tab.documentId, target.documentId)
+  assert.equal(reopened.value.tab.documentRevision, target.revision)
+  await second.page.screenshot({ path: path.join(root, 'restored-original-project.png') })
+  await closeNormally(second)
+  const restoredIndex = await retainIndex(root, database, 'workspace-restored', identity)
+  assert.deepEqual(restoredIndex.catalog, restoredCatalog)
+  assert.deepEqual(restoredIndex.workspaces, readded.workspaces)
+  assert.deepEqual(restoredIndex.bindings, [])
+  assert.deepEqual(trashLifecycle(restoredIndex.bytes.path), { trash: [], retired: [] })
+  await assertSourceFiles()
+  const retained = []
+  for (const { file } of [target, neighbor, duplicate]) {
+    const destination = path.join(root, `workspace-retained-${retained.length}.igs`)
+    await copyFile(file.path, destination, constants.COPYFILE_EXCL)
+    const bytes = await identity(destination)
+    assert.deepEqual(bytes, { path: destination, sha256: file.sha256, sizeBytes: file.sizeBytes })
+    retained.push({ original: file, retained: bytes })
+  }
+
+  const result = {
+    chooser,
+    registration: { original: workspace, wrong: wrongWorkspace, restored: originalAgain },
+    lifecycle,
+    refusals: { afterRestart, afterWrongFolder },
+    unregisteredIndex,
+    restoredIndex,
+    retained,
+  }
+  await writeFile(
+    path.join(root, 'workspace-trash-restore-proof.json'),
+    JSON.stringify(result, null, 2) + '\n',
+    { flag: 'wx', mode: 0o600 },
+  )
+  return result
+}

@@ -3,8 +3,9 @@
 ## MVP acceptance checklist
 
 **We are qualifying the local candidate.** Next GPU work is the
-regional visual pass in step 1. Next CPU work is the workspace and Trash
-scenario in step 2. Public delivery is blocked at step 5.
+regional visual pass in step 1. Next CPU work is the remaining keyboard,
+focus, contrast and Home performance checks in step 2. Public delivery is
+blocked at step 5.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -21,12 +22,12 @@ environment and remaining limits, and update the current stage and next run.
       no-region controls and record human verdicts.
       [Anima visual results](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
       · [Illustrious visual results](./phase-4-regional-reference-placement-research.md)
-- [ ] **2. Close remaining UI and data checks.** In the stock AppImage, test
-      Trash after unregistering a workspace, cold startup, refusal before
-      re-registering the original folder, and exact Restore after re-registration
-      through the native picker. Finish the keyboard, focus, contrast and Home
-      performance checks on the candidate.
-      [Workspace and Trash contract](../features/home-screen.md#app-managed-trash)
+- [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
+      contrast and Home performance checks on the candidate.
+  - [x] The stock AppImage kept Trash across workspace removal and restart,
+        refused Restore with a different folder registered, and restored the
+        exact Project after native selection of the original folder.
+        [Workspace and Trash result](./phase-5-packaged-workspace-chooser-research.md#restore-trash-after-re-registering-its-workspace)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -39,6 +40,10 @@ environment and remaining limits, and update the current stage and next run.
       and frozen Retry, NoobAI EPS/V, exact model relink and incompatible-worker
       refusal.
       [Packaged upgrade and worker Repair](./phase-5-packaged-runtime-protocol-repair-research.md)
+  - [x] **Check again** in the open AppImage distinguished the two runtime
+        recovery states after confirmed installer exit. Cold launches matched
+        both observations.
+        [Same-window recheck](./phase-5-packaged-runtime-installation-recovery-research.md#check-again-after-installer-exit-in-the-open-appimage)
 
 ### Public release
 

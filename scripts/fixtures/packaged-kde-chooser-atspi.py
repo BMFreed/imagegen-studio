@@ -237,7 +237,23 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
         wait_for(lambda: not list(owned_overwrite_dialog(pid)), "Overwrite prompt did not close.")
     else:
         press(button)
-    wait_for(lambda: not list(matching_dialogs(pid, title)), "Chooser did not close.")
+
+    def chooser_closed():
+        try:
+            return not list(matching_dialogs(pid, title))
+        except GLib.Error as error:
+            # KDirSelectDialog may remove a control while the AT-SPI close poll
+            # enumerates it. Require a fresh successful observation of absence.
+            if (
+                not directory
+                or error.domain != "atspi_error"
+                or error.code != 1
+                or not error.message.startswith("No such object path '/org/a11y/atspi/accessible/")
+            ):
+                raise
+            return False
+
+    wait_for(chooser_closed, "Chooser did not close.")
     result = {
         "pid": pid,
         "title": title,

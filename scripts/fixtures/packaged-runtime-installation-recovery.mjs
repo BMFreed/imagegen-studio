@@ -1,4 +1,4 @@
-/** Observe stock AppImage startup with a live installation owner and after its exit. */
+/** Observe stock AppImage runtime recovery with a live installation owner and after its exit. */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -326,6 +326,59 @@ async function observeRepair(state, root, detail) {
   return observed
 }
 
+async function observeWarmRecheck(state, root, detail, reap, verifyRuntime) {
+  const { page, mainPid } = state
+  const notice = page.getByRole('region', { name: 'Image generation status', exact: true })
+  const check = notice.getByRole('button', { name: 'Check again', exact: true })
+  const repair = notice.getByRole('button', { name: 'Repair', exact: true })
+  const tab = page.getByRole('tab', { name: projectTitle, exact: true })
+  await expect(check).toBeEnabled()
+  await expect(repair).toBeEnabled()
+  const start = await processStart(mainPid)
+  assert.match(start, /^\d+$/)
+
+  const repairPending = await repair.evaluateHandle((button) => {
+    const states = []
+    const observer = new MutationObserver((records) => {
+      for (const record of records) states.push(record.oldValue === null)
+    })
+    observer.observe(button, { attributeFilter: ['disabled'], attributeOldValue: true })
+    return { states, observer }
+  })
+  try {
+    await reap()
+    assert.equal(await processStart(mainPid), start)
+    await check.click()
+    // Both cuts must run the pending action, even when the status text remains the same.
+    await expect.poll(() => repairPending.evaluate(({ states }) => states)).toEqual([true, false])
+    await expect(check).toBeHidden()
+    await expect(notice.getByText('Action could not be completed', { exact: true })).toBeHidden()
+    await expect(notice.getByText(detail, { exact: true })).toBeVisible()
+    await expect(repair).toBeEnabled()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    // Capture the state caused by the button before the independent status IPC can recover it.
+    const runtime = await verifyRuntime()
+    const observed = await page.evaluate(async () => ({
+      status: await window.api.runtime.getStatus(),
+      progress: await window.api.runtime.getInstallationProgress(),
+    }))
+    assert.deepEqual(observed.status, {
+      ok: true,
+      value: { kind: 'needs-repair', profile: 'linux-nvidia', detail },
+    })
+    assert.deepEqual(observed.progress, { ok: true, value: { operation: null, revision: 0 } })
+    assert.equal(await processStart(mainPid), start)
+    assert.deepEqual(await verifyRuntime(), runtime)
+    await page.screenshot({ path: path.join(root, 'warm-recheck-status.png') })
+    const result = { main: { pid: mainPid, start }, observed, runtime }
+    await writeJson(root, 'warm-recheck.json', result)
+    return result
+  } finally {
+    await repairPending.evaluate(({ observer }) => observer.disconnect()).catch(() => {})
+    await repairPending.dispose()
+  }
+}
+
 export async function runPackagedRuntimeInstallationRecovery({
   root,
   appData,
@@ -338,6 +391,7 @@ export async function runPackagedRuntimeInstallationRecovery({
 }) {
   const cut = process.env.IMAGEGEN_RUNTIME_INSTALLATION_CUT
   assert.ok(cut === 'before-publication' || cut === 'post-qualifying')
+  const warmRecheck = process.env.IMAGEGEN_RUNTIME_INSTALLATION_WARM_RECHECK === '1'
   const proof = JSON.parse(
     await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
   )
@@ -363,6 +417,7 @@ export async function runPackagedRuntimeInstallationRecovery({
       closeNormally,
       retainOwnStore,
       identity,
+      warmRecheck,
       ...owner,
     }),
   )
@@ -376,6 +431,7 @@ async function observeRuntimeLifetimes({
   closeNormally,
   retainOwnStore,
   identity,
+  warmRecheck,
   roots,
   receipt,
   live,
@@ -396,11 +452,13 @@ async function observeRuntimeLifetimes({
   const database = path.join(appData, 'database/app.sqlite')
   const safe = cut === 'before-publication'
   const lifetimes = []
+  const owner = { pid: receipt.pid, bootId: receipt.bootId, startTicks: receipt.startTicks }
   for (const name of ['live', 'first', 'reopened']) {
     const ownerAlive = name === 'live'
     if (ownerAlive) await assertOwnerAlive()
     const state = await launch(name)
     let observed
+    let warm
     try {
       observed = await observeRepair(
         state,
@@ -411,15 +469,31 @@ async function observeRuntimeLifetimes({
       await expect(
         state.page.getByRole('tab', { name: projectTitle, exact: true }),
       ).toHaveAttribute('aria-selected', 'true')
+      if (ownerAlive && warmRecheck) {
+        const before = await assertRuntimeState(roots, receipt, identity)
+        assert.deepEqual(before, live)
+        await assertOwnerAlive()
+        assert.deepEqual(await fileWitness(project, identity), original)
+        await writeJson(root, 'live-app-observed.json', { owner, name, observed, after: before })
+        warm = await observeWarmRecheck(
+          state,
+          root,
+          safe ? invalidDetail : recoveryDetail,
+          reap,
+          async () => await assertRuntimeState(roots, receipt, identity, true),
+        )
+        assert.deepEqual(await fileWitness(project, identity), original)
+      }
     } finally {
       await closeNormally(state)
     }
-    const after = await assertRuntimeState(roots, receipt, identity, !ownerAlive)
+    const after = await assertRuntimeState(roots, receipt, identity, !ownerAlive || warmRecheck)
     assert.deepEqual(JSON.parse(after.journalBody), {
       ...JSON.parse(live.journalBody),
       phase: after.phase,
     })
-    if (ownerAlive) assert.deepEqual(after, live)
+    if (ownerAlive) assert.deepEqual(after, warm?.runtime ?? live)
+    if (name === 'first' && warmRecheck) assert.deepEqual(after, lifetimes[0].after)
     if (name === 'reopened') assert.deepEqual(after, lifetimes[1].after)
     assert.deepEqual(await fileWitness(project, identity), original)
     const index = indexSnapshot(database)
@@ -441,12 +515,12 @@ async function observeRuntimeLifetimes({
     assert.equal(row.title, projectTitle)
     const saved = await retainOwnStore(`${name}-closed`, filename)
     assert.equal(saved.project.sha256, original.sha256)
-    const observation = { name, observed, after, saved, index }
+    const observation = { name, observed, after, saved, index, ...(warm && { warm }) }
     lifetimes.push(observation)
-    if (ownerAlive) {
+    if (ownerAlive && !warmRecheck) {
       await assertOwnerAlive()
       await writeJson(root, 'live-app-observed.json', {
-        owner: { pid: receipt.pid, bootId: receipt.bootId, startTicks: receipt.startTicks },
+        owner,
         ...observation,
       })
       await reap()
