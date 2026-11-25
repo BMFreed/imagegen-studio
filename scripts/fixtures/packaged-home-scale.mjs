@@ -525,11 +525,12 @@ async function measureHome(state, root, files, launchStart, canvas) {
 }
 
 export async function prepareWorkspaces(appData, projectCount, linked) {
+  assert.ok(!linked || projectCount === 128 || projectCount === 256)
   const defaultWorkspace = {
     directoryPath: path.join(appData, 'workspaces/Uncategorized'),
     displayName: 'Uncategorized',
     id: 'uncategorized',
-    projectCount: linked ? 32 : projectCount,
+    projectCount: linked ? projectCount / 4 : projectCount,
   }
   await mkdir(defaultWorkspace.directoryPath, { mode: 0o700, recursive: true })
   const workspaces = [defaultWorkspace]
@@ -540,6 +541,7 @@ export async function prepareWorkspaces(appData, projectCount, linked) {
       const uncategorized = await repository.ensureDefaultWorkspace(appData)
       assert.equal(uncategorized.directoryPath, defaultWorkspace.directoryPath)
       assert.equal(uncategorized.id, defaultWorkspace.id)
+      const linkedWorkspaceCount = (projectCount - defaultWorkspace.projectCount) / 2
       // Use current workspace registration, then leave discovery to the packaged app.
       for (const displayName of ['Scale Alpha', 'Scale Beta']) {
         const directoryPath = path.join(appData, 'workspaces', displayName)
@@ -549,7 +551,7 @@ export async function prepareWorkspaces(appData, projectCount, linked) {
           directoryPath,
         )
         assert.equal(workspace.directoryPath, directoryPath)
-        workspaces.push({ ...workspace, projectCount: 48 })
+        workspaces.push({ ...workspace, projectCount: linkedWorkspaceCount })
       }
       assert.deepEqual(await repository.listProjects(), [])
     } finally {
@@ -628,11 +630,16 @@ export async function runPackagedHomeScale({
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
   const linked = ['linked-tiny', 'linked-raster', 'linked-layered'].includes(profile)
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
+  const layered256 = profile === 'linked-layered' && countArgument === '256'
   assert.ok(
     linked
-      ? countArgument === '128'
+      ? countArgument === '128' || layered256
       : profile === undefined && ['32', '512'].includes(countArgument),
-    'Use 32 or 512 by default, or 128 with linked-tiny, linked-raster or linked-layered.',
+    'Use 32 or 512 by default, 128 with a linked profile, or 256 with linked-layered.',
+  )
+  assert.ok(
+    !layered256 || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
+    'The 256-project linked-layered profile requires software compositing.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')

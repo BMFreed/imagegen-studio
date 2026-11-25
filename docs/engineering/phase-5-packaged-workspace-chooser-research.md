@@ -138,3 +138,53 @@ identities. All 135 focused workspace and Trash tests passed.
 The combined workspace and warm-runtime cleanup released 30,220,288 allocated
 bytes from the exact owned profiles and scratch paths. It rechecked 155
 evidence files and kept the existing shared AppImage at its original path.
+
+## Workspace removal focus and search contrast
+
+Studio base `a5df8d6b`. The private KDE Wayland AppImage check used software
+Mesa, native KWin resize to 900×620 and trusted Tab, Shift+Tab, Escape and
+Enter. It opened the existing sidebar menu with the pointer. The two
+`20261125-r3` and `20261125-r4` baselines preserved the existing Trash
+and restoration oracles, but Escape lost the workspace action and
+confirmation left focus on the page body. The custom modal also lacked
+`aria-modal`. Both keyboard directions stayed in the modal. The baseline
+screenshots and runtime color samples confirmed the faint 13 px Search
+projects placeholder at 3.29:1 in the unfocused search after removal.
+The warning paragraph and both dialog buttons already measured above
+the 4.5:1 text threshold.
+[W3C text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
+
+The fix waits for the modal body to leave before checking for absent focus.
+On the same active Home, Escape moves focus to the surviving workspace
+action. After successful removal and the switch to Uncategorized, focus
+moves to Search projects. Both paths defer to any existing focus. Naive's
+local `placeholderColor` uses the existing muted text token, and the dialog
+now declares its modality. The `20261125-r5` and `20261125-r6` intermediate
+checks verified Search focus and contrast. Escape still lost focus until
+the post-transition Vue render had completed.
+
+Final `20261125-r7` passed the same actions and all three native folder
+choices. After Escape, the workspace action was focused. After confirmation,
+Search projects had the visible input ring, and its placeholder measured
+5.23:1 in that focused state. Viewed the before and after screenshots.
+The original Project, its sibling and the other folder's copy passed the
+existing archive and SQLite checks. Both AppImage lifetimes closed normally.
+The check sampled the dialog text, its two buttons and the Home search
+placeholder on this desktop profile.
+
+An independent audit matched the AppImage and 43 packaged members, 21
+source pins, three portal exchanges, three Project copies, two closed
+SQLite indexes and 20 exited AppImage process identities. After the native
+run, the lint fix moved the static placeholder ahead of the theme prop
+in the template. Comparing Vue compiler outputs showed only the order
+of those two independent props changed. Of the 43 dist files, 40 were
+byte-identical. The other three matched after accounting for that prop
+order, the generated Home scope identifier and its asset names. Three
+browser checks, full typecheck and the app build passed on the final
+source. All 135 focused Main, preload and lifecycle tests passed in the
+same qualification.
+
+Replay the workspace Trash scenario with
+`IMAGEGEN_WORKSPACE_TRASH_KEYBOARD=1` and the private KWin keyboard helper.
+The PASS, baseline failure and intermediate diagnostic reports are in
+`runs/packaged-workspace-trash-restore/20261125-r3` through `20261125-r7`.

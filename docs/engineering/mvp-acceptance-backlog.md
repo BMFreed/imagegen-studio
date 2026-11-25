@@ -3,9 +3,10 @@
 ## MVP acceptance checklist
 
 **We are qualifying the local candidate.** Next GPU work is the
-regional visual pass in step 1. Next CPU work is the remaining keyboard,
-focus, contrast and Home performance checks in step 2. Public delivery is
-blocked at step 5.
+regional visual pass in step 1. Next CPU work is to profile Home folder
+selection and Refresh in the 256-project layered catalog and continue
+the keyboard and contrast checks in step 2. Public delivery is blocked
+at step 5.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -28,6 +29,15 @@ environment and remaining limits, and update the current stage and next run.
         refused Restore with a different folder registered, and restored the
         exact Project after native selection of the original folder.
         [Workspace and Trash result](./phase-5-packaged-workspace-chooser-research.md#restore-trash-after-re-registering-its-workspace)
+  - [x] Native keyboard input kept focus in Remove Workspace. Escape returned
+        focus to the workspace action, confirmation focused Home search and
+        the search placeholder passed the sampled text contrast threshold.
+        [Workspace focus and search contrast](./phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
+  - [x] Both AppImage launches discovered all 256 four-Raster Projects,
+        opened saved previews and preserved the archives and index through
+        normal close. Folder selection and Refresh still need a response
+        time pass.
+        [256-project catalog result](./phase-5-packaged-home-scale-research.md#256-projects-with-four-raster-layers-each)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -609,12 +619,14 @@ entries record the state at their checkpoint.
    run at 900×620 in private software-rendered KWin then passed the layered
    catalog, folder navigation, Refresh and saved Inspector previews. The
    four-layer profile took 23.82 s to all cards and 18.81 s for Refresh on
-   indexed restart under the CPU limit. Qualify larger layered populations
-   and the supported host matrix.
+   indexed restart under the CPU limit. A 256-project layered catalog now
+   passes the same interactions and records the remaining response time gap.
+   Qualify response time and the supported host matrix.
    [Home catalog performance](./phase-5-packaged-home-scale-research.md#packaged-comparison)
    [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
    [Four Raster layers in Main](./phase-5-packaged-home-scale-research.md#four-raster-layers-per-project-in-main)
    [Layered AppImage measurements](./phase-5-packaged-home-scale-research.md#multi-layer-home-in-the-appimage-renderer)
+   [256-project layered AppImage](./phase-5-packaged-home-scale-research.md#256-projects-with-four-raster-layers-each)
    Home now reuses the current scan's archive validation for terminal
    shadow checks. The matched four-Raster Main Refresh improved from
    7.90 s to 4.50 s. Dirty shadows and files replaced during the

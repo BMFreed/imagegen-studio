@@ -82,7 +82,18 @@ function focusProjectSearch() {
   }
 }
 
-defineExpose({ focusProjectSearch })
+function focusWorkspaceActions(workspaceId: string) {
+  const root = homeRoot.value
+  if (!root?.isConnected || root.closest('[inert]')) {
+    return
+  }
+  const menu = Array.from(root.querySelectorAll<HTMLElement>('[data-workspace-menu]')).find(
+    (element) => element.dataset.workspaceMenu === workspaceId,
+  )
+  menu?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+}
+
+defineExpose({ focusProjectSearch, focusWorkspaceActions })
 const homeWidth = ref(1440)
 const contentWidth = ref(1180)
 let layoutObserver: ResizeObserver | null = null
@@ -793,7 +804,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 trigger="click"
                 @select="requestWorkspaceAction($event, workspace.id)"
               >
-                <span class="workspace-menu">
+                <span class="workspace-menu" :data-workspace-menu="workspace.id">
                   <IconButton
                     compact
                     :disabled="busy"
@@ -944,6 +955,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                         clearable
                         :inputProps="{ 'aria-label': 'Search projects' }"
                         placeholder="Search projects"
+                        :themeOverrides="{ placeholderColor: 'var(--app-text-muted)' }"
                       />
                     </label>
                     <label class="toolbar-field">

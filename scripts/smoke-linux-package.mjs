@@ -60,6 +60,10 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
+const largeLayeredHomeScale =
+  homeScale &&
+  process.env.IMAGEGEN_HOME_SCALE_FIXTURE === 'linked-layered' &&
+  process.env.IMAGEGEN_HOME_SCALE_PROJECTS === '256'
 const homeScaleSoftwareMode = process.env.IMAGEGEN_HOME_SCALE_SOFTWARE
 const homeScaleSoftware = homeScaleSoftwareMode === '1'
 if (homeScaleSoftwareMode !== undefined) {
@@ -70,6 +74,10 @@ if (homeScaleSoftwareMode !== undefined) {
 }
 const workspaceChooser = offlineProject === 'workspace-chooser'
 const workspaceTrashRestore = offlineProject === 'workspace-trash-restore'
+const workspaceTrashKeyboard = process.env.IMAGEGEN_WORKSPACE_TRASH_KEYBOARD
+assert.ok(
+  workspaceTrashKeyboard === undefined || (workspaceTrashKeyboard === '1' && workspaceTrashRestore),
+)
 const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
 const runtimeInstallationWarmRecheck = process.env.IMAGEGEN_RUNTIME_INSTALLATION_WARM_RECHECK
 assert.ok(
@@ -104,6 +112,7 @@ const nativeWaylandKeyboard =
   kdeChooser &&
   (offlineProject === 'home-recovery-keyboard' ||
     offlineProject === 'trash' ||
+    workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
     homeScale)
 assert.ok(
@@ -145,7 +154,9 @@ const nativeDeadlineSeconds = trainedFixture
         ? 360
         : noobaiPreviewMode
           ? 180
-          : 120
+          : largeLayeredHomeScale
+            ? 180
+            : 120
 const boundedExecute = (command, args, options) =>
   execute(
     command,

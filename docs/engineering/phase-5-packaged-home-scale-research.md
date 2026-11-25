@@ -526,3 +526,77 @@ the harness's accepted pattern. The successful attempt reused the
 same AppImage bytes. Its reports, screenshots, closed index and sample
 archive are under `runs/packaged-home-scale/20261125-r51`. The syscall
 evidence is under `runs/home-catalog-repeat-read-trace/20261125-r2`.
+
+## 256 projects with four Raster layers each
+
+Consulted clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+In `invokeai/frontend/webv2/src/workbench`, the
+`launchpad/pages/HomePage.tsx` and `launchpad/pages/ProjectsPage.tsx`
+callers use `projects/library.ts` and `projects/api.ts`, with duplicate
+requests shared by `platform/state/singleFlight.ts` under the frontend
+source root. In the backend, `invokeai/app/api/routers/projects.py`
+obtains the service from `invokeai/app/api/dependencies.py` and calls
+`invokeai/app/services/project_records/project_records_default.py`.
+Its `invokeai/app/services/shared/database/queries/projects.py`
+queries return account-scoped project summaries. The Studio test uses
+the existing archive discovery and workspace flows with a larger cohort.
+
+The opt-in `linked-layered` profile adds 256 synthetic Projects, split
+64/96/96 across three folders. Each archive contains four distinct
+1024×1024 Raster assets and the saved preview. The corpus comprises
+1,013,853,696 bytes across 256 archives. The profile requires software
+compositing. Use `IMAGEGEN_HOME_SCALE_PROJECTS=256`,
+`IMAGEGEN_HOME_SCALE_FIXTURE=linked-layered`, and
+`IMAGEGEN_HOME_SCALE_SOFTWARE=1` in the existing private Wayland
+`home-scale` harness.
+
+The first attempt (`20261125-r52`) reached all cards in 31.80 s and
+finished aggregate Refresh in 32.07 s. Its first AppImage launch closed
+normally. The 330 s enclosing scope expired during the second launch's
+folder navigation and returned 143. That launch left a screenshot and
+an interrupted SQLite main/WAL/SHM set. Those bytes capture the
+interruption. The first closed index's hash is in the measurement
+receipt. The independent read-only audit found all 256 rows after
+replaying 646 checksum-valid committed WAL frames in memory.
+
+The full retry (`20261125-r53`) used the same AppImage
+(`9df5920f071e776ca55e9c01dbb7dbb1e755986fe6f202ed0ffcd611c54dea95`).
+The enclosing time budget was 450 s, with the same 120% CPU quota,
+4 GiB memory limit and zero swap. Both launches reached every card,
+matched titles and folder counts, exercised Grid and List, searched by
+name, decoded three saved Inspector previews each and closed normally.
+KWin ran with software Mesa and Chromium reported disabled GPU
+compositing. Peak scope memory was 3,106,562,048 bytes, with zero
+memory-limit and OOM events.
+
+| Operation                                          |  First launch | Indexed restart |
+| -------------------------------------------------- | ------------: | --------------: |
+| First complete view, 256 cards                     |       25.40 s |         22.59 s |
+| Aggregate Refresh                                  |       27.60 s |         23.73 s |
+| Three folder selections, range                     | 15.15–20.70 s |   14.57–15.21 s |
+| Scoped Refresh, 96 cards                           |       17.35 s |         17.31 s |
+| Return to all 256 cards                            |       16.06 s |         15.77 s |
+| Select and decode a saved Inspector preview, range |    225–350 ms |      150–233 ms |
+
+Each column is one sequential sample on this host with the ordinary OS
+cache. Startup includes AppImage extraction and initial rendering. These
+results establish successful catalog operation for this cohort. The
+observed 15–21 s folder switches and 24–28 s aggregate Refresh leave
+response time open in the acceptance checklist.
+
+In the current renderer, `selectWorkspace` clears the visible list
+and invokes `refreshProjects`. The resulting `listHomeCatalog` call
+awaits discovery across registered workspaces before returning the
+selected folder's cards and sidebar counts. This is the path to profile
+against ordinary explicit Refresh while preserving external changes and
+recovery checks.
+
+The independent live audit rehashed the package and source pins, 256
+archives and 1,792 declared members. It matched the final closed SQLite
+index's 256 ready rows and 30 migrations, checked integrity and foreign
+keys, and confirmed both AppImage process groups had exited. The retained
+evidence includes both screenshots and lifetime reports, the final closed
+index and two sample archives. The R52 interruption retains its separate
+SQLite trio and first-launch receipt. After exit and retention checks,
+cleanup freed 3,411,804,160 allocated bytes across the scale and focus
+runs. One verified AppImage is kept for the next CPU qualification.

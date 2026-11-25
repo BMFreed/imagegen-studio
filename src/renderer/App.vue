@@ -557,6 +557,7 @@ const workspaceSettingsError = ref<string | null>(null)
 const showRemoveWorkspace = ref(false)
 const removingWorkspace = ref<ProjectWorkspaceSummary | null>(null)
 const removeWorkspaceError = ref<string | null>(null)
+let workspaceRemovalHomeIntent: HomePresentationIntent | null = null
 const showRemoveMissingProject = ref(false)
 const removingMissingProject = ref<ProjectSummary | null>(null)
 const removeMissingProjectError = ref<string | null>(null)
@@ -4497,6 +4498,7 @@ function beginWorkspaceRemoval(workspaceId: string) {
     return
   }
   queueResultNavigator.cancelProjectOpen()
+  workspaceRemovalHomeIntent = captureHomePresentationIntent()
   removingWorkspace.value = { ...workspace }
   removeWorkspaceError.value = null
   showWorkspaceSettings.value = false
@@ -4507,6 +4509,36 @@ function cancelWorkspaceRemoval() {
   if (!pendingProjectAction.value && !windowClosePending.value) {
     showRemoveWorkspace.value = false
     removeWorkspaceError.value = null
+  }
+}
+
+async function removeWorkspaceAfterLeave() {
+  const intent = workspaceRemovalHomeIntent
+  if (!intent || showRemoveWorkspace.value) {
+    return
+  }
+  const workspaceId = removingWorkspace.value?.id
+  // The modal body can still own focus until Naive's post-transition render.
+  await nextTick()
+  if (workspaceRemovalHomeIntent !== intent || showRemoveWorkspace.value) {
+    return
+  }
+  workspaceRemovalHomeIntent = null
+  if (
+    !workspaceId ||
+    !homeOpenIntentCurrent(intent) ||
+    !document.hasFocus() ||
+    document.activeElement !== document.body
+  ) {
+    return
+  }
+  if (workspaces.value.some(({ id }) => id === workspaceId)) {
+    homeView.value?.focusWorkspaceActions(workspaceId)
+  } else if (
+    !selectedTrashView.value &&
+    selectedWorkspaceId.value === DEFAULT_PROJECT_WORKSPACE_ID
+  ) {
+    homeView.value?.focusProjectSearch()
   }
 }
 
@@ -7277,10 +7309,12 @@ onBeforeUnmount(() => {
         :maskClosable="false"
         :show="showRemoveWorkspace"
         :zIndex="AppLayer.dialog"
+        @afterLeave="removeWorkspaceAfterLeave"
         @update:show="!$event && cancelWorkspaceRemoval()"
       >
         <NCard
           aria-label="Remove Workspace"
+          aria-modal="true"
           class="dialog-card"
           contentScrollable
           role="dialog"

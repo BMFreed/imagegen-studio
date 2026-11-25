@@ -334,6 +334,12 @@ Home does not delete workspace folders or their project files in MVP. `Remove Wo
 
 `Uncategorized` also cannot be renamed, but its color can be changed and it can still be revealed/rescanned. Removing another workspace is blocked while any project from it has an open document tab; after successful removal Home switches to `Uncategorized` and removes that workspace's cached project rows from the Home index only.
 
+The **Remove Workspace** confirmation opens with focus on **Cancel**. On the
+same active Home, Escape returns focus to the surviving workspace action.
+After confirmed removal, **Search projects** in Uncategorized takes focus
+when the previously focused control has gone. An existing focus target keeps
+focus. [Packaged keyboard and contrast check](../engineering/phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
+
 ## Cross-Workspace View
 
 The sidebar exposes one cross-workspace browse view above the concrete workspace list:

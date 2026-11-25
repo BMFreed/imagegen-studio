@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  appendFile,
   copyFile,
   lstat,
   mkdir,
@@ -19,6 +20,7 @@ import { expect } from '@playwright/test'
 import Database from 'better-sqlite3'
 
 import { ProjectSession } from '../../src/main/projects/project-session.ts'
+import { connectNativeInput } from './packaged-home-recovery-keyboard.mjs'
 import { driveKdeDirectoryChooser } from './packaged-kde-chooser.mjs'
 import {
   assertOfflineProjectDesktop,
@@ -389,6 +391,142 @@ async function showWorkspaceTrash(state) {
   return home
 }
 
+function visibleTextColors(element) {
+  const style = getComputedStyle(element)
+  const backgrounds = []
+  for (let node = element; node; node = node.parentElement) {
+    const color = getComputedStyle(node).backgroundColor
+    if (color !== 'rgba(0, 0, 0, 0)') backgrounds.push(color)
+  }
+  return {
+    text: element.textContent.trim(),
+    foreground: style.color,
+    backgrounds,
+    fontSize: style.fontSize,
+  }
+}
+
+function contrastRatio({ foreground, backgrounds }) {
+  function over(back, color) {
+    const values = color.match(/^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)$/)
+    assert.ok(values, color)
+    const opacity = Number(values[4] ?? 1)
+    return back.map(
+      (component, index) => component * (1 - opacity) + Number(values[index + 1]) * opacity,
+    )
+  }
+  function luminance(rgb) {
+    const linear = rgb.map((value) => {
+      const channel = value / 255
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    })
+    return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+  }
+  assert.match(backgrounds.at(-1), /^rgb\(/, 'The measured background must resolve to opaque RGB.')
+  const background = backgrounds.reduceRight(over, [0, 0, 0])
+  const colors = [luminance(background), luminance(over(background, foreground))]
+  return (Math.max(...colors) + 0.05) / (Math.min(...colors) + 0.05)
+}
+
+async function removeFixtureWorkspace(state, root, keyboard) {
+  const { page } = state
+  const home = homeOf(state)
+  const actions = home.getByRole('button', {
+    exact: true,
+    name: `${displayName} workspace actions`,
+  })
+  const remove = page.getByRole('dialog', { exact: true, name: 'Remove Workspace' })
+  const confirm = remove.getByRole('button', { exact: true, name: 'Remove Workspace' })
+  const open = async () => {
+    await actions.click()
+    await page
+      .locator('.n-dropdown-option-body__label')
+      .filter({ hasText: /^Remove Workspace$/ })
+      .click()
+    await expect(remove).toBeVisible()
+  }
+  if (!keyboard) {
+    await open()
+    await confirm.click()
+    await expect(remove).toBeHidden()
+    return null
+  }
+
+  const trace = path.join(root, 'workspace-removal-keyboard.ndjson')
+  const record = (entry) => appendFile(trace, JSON.stringify(entry) + '\n', { mode: 0o600 })
+  const input = await connectNativeInput(state, record, root)
+  await input.resize(900, 620)
+  await open()
+  const cancel = remove.getByRole('button', { exact: true, name: 'Cancel' })
+  await expect(cancel).toBeFocused()
+  const ariaModal = await remove.getAttribute('aria-modal')
+  await page.screenshot({
+    path: path.join(root, 'workspace-removal-dialog.png'),
+    animations: 'disabled',
+  })
+  const colors = await Promise.all(
+    [remove.locator('p'), cancel, confirm].map(async (element) => {
+      const sample = await element.evaluate(visibleTextColors)
+      return { ...sample, ratio: contrastRatio(sample) }
+    }),
+  )
+  await record({ phase: 'dialog-colors', ariaModal, colors })
+
+  await input.press('shift+Tab', 'reverse-workspace-removal-focus-cycle')
+  await expect(confirm).toBeFocused()
+  await input.press('Tab', 'forward-workspace-removal-focus-cycle')
+  await expect(cancel).toBeFocused()
+  await input.press('Escape', 'cancel-workspace-removal')
+  await expect(remove).toHaveCount(0)
+  await expect(actions)
+    .toBeFocused({ timeout: 2_000 })
+    .catch(() => {})
+  const escapeFocus = await actions.evaluate((element) => {
+    const active = document.activeElement
+    return {
+      returnedToTrigger: element === active,
+      tag: active?.tagName,
+      label: active?.getAttribute('aria-label') ?? null,
+      className: active?.getAttribute('class') ?? null,
+      documentFocused: document.hasFocus(),
+      disabled: element.disabled,
+    }
+  })
+  await record({ phase: 'after-escape', ...escapeFocus })
+  await page.screenshot({
+    path: path.join(root, 'workspace-removal-cancel.png'),
+    animations: 'disabled',
+  })
+  await open()
+  await expect(cancel).toBeFocused()
+  await input.press('Tab', 'focus-workspace-removal-confirmation')
+  await expect(confirm).toBeFocused()
+  await input.press('Return', 'confirm-workspace-removal')
+  await expect(remove).toHaveCount(0)
+  const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
+  await expect(search)
+    .toBeFocused({ timeout: 2_000 })
+    .catch(() => {})
+  const focus = await search.evaluate((element) => ({
+    onSearch: document.activeElement === element,
+    tag: document.activeElement?.tagName,
+    label: document.activeElement?.getAttribute('aria-label') ?? null,
+    focusVisible: document.activeElement?.matches(':focus-visible') ?? false,
+    inputFocusedClass: Boolean(element.closest('.n-input--focus')),
+  }))
+  await record({ phase: 'after-confirmation', ...focus })
+  await page.screenshot({
+    path: path.join(root, 'workspace-removal-after.png'),
+    animations: 'disabled',
+  })
+  const placeholder = home.locator('.toolbar-field--search .n-input__placeholder > span')
+  await expect(placeholder).toBeVisible()
+  const sample = await placeholder.evaluate(visibleTextColors)
+  const searchContrast = { ...sample, ratio: contrastRatio(sample) }
+  await record({ phase: 'search-placeholder-contrast', ...searchContrast })
+  return { ariaModal, escapeFocus, focus, colors, searchContrast }
+}
+
 export async function runPackagedWorkspaceTrashRestore({
   root,
   appData,
@@ -493,16 +631,11 @@ export async function runPackagedWorkspaceTrashRestore({
   assert.equal(trashed.file_missing, 0)
   assert.equal(trashed.delete_operation_id, null)
 
-  await homeOf(first)
-    .getByRole('button', { exact: true, name: `${displayName} workspace actions` })
-    .click()
-  await first.page
-    .locator('.n-dropdown-option-body__label')
-    .filter({ hasText: /^Remove Workspace$/ })
-    .click()
-  const remove = first.page.getByRole('dialog', { exact: true, name: 'Remove Workspace' })
-  await remove.getByRole('button', { exact: true, name: 'Remove Workspace' }).click()
-  await expect(remove).toBeHidden()
+  const keyboard = await removeFixtureWorkspace(
+    first,
+    root,
+    process.env.IMAGEGEN_WORKSPACE_TRASH_KEYBOARD === '1',
+  )
   await expect(workspaceRow(first, `${displayName} 1`)).toHaveCount(0)
   await expect(
     (await showWorkspaceTrash(first)).locator(`[data-project-id="${target.id}"]`),
@@ -621,11 +754,32 @@ export async function runPackagedWorkspaceTrashRestore({
     unregisteredIndex,
     restoredIndex,
     retained,
+    ...(keyboard ? { keyboard } : {}),
   }
   await writeFile(
     path.join(root, 'workspace-trash-restore-proof.json'),
     JSON.stringify(result, null, 2) + '\n',
     { flag: 'wx', mode: 0o600 },
   )
+  if (keyboard) {
+    assert.deepEqual(
+      {
+        escapeReturnedFocus: keyboard.escapeFocus.returnedToTrigger,
+        removalFocusedSearch: keyboard.focus.onSearch,
+        focusVisible: keyboard.focus.focusVisible && keyboard.focus.inputFocusedClass,
+        ariaModal: keyboard.ariaModal,
+        dialogTextContrast: keyboard.colors.every(({ ratio }) => ratio >= 4.5),
+        searchPlaceholderContrast: keyboard.searchContrast.ratio >= 4.5,
+      },
+      {
+        escapeReturnedFocus: true,
+        removalFocusedSearch: true,
+        focusVisible: true,
+        ariaModal: 'true',
+        dialogTextContrast: true,
+        searchPlaceholderContrast: true,
+      },
+    )
+  }
   return result
 }
