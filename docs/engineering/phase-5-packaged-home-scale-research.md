@@ -749,5 +749,65 @@ sample. The 120% CPU, 4 GiB, zero-swap scope peaked at 1,586,032,640
 bytes with zero OOM events. The native receipt and final index are
 under `runs/packaged-home-scale/20261125-r55`.
 
-This run verifies freshness on the current package. The 256-project
-layered measurements above still govern the open response-time work.
+This run verifies freshness on the pinned package.
+
+## Reuse validated metadata for byte-identical archives
+
+Base `52385cc27ccce7ba161e492f2ee84a9bc81624e9`. Re-read clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The Home and Projects
+workbench callers use `invokeai/frontend/webv2/src/workbench/projects/library.ts`
+and `projects/api.ts`. The list route in `invokeai/app/api/routers/projects.py`
+calls `invokeai/app/services/project_records/project_records_default.py`
+and the summary query in `invokeai/app/services/shared/database/queries/projects.py`.
+This path reads indexed summaries. It has no external archive validation
+cache. Studio adapts the fixed-buffer full-file hashing in
+`invokeai/backend/model_hash/model_hash.py`, used by
+`invokeai/backend/model_manager/model_on_disk.py` and
+`invokeai/backend/model_manager/configs/factory.py`.
+
+The scan under the existing Project path lock reads a bounded stream
+of the entire regular file and checks its open descriptor and path
+identity. A SHA-256 hit reuses previously validated metadata. A miss
+runs the full archive parser and requires the same raw digest around
+that validation before retaining metadata. The in-memory cache holds
+up to 512 paths with at most 64 KiB of source document JSON per entry
+and hashes archives up to 128 MiB for reuse. Uncached files at the
+limit go straight to the existing parser so scans of larger folders
+keep a stable admitted subset. The same SQLite transaction rebuilds
+the parent and accepted-result projection. Direct package indexing,
+Open and recovery keep their own file checks.
+
+The warmed regression rebuilt deleted accepted-result rows and diagnosed
+same-size archive corruption with the original inode and mtime. Restoring
+the exact archive restored the index. Removing only the digest equality
+check made the corruption test return `ready` instead of `corrupt`.
+The rebuilding neighbor passed. Restoring the exact source made both
+tests pass. All 135 focused Project and application-update tests, full
+typecheck, app build, packaging and scoped lint passed.
+
+The separate 128-project Main comparison used the same four-Raster
+fixture and CPU limit. Unchanged Refresh took 4.63 s in the baseline
+and 0.85 s on the final source. After external changes, it took 4.37 s
+and 0.92 s. Both executions found the replacement and added Project,
+marked the moved source missing and preserved 126 neighbors. These
+are individual measurements from the baseline and final runs under
+`runs/home-catalog-layered-main/20261125-digest-*`.
+
+| 256 layered Projects            | R54 first / restart | R57 first / restart |
+| ------------------------------- | ------------------: | ------------------: |
+| AppImage spawn to all cards     |     23.28 / 21.51 s |     21.80 / 20.32 s |
+| Aggregate Refresh               |     22.46 / 19.43 s |       3.30 / 3.09 s |
+| Scoped Refresh showing 96 cards |     16.75 / 15.12 s |       2.59 / 2.35 s |
+
+Each column contains one measurement per lifetime on the local ext4
+host with 120% CPU quota, a 4 GiB memory ceiling, zero swap and
+software compositing. R57 used the same synthetic 64/96/96 workload.
+Both R57 lifetimes confirmed complete indexes, preview decoding and
+normal exit. The independent readback rehashed all 256 archives and
+the AppImage, checked the 256 closed index rows and 30 migrations, and
+confirmed exit for the 20 recorded process identities. Peak scope
+memory was 3,331,559,424 bytes with zero OOM events. The AppImage SHA-256 is
+`0d6d9b8d7415c2f614973f4e4e5d767a976c3fd719c8921af00eda5265f21513`.
+The receipt, source pins and closed index are under
+`runs/packaged-home-scale/20261125-r57`. These samples cover local
+Refresh and leave cold startup and supported-host performance open.

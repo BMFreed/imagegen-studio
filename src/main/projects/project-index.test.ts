@@ -17,6 +17,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
@@ -149,6 +150,13 @@ test('saved result index copies generation metadata and keeps current assets sep
       assert.equal('imageUrl' in row, false)
       assert.equal('generationProvenance' in row, false)
     }
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), rows)
+    await database.db
+      .deleteFrom('project_accepted_result_index')
+      .where('local_project_key', '=', projectId)
+      .execute()
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
     await index.scanWorkspace(workspace.id)
     assert.deepEqual(await index.listSavedAcceptedResults(projectId), rows)
     const secondary = openAppDatabase(directory, migrations)
@@ -512,16 +520,32 @@ test('unhealthy and trashed sources retain rebuildable rows but do not expose sa
   await withSavedResultProject(async ({ database, index, session, workspace }) => {
     const projectId = session.localRecoveryKey
     const goodBytes = await readFile(session.filePath)
-    const original = await index.listSavedAcceptedResults(projectId)
-    await writeFile(session.filePath, Buffer.from('corrupt ZIP'))
+    const modifiedAt = new Date('2026-01-01T00:00:00.000Z')
+    await utimes(session.filePath, modifiedAt, modifiedAt)
     await index.scanWorkspace(workspace.id)
+    const original = await index.listSavedAcceptedResults(projectId)
+    const before = await stat(session.filePath, { bigint: true })
+    const corruptBytes = Buffer.from(goodBytes)
+    corruptBytes.fill(0, 0, 4) // Damage the first ZIP local file header.
+    await writeFile(session.filePath, corruptBytes)
+    await utimes(session.filePath, modifiedAt, modifiedAt)
+    const after = await stat(session.filePath, { bigint: true })
+    assert.equal(after.ino, before.ino)
+    assert.equal(after.size, before.size)
+    assert.equal(after.mtimeNs, before.mtimeNs)
+    const [corrupt] = await index.scanWorkspace(workspace.id)
+    assert.equal(corrupt.fileHealth, 'corrupt')
+    assert.deepEqual(await readFile(session.filePath), corruptBytes)
     assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
     assert.equal(
       (await database.db.selectFrom('project_accepted_result_index').selectAll().execute()).length,
       2,
     )
     await writeFile(session.filePath, goodBytes)
-    await index.scanWorkspace(workspace.id)
+    const [healthy] = await index.scanWorkspace(workspace.id)
+    assert.equal(healthy.fileHealth, 'ready')
+    assert.equal(healthy.documentRevision, session.document.documentRevision)
+    assert.deepEqual(await readFile(session.filePath), goodBytes)
     const repaired = await index.listSavedAcceptedResults(projectId)
     assert.deepEqual(
       repaired.map(({ fileFingerprint: _, ...row }) => row),

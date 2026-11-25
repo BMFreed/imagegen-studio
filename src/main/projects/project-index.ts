@@ -14,14 +14,14 @@ import {
 
 import type { Kysely } from 'kysely'
 
-import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
-import { access, lstat, mkdir, readdir, realpath } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { type BigIntStats, constants } from 'node:fs'
+import { access, lstat, mkdir, open, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { DB } from '../db/database.types.js'
 
-import { IgsPackageError, readIgsPackage } from './igs-package.js'
+import { IgsPackageError, type IgsPackageReadResult, readIgsPackage } from './igs-package.js'
 import { fileMtimeToHomeTimestamp } from './project-home-metadata.js'
 import {
   canonicalProjectPath,
@@ -37,6 +37,10 @@ import { ProjectRelocationStore } from './project-relocation-store.js'
 import { ProjectTrashStore } from './project-trash-store.js'
 
 export const UNCATEGORIZED_WORKSPACE_ID = 'uncategorized'
+
+const MAX_CACHED_ARCHIVES = 512
+const MAX_CACHED_PROJECT_BYTES = 64 * 1024
+const MAX_HASHED_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 export interface ProjectWorkspaceRecord {
   color: string
@@ -91,6 +95,23 @@ export interface ProjectSavedAcceptedResultsPage {
   totalCount: number
 }
 
+interface FileIdentity {
+  fingerprint: string
+  mtimeNs: string
+  size: number
+}
+
+interface ProjectIndexMetadata {
+  previewStatus: IgsPackageReadResult['manifest']['preview']['status']
+  project: IgsPackageReadResult['project']
+  thumbnailSha256: string | undefined
+}
+
+interface IndexSavedOptions {
+  expectedDocumentId?: string
+  reuseVerifiedArchive?: boolean
+}
+
 export class ProjectIndexError extends Error {
   constructor(
     readonly code:
@@ -117,6 +138,10 @@ export class ProjectIndexError extends Error {
 export class ProjectIndexRepository {
   readonly relocations: ProjectRelocationStore
   readonly trash: ProjectTrashStore
+  private readonly archiveMetadata = new Map<
+    string,
+    { metadata: ProjectIndexMetadata; sha256: string }
+  >()
 
   constructor(private readonly db: Kysely<DB>) {
     this.trash = new ProjectTrashStore(db)
@@ -323,7 +348,7 @@ export class ProjectIndexRepository {
   async indexSaved(
     filePath: string,
     workspaceId: string,
-    options: { expectedDocumentId?: string } = {},
+    options: IndexSavedOptions = {},
   ): Promise<ProjectIndexRecord> {
     const canonicalPath = await canonicalProjectPath(filePath)
     return await withProjectPathLock(
@@ -644,7 +669,7 @@ export class ProjectIndexRepository {
         continue
       }
       try {
-        const project = await this.indexSaved(filePath, workspaceId)
+        const project = await this.indexSaved(filePath, workspaceId, { reuseVerifiedArchive: true })
         onValidated?.(project)
       } catch (error) {
         if (error instanceof IgsSchemaError) {
@@ -819,6 +844,7 @@ export class ProjectIndexRepository {
         // The package was repaired or recreated while this scan was running.
         return
       }
+      this.archiveMetadata.delete(filePath)
       await this.indexUnhealthyLocked(filePath, workspaceId, currentDiagnostic)
     })
   }
@@ -842,7 +868,7 @@ export class ProjectIndexRepository {
   private async indexSavedLocked(
     canonicalPath: string,
     workspaceId: string,
-    options: { expectedDocumentId?: string },
+    options: IndexSavedOptions,
   ): Promise<ProjectIndexRecord> {
     if (
       (await this.relocations.list()).some(
@@ -862,13 +888,16 @@ export class ProjectIndexRepository {
       )
     }
     const before = await fileIdentity(canonicalPath)
-    const packageResult = await readIgsPackage(canonicalPath)
+    const { previewStatus, project, thumbnailSha256 } = await this.readIndexMetadata(
+      canonicalPath,
+      before,
+      options.reuseVerifiedArchive === true,
+    )
     const after = await fileIdentity(canonicalPath)
     if (before.fingerprint !== after.fingerprint) {
       throw new ProjectIndexError('INDEX_FILE_CHANGED', 'The Project changed during indexing.')
     }
     const now = new Date().toISOString()
-    const project = packageResult.project
     if (options.expectedDocumentId && project.documentId !== options.expectedDocumentId) {
       throw new ProjectIndexError(
         'INDEX_FILE_CHANGED',
@@ -876,9 +905,6 @@ export class ProjectIndexRepository {
       )
     }
     const key = await ensureProjectLocationIdentity(this.db, canonicalPath, project.documentId)
-    const thumbnailSha256 = packageResult.manifest.members.find(
-      (member) => member.path === 'preview/thumbnail.webp',
-    )?.sha256
     if (!thumbnailSha256) {
       throw new ProjectIndexError('INDEX_FILE_CHANGED', 'The Project preview is unavailable.')
     }
@@ -896,7 +922,7 @@ export class ProjectIndexRepository {
       file_size_bytes: after.size,
       indexed_at: now,
       local_project_key: key,
-      preview_status: packageResult.manifest.preview.status,
+      preview_status: previewStatus,
       preview_thumbnail_sha256: thumbnailSha256,
       search_name: normalizeSearchName(project.title),
       workspace_id: workspaceId,
@@ -998,7 +1024,7 @@ export class ProjectIndexRepository {
       fileHealth: 'ready',
       lastOpenedAt: indexed.last_opened_at,
       localProjectKey: key,
-      previewStatus: packageResult.manifest.preview.status,
+      previewStatus,
       thumbnailSha256,
       workspaceId,
     }
@@ -1074,6 +1100,47 @@ export class ProjectIndexRepository {
         )
         .execute()
     })
+  }
+
+  private async readIndexMetadata(
+    canonicalPath: string,
+    identity: FileIdentity,
+    reuse: boolean,
+  ): Promise<ProjectIndexMetadata> {
+    const cached = this.archiveMetadata.get(canonicalPath)
+    // Keep the budget stable for folders larger than the cache. Evicting per file
+    // in scan order would evict the next scan's useful entries before it can use them.
+    const sha256 =
+      reuse &&
+      (cached || this.archiveMetadata.size < MAX_CACHED_ARCHIVES) &&
+      identity.size > 0 &&
+      identity.size <= MAX_HASHED_ARCHIVE_BYTES
+        ? await readStableArchiveHash(canonicalPath, identity)
+        : null
+    if (cached && cached.sha256 === sha256) {
+      return cached.metadata
+    }
+
+    const { manifest, project } = await readIgsPackage(canonicalPath)
+    const metadata = {
+      previewStatus: manifest.preview.status,
+      project,
+      thumbnailSha256: manifest.members.find((member) => member.path === 'preview/thumbnail.webp')
+        ?.sha256,
+    }
+    const projectMember = manifest.members.find((member) => member.path === 'project.json')
+    // Verify the same archive bytes on both sides of the full parser before memoizing it.
+    // Keep only the small index inputs. The caller still rebuilds the SQLite projection.
+    if (
+      sha256 &&
+      projectMember &&
+      projectMember.bytes <= MAX_CACHED_PROJECT_BYTES &&
+      (await readStableArchiveHash(canonicalPath, identity)) === sha256 &&
+      (this.archiveMetadata.has(canonicalPath) || this.archiveMetadata.size < MAX_CACHED_ARCHIVES)
+    ) {
+      this.archiveMetadata.set(canonicalPath, { metadata, sha256 })
+    }
+    return metadata
   }
 }
 
@@ -1255,10 +1322,11 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function fileIdentity(
-  filePath: string,
-): Promise<{ fingerprint: string; mtimeNs: string; size: number }> {
-  const stat = await lstat(filePath, { bigint: true })
+async function fileIdentity(filePath: string): Promise<FileIdentity> {
+  return indexFileIdentity(await lstat(filePath, { bigint: true }))
+}
+
+function indexFileIdentity(stat: BigIntStats): FileIdentity {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new ProjectIndexError('INDEX_FILE_CHANGED', 'The Project file changed or is unsafe.')
   }
@@ -1266,6 +1334,55 @@ async function fileIdentity(
     fingerprint: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,
     mtimeNs: stat.mtimeNs.toString(),
     size: Number(stat.size),
+  }
+}
+
+async function readStableArchiveHash(
+  filePath: string,
+  expected: FileIdentity,
+): Promise<string | null> {
+  try {
+    const handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    )
+    try {
+      if (
+        indexFileIdentity(await handle.stat({ bigint: true })).fingerprint !== expected.fingerprint
+      ) {
+        return null
+      }
+      const hash = createHash('sha256')
+      const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, expected.size))
+      let position = 0
+      while (position < expected.size) {
+        const { bytesRead } = await handle.read(
+          buffer,
+          0,
+          Math.min(buffer.length, expected.size - position),
+          position,
+        )
+        if (bytesRead === 0) {
+          return null
+        }
+        hash.update(buffer.subarray(0, bytesRead))
+        position += bytesRead
+      }
+      if (
+        indexFileIdentity(await handle.stat({ bigint: true })).fingerprint !==
+          expected.fingerprint ||
+        (await realpath(filePath)) !== filePath ||
+        (await fileIdentity(filePath)).fingerprint !== expected.fingerprint
+      ) {
+        return null
+      }
+      return hash.digest('hex')
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    // A failed witness falls back to the ordinary parser and its diagnostics.
+    return null
   }
 }
 

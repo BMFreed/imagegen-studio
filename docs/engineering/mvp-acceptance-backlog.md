@@ -8,8 +8,9 @@ and exact model relink in step 4. The same source passed Setup and
 Repair on ext4 with the qualification publisher. The stock Setup path
 requires the production publisher in step 5.
 The two-plinth reference swap failed the same visual gate in Studio and
-installed InvokeAI. Continue keyboard, contrast and explicit Refresh
-performance checks in step 2 and interrupted update recovery in step 3.
+installed InvokeAI. Explicit Refresh passed the local 256-project
+performance check. Continue keyboard and contrast in step 2 and
+retained update ownership in step 3.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -51,19 +52,25 @@ environment and remaining limits, and update the current stage and next run.
         [256-project catalog result](./phase-5-packaged-home-scale-research.md#256-projects-with-four-raster-layers-each)
   - [x] Folder selection uses the complete catalog and passed at 0.18–0.38 s
         on the 256-project fixture. The same AppImage passed native workspace
-        removal and Trash restoration. Explicit Refresh still needs a
-        response-time pass.
+        removal and Trash restoration.
         [Home navigation result](./phase-5-packaged-home-scale-research.md#browse-folders-from-a-completed-home-catalog)
   - [x] Explicit Refresh on the pinned AppImage discovered a replacement,
-        addition and move on a 32-project corpus after restart. The larger
-        layered catalog remains the response-time workload.
+        addition and move on a 32-project corpus after restart.
         [Pinned Refresh control](./phase-5-packaged-home-scale-research.md#external-changes-on-the-pinned-candidate)
+  - [x] On the 256-project layered fixture, aggregate Refresh fell from
+        19.43–22.46 s to 3.09–3.30 s across the two local lifetimes.
+        [Archive reuse result](./phase-5-packaged-home-scale-research.md#reuse-validated-metadata-for-byte-identical-archives)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
       copy, its stage and backup while accounting for legacy processes that can
       still write to the same path.
       [Update ownership and recovery](./phase-5-application-update-interruption-research.md#interrupted-and-adjacent-paths)
+  - [x] Signed D reached Review and preflight after C on the used recovery
+        path. Both refused before any close callback and preserved the
+        two retained stages. The same D passed preflight on a fresh C
+        path in the transaction fixture.
+        [Next-release control](./phase-5-application-update-interruption-research.md#a-subsequent-release-on-the-used-recovery-path)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
