@@ -179,10 +179,13 @@ entries record the state at their checkpoint.
    result. Both blind readers passed the ordinary control. The assigned mug
    crossed the protected center and lost part of its silhouette. The swapped
    pair occupied the intended areas and had visible joins along the table.
-   Both defects were present in the decoded processing outputs. The next
-   diagnostic is a matched original Invoke inpaint run with the same source,
-   KEEP and regional conditioning.
+   Both defects were present in the decoded processing outputs. The
+   matched original Invoke denoiser reproduced both defects with the
+   same source, KEEP and regional conditioning. Both ordinary controls
+   passed the six-image blind review. Regional insertion visual utility
+   remains open on this scene.
    [Smart Inpaint tabletop insertion](./phase-4-anima-smart-regional-public-research.md#installed-tabletop-insertion-with-a-frozen-smart-mask)
+   [Matched original Invoke](./phase-4-anima-smart-regional-public-research.md#matched-original-invokeai-inpaint-comparison)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

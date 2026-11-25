@@ -270,9 +270,7 @@ The prior public checkpoint records Generate, Retry and Add.
 The preregistered visual criterion remains open on this seed. Inspection after
 the blind scoring found the interrupted mug and the rear-edge steps in the
 decoded processing PNGs, before world composition. This locates both defects
-upstream of the world compositor. A comparison with InvokeAI's original inpaint
-denoiser on the same source, KEEP and regional conditioning would test whether
-the same failure occurs there. Human acceptance is pending and the promise
+upstream of the world compositor. Human acceptance is pending and the promise
 statuses remain **«Пока не обещать»**.
 
 The first attempt stopped before submitting any inference because the packed
@@ -297,3 +295,60 @@ the exact tested boundary. A verified nine-entry archive contains the closed
 Project packages and SQLite fixture. Cleanup reclaimed 9,330,688 allocated bytes
 of owned scratch, payloads and blind duplicates after verification and physical
 exit. The existing signed runtime and model dependencies remain reusable.
+
+### Matched original InvokeAI inpaint comparison
+
+The follow-up uses the original InvokeAI Anima denoiser and Transformer at
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The harness loads the unchanged
+original `_run_diffusion`, `_prep_inpaint_mask`, `AnimaInpaintExtension` and
+its base class from `backend/rectified_flow/rectified_flow_inpaint_extension.py`.
+It records actual original scheduler, noise, inpaint and regional conditioning
+calls. The two coverage rules see the same binary masks. The floating-point
+start fraction `1.0 - 0.8` selects index 3 on the original Euler schedule.
+An independent check matched all 24 Invoke snapshots to their Git bodies
+and all 22 pinned Studio source files to the tested and documentation commits.
+
+The common inputs come from the installed Studio experiment. The comparison
+recomputes the deterministic Wan VAE posterior using the same sampled-posterior
+seed and normalized RGB. Each original invocation receives that posterior, the
+saved latent KEEP alpha, its saved prompts, seed 123 and the captured
+17-transition Euler schedule. It decodes through the common Wan VAE and
+composites with Studio's frozen world alpha for the visual comparison. This
+scope covers the denoiser on held inputs. A stock InvokeAI Canvas run also
+includes its own mask construction, source encode and paste operations.
+
+All three original invocations completed on CUDA, with 17 positive and 17
+negative evaluations and 17 original KEEP merges per case. Initial noise,
+source-noise blend and the BF16 generation mask matched across the three
+Invoke calls. The ordinary path had unrestricted attention. Both regional
+paths matched Studio's positive permissions exactly, with 790 global and 117
+queries per region, 14 masked even blocks and unrestricted
+negative. The same five distinct prompts matched the saved clean text,
+weighted spans, Qwen IDs, attention mask and embeddings, and T5 IDs and
+weights. These checks cover inputs to the LLM adapters.
+
+The matched compositor preserved all 179,368 zero-contribution pixels in each
+original result and verified the same protected landmarks and changed edit
+cores. The three composited Invoke/Studio pairs differ at 57,035, 51,991 and
+61,578 pixels in ordinary, assigned and swapped order.
+
+Two new blind readers scored all six composites before engine and case labels
+were revealed. Both ordinary controls passed. Both assigned versions had
+an interrupted centered mug, and both swapped versions placed the subjects
+as intended with visible steps in the rear table edge. The original Invoke
+processing PNGs also show both defects before world composition. The
+matched evidence reproduces the failures on this scene, mask and seed. No
+Studio denoiser divergence was isolated as their cause. The regional visual
+criterion and human acceptance remain open.
+
+The original comparison completed in 45.586 seconds with 10.21 GiB cgroup
+memory peak, zero swap and zero OOM events. An independent live-byte audit
+verified the source and input pins, initial blend and exact KEEP, 685
+original Transformer destinations, all three model bodies, the output pixel
+counts and physical exit. It rehashed 5,628,217,094 model bytes. The runtime
+and bootstrap identities matched before and after.
+
+The retained local run is `runs/anima-smart-inpaint-invoke-control/20261125-r1`.
+It contains the source snapshots, capture contract, native report, both blind
+observations and visual comparison. Cleanup reclaimed 4,575,232 allocated bytes
+of owned scratch and blind duplicate images after verification and exit.

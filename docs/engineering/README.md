@@ -75,6 +75,9 @@ preserved all 179,368 pixels outside the edit contribution in each of three
 installed images. The ordinary control passed both blind reviews. The regional
 assignments left either an interrupted mug or visible steps along the rear
 table edge. Both defects already appear in the processing PNGs.
+The [matched original inpaint denoiser](./phase-4-anima-smart-regional-public-research.md#matched-original-invokeai-inpaint-comparison)
+reproduced both defects on the same source and masks. Two blind readers
+passed both ordinary controls and failed both pairs of regional images.
 
 ## Startup recovery of committed Project deletion
 
