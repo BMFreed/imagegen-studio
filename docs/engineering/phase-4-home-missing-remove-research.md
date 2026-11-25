@@ -1,5 +1,53 @@
 # Remove a missing Project from Home
 
+## Keyboard focus after the missing entry disappears
+
+At 900×620 the production renderer's confirmation already returned focus to
+the Inspector action after Escape. Confirming removal left the document body
+focused because that Inspector action disappeared. The focused browser test
+reached the successful removal and verified the current workspace and surviving
+neighbor before it failed on the missing focus indicator. An initial
+`nextTick` attempt produced the same failure.
+
+The clean InvokeAI revision `4875d96531ca6712b288f6e660fcbb34143408c1`
+uses an operable Gallery target when the invoking thumbnail disappears.
+The source check followed
+`invokeai/frontend/webv2/src/features/gallery/ui/GalleryImageGrid.tsx` from
+`GalleryWideLayout.tsx` and `GalleryStackedLayout.tsx` in the same folder, and
+read the context-dialog control in `GalleryImageGrid.browser.test.tsx`.
+Studio uses the existing search input as its stable Home focus target.
+
+On successful removal, the renderer records the Home view and workspace before
+closing the confirmation. Naive UI's `afterLeave` runs after the modal exits.
+The callback returns focus to Search projects only while the originating
+browse view is active, the removed entry is absent and the document body holds
+focus. The keyboard test now passes Escape, explicit confirmation, removal
+from the selected workspace and visible search focus at 900×620. It mounts
+the production Vue renderer with controlled catalog and removal IPC replies.
+[Renderer](../../src/renderer/App.vue),
+[browser regression](../prototype-app/tests/home-catalog-app.spec.ts).
+
+The same case passed with the built Electron app in private software-rendered
+KWin, using real Main, SQLite and Project packages. Trusted Escape returned
+visible focus to the Inspector action. Trusted Tab and Enter confirmed the
+removal and produced visible focus in Search projects at 900×620. Both test
+packages retained their hashes. After restart, the neighbor was visible and the
+removed catalog row remained absent. Both app lifetimes closed normally.
+An independent read-only audit verified seven trusted keyboard events, all
+18 exited process identities, both archive hashes and the exact closed index.
+The input trace and screenshots are under
+`runs/home-forget-keyboard/20261125-r2`. The first native setup attempt in
+`20261125-r1` stopped before opening Electron because the private AppData
+directory had not been created.
+
+The final focused browser suite passed three tests. The wider browser run
+completed all 28 Home tests and reached its 600-second bound with 194 of 368
+tests recorded passing. It exited 124 before the final footer. The remaining
+owned Vite process was stopped and the test port was free afterward.
+Typecheck, app build and lint of both changed source files passed. Cleanup
+after physical exit kept the reports, screenshots, two sample archives and
+closed index and reclaimed 5,541,888 allocated bytes.
+
 Base `d38ef8fc383f1a94a8fa051fb4a356569ac422d5`, clean master/origin at start.
 PP-001 Home and PP-007 ownership contracts: a genuinely missing file can be
 forgotten from the derived Home index without deleting its file or recovery.

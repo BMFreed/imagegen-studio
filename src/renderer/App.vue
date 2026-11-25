@@ -560,6 +560,11 @@ const removeWorkspaceError = ref<string | null>(null)
 const showRemoveMissingProject = ref(false)
 const removingMissingProject = ref<ProjectSummary | null>(null)
 const removeMissingProjectError = ref<string | null>(null)
+let missingProjectReturnFocus: {
+  home: HomePresentationIntent
+  projectId: string
+  workspaceId: string | null
+} | null = null
 const removeMissingProjectEligible = computed(() => {
   const captured = removingMissingProject.value
   const current = projects.value.find(({ id }) => id === captured?.id)
@@ -4146,6 +4151,7 @@ function beginRemoveMissingProject(project: ProjectSummary) {
   queueResultNavigator.cancelProjectOpen()
   removingMissingProject.value = { ...current }
   removeMissingProjectError.value = null
+  missingProjectReturnFocus = null
   showRemoveMissingProject.value = true
 }
 
@@ -4168,10 +4174,17 @@ async function removeMissingProject() {
     return
   }
   const projectId = project.id
+  const workspaceId = selectedWorkspaceId.value
+  const focus = document.activeElement?.closest('.remove-missing-project-dialog')
+    ? captureHomePresentationIntent()
+    : null
   pendingProjectAction.value = { kind: 'remove-missing-project', projectId }
   removeMissingProjectError.value = null
   try {
     await apiValue(() => projectApi().removeMissingProject(projectId, true))
+    if (focus) {
+      missingProjectReturnFocus = { home: focus, projectId, workspaceId }
+    }
     projects.value = projects.value.filter(({ id }) => id !== projectId)
     showRemoveMissingProject.value = false
     await refreshProjects()
@@ -4179,6 +4192,23 @@ async function removeMissingProject() {
     removeMissingProjectError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+  }
+}
+
+function removeMissingProjectAfterLeave() {
+  const focus = missingProjectReturnFocus
+  missingProjectReturnFocus = null
+  if (
+    focus &&
+    homeOpenIntentCurrent(focus.home) &&
+    !showRemoveMissingProject.value &&
+    !selectedTrashView.value &&
+    selectedWorkspaceId.value === focus.workspaceId &&
+    !projects.value.some(({ id }) => id === focus.projectId) &&
+    document.hasFocus() &&
+    document.activeElement === document.body
+  ) {
+    homeView.value?.focusProjectSearch()
   }
 }
 
@@ -7290,11 +7320,12 @@ onBeforeUnmount(() => {
         :maskClosable="false"
         :show="showRemoveMissingProject"
         :zIndex="AppLayer.dialog"
+        @afterLeave="removeMissingProjectAfterLeave"
         @update:show="!$event && cancelMissingProjectRemoval()"
       >
         <NCard
           aria-label="Remove from Home"
-          class="dialog-card"
+          class="dialog-card remove-missing-project-dialog"
           contentScrollable
           role="dialog"
           size="small"

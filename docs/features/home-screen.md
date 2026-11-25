@@ -88,6 +88,11 @@ original file and Refresh rediscover the same key. Present files, unavailable
 parents, open Projects and pending operations are refused. This checkpoint does
 not qualify full Home/MVP acceptance; the later Locate checkpoint is separate.
 
+After a confirmed **Remove from Home**, keyboard focus moves to **Search
+projects** when the missing entry disappears from the current Home browse
+view and no other control has focus. Escape returns focus to the invoking
+control if it is still present.
+
 [Production browse controls](../engineering/phase-4-home-project-browse-research.md)
 connect name-only search, Last opened/Name/Modified sorting and independent
 Open/Recovery available/Needs attention filters to actual Main metadata. Unknown

@@ -513,6 +513,11 @@ entries record the state at their checkpoint.
    The combined Home request now updates the sidebar count when a retry
    discovers a Project in a folder that has just returned.
    [Workspace retry regression](./phase-5-packaged-home-scale-research.md#sidebar-count-after-a-workspace-returns)
+   Keyboard confirmation of Remove from Home now restores visible focus to
+   search when the missing entry disappears. Escape returns to the original
+   Inspector action. Both paths passed in the built Electron app on private
+   KWin with real SQLite and Project files.
+   [Remove from Home keyboard focus](./phase-4-home-missing-remove-research.md#keyboard-focus-after-the-missing-entry-disappears)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

@@ -3,7 +3,7 @@ import type { ApiResult, ProjectHomeCatalog, ProjectSummary } from '../../../src
 import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
 
-type CatalogScenario = 'fallback' | 'late-error'
+type CatalogScenario = 'fallback' | 'late-error' | 'missing-removal'
 
 interface HomeCatalogFixture {
   finishPendingCatalog: () => Promise<void>
@@ -43,6 +43,25 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         title,
         workspaceId: 'uncategorized',
       })
+      const missing: ProjectSummary = {
+        ...project('Missing sketch'),
+        fileName: 'Missing sketch.igs',
+        health: 'missing',
+        id: `project-v1-${'b'.repeat(64)}`,
+      }
+      const workspaces = [
+        {
+          availability: 'available' as const,
+          color: 'green',
+          directoryPath: '/fixture/workspace',
+          displayName: 'Current workspace',
+          id: 'uncategorized',
+          isDefault: true,
+          projectCount: 1,
+          writable: true,
+        },
+      ]
+      let removed = false
       const batchError = {
         error: { code: 'PROJECT_INTERNAL_ERROR', message: 'Controlled combined read failure.' },
         ok: false,
@@ -84,6 +103,18 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
             if (scenario === 'fallback') {
               return batchError
             }
+            if (scenario === 'missing-removal') {
+              const projects = removed
+                ? [project('Current sketch')]
+                : [missing, project('Current sketch')]
+              return {
+                ok: true,
+                value: {
+                  projects,
+                  workspaces: [{ ...workspaces[0]!, projectCount: projects.length }],
+                },
+              }
+            }
             if (requests.catalog === 1) {
               return await pending
             }
@@ -91,18 +122,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               ok: true,
               value: {
                 projects: [project('Current sketch')],
-                workspaces: [
-                  {
-                    availability: 'available',
-                    color: 'green',
-                    directoryPath: '/fixture/workspace',
-                    displayName: 'Current workspace',
-                    id: 'uncategorized',
-                    isDefault: true,
-                    projectCount: 1,
-                    writable: true,
-                  },
-                ],
+                workspaces,
               },
             }
           },
@@ -115,6 +135,13 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           onGenerationChanged: unsubscribe,
           onGenerationProgress: unsubscribe,
           onTabsChanged: unsubscribe,
+          removeMissingProject: async (id: string, confirmed: boolean) => {
+            if (scenario !== 'missing-removal' || id !== missing.id || !confirmed || removed) {
+              throw new Error('The fixture expected one confirmed removal of Missing sketch.')
+            }
+            removed = true
+            return { ok: true, value: null }
+          },
         },
         runtime: {
           getStatus: async () => ({ ok: true, value: { detail: '', kind: 'missing' } }),
@@ -166,4 +193,44 @@ test('production Home skips fallbacks when a superseded combined read fails', as
     0,
   )
   await expect(home.getByText('Workspace list unavailable', { exact: true })).toHaveCount(0)
+})
+
+test('production Home restores keyboard focus after removing a missing project from its workspace', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  const home = await mountHome(page, 'missing-removal')
+  const workspace = home.getByRole('button', { name: /^Current workspace\s*2$/ })
+  await workspace.press('Enter')
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  const missing = home.getByRole('button', { exact: true, name: 'Select Missing sketch' })
+  await missing.press('Enter')
+  await expect(missing).toHaveAttribute('aria-pressed', 'true')
+  const inspector = home.getByRole('complementary', { exact: true, name: 'Project inspector' })
+  const remove = inspector.getByRole('button', { exact: true, name: 'Remove from Home' })
+  await remove.press('Enter')
+  const dialog = page.getByRole('dialog', { exact: true, name: 'Remove from Home' })
+  await expect(dialog).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('confirmation.png') })
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(remove).toBeFocused()
+  await expect(missing).toBeVisible()
+
+  await remove.press('Enter')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { exact: true, name: 'Remove from Home' }).press('Enter')
+  await expect(dialog).toBeHidden()
+  await expect(missing).toHaveCount(0)
+  await expect(
+    home.getByRole('button', { exact: true, name: 'Select Current sketch' }),
+  ).toBeVisible()
+  await expect(home.getByRole('button', { name: /^Current workspace\s*1$/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await page.screenshot({ path: testInfo.outputPath('after-removal.png') })
+  const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
+  await expect(search).toBeFocused()
+  expect(await search.evaluate((input) => input.matches(':focus-visible'))).toBe(true)
 })
