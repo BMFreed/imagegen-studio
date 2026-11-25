@@ -382,6 +382,7 @@ export class ProjectServiceError extends Error {
  * calls address indexed local keys, never arbitrary filesystem paths or documents.
  */
 export class ProjectService {
+  private initialDefaultScan: Promise<boolean> | undefined
   private initialization: Promise<void> | undefined
   private readonly liveRelocations = new Map<
     string,
@@ -2266,6 +2267,11 @@ export class ProjectService {
   }
 
   async initialize(): Promise<void> {
+    await this.initializeStorage()
+    await (this.initialDefaultScan ?? this.scanWorkspaceIfAvailable(UNCATEGORIZED_WORKSPACE_ID))
+  }
+
+  async initializeStorage(): Promise<void> {
     if (!this.initialization) {
       this.initialization = (async () => {
         // Positive durable deletion commits recover before any scanner can rediscover a file.
@@ -2274,7 +2280,6 @@ export class ProjectService {
         )
         await this.options.repository.trash.recoverCommittedDeletes()
         await this.options.repository.ensureDefaultWorkspace(this.options.dataRoot)
-        await this.scanWorkspaceIfAvailable(UNCATEGORIZED_WORKSPACE_ID)
       })().catch((error: unknown) => {
         this.initialization = undefined
         throw error
@@ -2284,6 +2289,7 @@ export class ProjectService {
   }
 
   async list(workspaceId?: string): Promise<ProjectSummary[]> {
+    await this.initialize()
     return await this.readProjectSummaries(workspaceId, (id) => this.scanWorkspaceIfAvailable(id))
   }
 
@@ -2297,7 +2303,7 @@ export class ProjectService {
       // This witness belongs to the current catalog request. An unavailable folder may recover
       // before the second consumer, so only a completed scan can be shared.
       if (scanned.has(id)) {
-        return
+        return true
       }
       const completed: ProjectIndexRecord[] = []
       if (await this.scanWorkspaceIfAvailable(id, (project) => completed.push(project))) {
@@ -2305,7 +2311,9 @@ export class ProjectService {
           validated.set(project.localProjectKey, project)
         }
         scanned.add(id)
+        return true
       }
+      return false
     }
     const workspaceRecords = await this.scanRegisteredWorkspaces(scan)
     const projects = await this.readProjectSummaries(workspaceId, scan, validated)
@@ -2314,7 +2322,7 @@ export class ProjectService {
   }
 
   async listTrash(): Promise<ProjectTrashSummary[]> {
-    await this.initialize()
+    await this.initializeStorage()
     const workspaces = await this.options.repository.listWorkspaces()
     const records = await this.options.repository.trash.list()
     return await Promise.all(
@@ -5031,7 +5039,7 @@ export class ProjectService {
     scan: (id: string) => Promise<unknown>,
     validated?: ReadonlyMap<string, ProjectIndexRecord>,
   ): Promise<ProjectSummary[]> {
-    await this.initialize()
+    await this.initializeStorage()
     if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
@@ -5330,29 +5338,43 @@ export class ProjectService {
   }
 
   private async scanRegisteredWorkspaces(
-    scan: (id: string) => Promise<unknown>,
+    scan: (id: string) => Promise<boolean>,
   ): Promise<ProjectWorkspaceRecord[]> {
-    await this.initialize()
+    await this.initializeStorage()
     const workspaces = await this.options.repository.listWorkspaces()
     for (const workspace of workspaces) {
-      await scan(workspace.id)
+      const firstDefault = workspace.id === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
+      if (!(await scan(workspace.id)) && firstDefault) {
+        // The old eager discovery gave a briefly unavailable default folder another chance.
+        await scan(workspace.id)
+      }
     }
     return workspaces
   }
 
-  private async scanWorkspaceIfAvailable(
+  private scanWorkspaceIfAvailable(
     workspaceId: string,
     onValidated?: (project: ProjectIndexRecord) => void,
   ): Promise<boolean> {
-    try {
-      await this.options.repository.scanWorkspace(workspaceId, onValidated)
-      return true
-    } catch (error) {
-      if (!(error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE')) {
+    const firstDefault = workspaceId === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
+    const scan = this.options.repository.scanWorkspace(workspaceId, onValidated).then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE') {
+          return false
+        }
+        if (firstDefault) {
+          this.initialDefaultScan = undefined
+        }
         throw error
-      }
-      return false
+      },
+    )
+    // A first Home scan also prepares the default index for operations that use a Project ID.
+    // Home and explicit Refresh still scan afresh and keep their own validation witnesses.
+    if (firstDefault) {
+      this.initialDefaultScan = scan
     }
+    return scan
   }
 
   private async toSummary(

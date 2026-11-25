@@ -730,7 +730,7 @@ if (!gotInstanceLock) {
         return await readProjectThumbnail(resource, projectRepository, thumbnailCacheRoot)
       })
       try {
-        await projectService.initialize()
+        await projectService.initializeStorage()
       } catch (error) {
         console.error('Project storage is unavailable', error)
       }
@@ -1992,6 +1992,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.create,
         ipcChannels.projects.deleteProjectPermanently,
         ipcChannels.projects.finishImport,
+        ipcChannels.projects.getAcceptedResultHistory,
         ipcChannels.projects.list,
         ipcChannels.projects.listHomeCatalog,
         ipcChannels.projects.listTrash,
@@ -2320,8 +2321,16 @@ if (!gotInstanceLock) {
       registerProjectHandler(
         ipcChannels.projects.getAcceptedResultHistory,
         (args) => args.length === 1 && (args[0] === null || isAcceptedResultHistoryCursor(args[0])),
-        (cursor) =>
-          projectService.getAcceptedResultHistory(cursor as AcceptedResultHistoryCursor | null),
+        async (cursor) => {
+          try {
+            await projectService.initialize()
+          } catch (error) {
+            console.error('Project storage is unavailable', error)
+          }
+          return await projectService.getAcceptedResultHistory(
+            cursor as AcceptedResultHistoryCursor | null,
+          )
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.getGenerationTargetState,

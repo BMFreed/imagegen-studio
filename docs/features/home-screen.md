@@ -375,8 +375,10 @@ The filter control is labeled `Status` in the prototype, even though the underly
 `Reset filters` clears Name search and Status only. It preserves the chosen sort and grid/list view mode. Changing between `Projects`, `Trash` and a workspace clears project selection but keeps those browser controls for the Home session.
 
 Switching between `Projects` and a workspace filters the last complete
-Home catalog. Refresh and Rescan discover external file changes and
-rebuild the catalog from the saved files. A running application can reuse
+Home catalog. Startup recovers pending Project file operations before
+opening Home. The initial catalog request discovers the registered Projects.
+Refresh and Rescan discover external file changes and rebuild the catalog
+from the saved files. A running application can reuse
 validated metadata for an archive after checking that its full SHA-256
 matches. New and changed archives go through full package validation.
 Opening a Project checks the saved file and recovery state.

@@ -123,7 +123,7 @@ async function exerciseLifetime(dataRoot, run) {
     shadow: new ProjectShadowStore(path.join(dataRoot, 'autosave')),
   })
   try {
-    const initialize = await measure(() => service.initialize())
+    const initialize = await measure(() => service.initializeStorage())
     const first = await measure(() => service.listHomeCatalog())
     return {
       databaseOpenMs: open.elapsedMs,

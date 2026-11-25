@@ -70,6 +70,11 @@ environment and remaining limits, and update the current stage and next run.
   - [x] On the 256-project layered fixture, aggregate Refresh fell from
         19.43–22.46 s to 3.09–3.30 s across the two local lifetimes.
         [Archive reuse result](./phase-5-packaged-home-scale-research.md#reuse-validated-metadata-for-byte-identical-archives)
+  - [x] On the 256-project fixture, deferring discovery brought visible Home
+        from 6.10–6.38 s to 3.11–3.19 s. The full catalog still took
+        22.23–22.93 s on the candidate. Complete-catalog response time
+        remains open.
+        [Cold Home startup comparison](./phase-5-packaged-home-scale-research.md#discover-projects-after-the-home-window-opens)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old

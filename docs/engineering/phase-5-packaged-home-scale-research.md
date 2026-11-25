@@ -811,3 +811,82 @@ memory was 3,331,559,424 bytes with zero OOM events. The AppImage SHA-256 is
 The receipt, source pins and closed index are under
 `runs/packaged-home-scale/20261125-r57`. These samples cover local
 Refresh and leave cold startup and supported-host performance open.
+
+## Discover Projects after the Home window opens
+
+The default workspace used to be scanned before Main created the
+window. The renderer's first catalog request then included Uncategorized in
+the registered workspace sweep. With four Raster layers, Main alone spent
+1.46–1.57 s in its pre-window Project initialization across the two 128-file
+baseline lifetimes.
+
+InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7` constructs
+`ProjectRecordsStorage` in `invokeai/app/api/dependencies.py`. The
+`HomePage.tsx` and `ProjectsPage.tsx` launchpad callers under
+`invokeai/frontend/webv2/src/workbench/launchpad/pages` request the library
+through `workbench/projects/library.ts` and `workbench/projects/api.ts` when
+the view mounts. The route in `invokeai/app/api/routers/projects.py` delegates
+to `invokeai/app/services/project_records/project_records_default.py` and
+`invokeai/app/services/shared/database/queries/projects.py`. Those summaries
+come from managed database records. Studio adapts the startup and listing
+split and keeps its existing filesystem discovery to validate portable
+archives that can be added or changed externally.
+
+Main recovers pending Moves and committed Trash deletions and registers the
+default workspace before opening the window. Home owns the first archive
+sweep. Trash can already read its recovered records while the app starts.
+Direct Project-ID operations and the history IPC can prepare the default
+index on demand if they run first. The history IPC serializes this write with
+catalog requests and observes their close guard. The history read still uses
+the saved projection if preparation reports an error. When the first
+default scan reports that the folder is briefly unavailable, Home still
+retries it before publishing the sidebar, including when another workspace
+is selected.
+
+The three-folder AppImage comparison used 256 Projects with four
+1024×1024 Raster layers each. Both runs used private 900×620 KDE Wayland,
+software rendering, 120% CPU, 4 GiB RAM and zero swap. Each cell shows one
+first launch and one indexed restart on the same local ext4 host.
+
+| Measurement                  | Baseline R2     | Candidate R1    |
+| ---------------------------- | --------------- | --------------- |
+| Spawn to visible Home        | 6.38 / 6.10 s   | 3.19 / 3.11 s   |
+| Spawn to all 256 cards       | 23.02 / 20.99 s | 22.93 / 22.23 s |
+| Aggregate Refresh            | 3.84 / 3.44 s   | 3.62 / 3.86 s   |
+| Scoped Refresh with 96 cards | 2.64 / 2.44 s   | 2.40 / 2.76 s   |
+
+Home appeared about three seconds earlier in both candidate lifetimes.
+The complete list took about 22–23 seconds and the sampled indexed restart
+took 1.23 seconds longer. The full archive validation still runs on the
+first catalog request. These timings describe the measured host and
+workload.
+
+The 202 focused tests passed along with full typecheck, app build, scoped
+ESLint and AppImage packaging. In the isolated service copy, restoring the
+eager scan made the startup test observe an extra Uncategorized scan.
+Disabling the cold default retry broke the scoped default-folder case.
+The three neighboring cases passed in each mutation. All four passed
+before mutation and after restoring the source byte for byte.
+
+The exact candidate AppImage SHA-256 is
+`fa69985c57da523c250aefa5d5a7525834cdc259c88d5d4d2843b8a8880dffe7`.
+The comparison runs are `packaged-home-scale/20261126-r2` and
+`packaged-home-scale/20261126-r1`. Independent readback verified all
+512 archive bodies, the two final 256-Project indexes, both AppImages,
+the 30 migration digests per index and exit of 40 recorded process identities.
+The two scopes recorded zero OOM events.
+
+Because the cold initialization also feeds the history IPC, the same AppImage
+ran the [Saved generations FUSE scenario](./phase-5-stock-appimage-fuse-research.md#saved-generations)
+in `packaged-saved-results/20261126-r1`. Both lifetimes navigated to the
+exact saved inactive variant and closed normally. Independent readback
+matched the mounted ASAR and rederived 34 accepted results from the two
+portable Projects in each closed database. It also confirmed both FUSE mounts
+and 16 process identities had exited. This run covers the saved-history
+and native close paths.
+
+After the readbacks and physical-exit checks, cleanup reclaimed
+3,956,248,576 allocated bytes of generated fixtures, unpacked build output
+and private profiles. Each run retains its receipts and selected archive
+witnesses. The two closed Home indexes, both Saved generations indexes and
+the exact candidate AppImage remain available for review.

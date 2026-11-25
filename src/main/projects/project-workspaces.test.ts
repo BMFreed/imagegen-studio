@@ -18,6 +18,7 @@ import test from 'node:test'
 import { type AppDatabase, openAppDatabase } from '../db/database.js'
 import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
@@ -520,7 +521,7 @@ test('missing and inaccessible folders retain cached rows and do not block healt
   })
 })
 
-test('Home shares one scan per workspace and each request sees external Project changes', async () => {
+test('Home discovers each workspace once after startup and sees external Project changes', async () => {
   await withWorkspaceFixture(async (fixture) => {
     const added = await fixture.service.addWorkspace(
       { color: 'blue', displayName: 'Home catalog' },
@@ -549,11 +550,14 @@ test('Home shares one scan per workspace and each request sees external Project 
     }
     const repository = new ObservedIndex(fixture.database.db)
     const service = fixture.makeService(repository)
-    await service.initialize()
-    repository.scans.length = 0
+    await service.initializeStorage()
+    assert.deepEqual(await service.listTrash(), [])
+    assert.deepEqual(repository.scans, [])
     const expectedScans = ['uncategorized', added.id].sort()
 
     const initial = await service.listHomeCatalog()
+    assert.deepEqual(repository.scans.sort(), expectedScans)
+    await service.initialize()
     assert.deepEqual(repository.scans.sort(), expectedScans)
     assert.deepEqual(initial.projects, await fixture.service.list())
     assert.deepEqual(initial.workspaces, await fixture.service.listWorkspaces())
@@ -605,49 +609,86 @@ test('Home shares one scan per workspace and each request sees external Project 
   })
 })
 
-test('Home projects recovered workspace counts and cards from the same refresh', async () => {
+test('Open discovers an unindexed default Project before the first Home catalog', async () => {
   await withWorkspaceFixture(async (fixture) => {
-    const added = await fixture.service.addWorkspace(
-      { color: 'green', displayName: 'Transient folder' },
-      await fixture.folder('transient'),
-    )
-    const external = await ProjectSession.create(
-      path.join(added.directoryPath, 'returned.igs'),
-      'Project in the returned workspace',
+    const { repository, service } = fixture
+    const workspace = await repository.ensureDefaultWorkspace(fixture.dataRoot)
+    const saved = await ProjectSession.create(
+      path.join(workspace.directoryPath, 'direct-open.igs'),
+      'Direct Open',
       fixture.roots,
     )
-    const before = await readFile(external.filePath)
-    const moved = `${added.directoryPath}.retained`
-    class TransientIndex extends ProjectIndexRepository {
-      attempts = 0
+    const projectId = localProjectRecoveryKey(saved.filePath)
+    const before = await readFile(saved.filePath)
+    assert.equal(await repository.getProject(projectId), null)
 
-      override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
-        const [workspaceId] = args
-        if (workspaceId !== added.id || ++this.attempts !== 1) {
-          return await super.scanWorkspace(...args)
-        }
-        await rename(added.directoryPath, moved)
-        try {
-          return await super.scanWorkspace(...args)
-        } finally {
-          await rename(moved, added.directoryPath)
-        }
-      }
-    }
-    const repository = new TransientIndex(fixture.database.db)
-    const service = fixture.makeService(repository)
-    const catalog = await service.listHomeCatalog(added.id)
-    assert.equal(repository.attempts, 2)
+    await service.initializeStorage()
+    const opened = await service.open(projectId)
+    assert.equal(opened.kind, 'opened')
     assert.deepEqual(
-      catalog.projects.map(({ health, recoveryStatus, title }) => [health, recoveryStatus, title]),
-      [['ready', 'none', 'Project in the returned workspace']],
+      [opened.tab.id, opened.tab.title, opened.tab.documentId, opened.tab.documentRevision],
+      [projectId, 'Direct Open', saved.document.documentId, saved.document.documentRevision],
     )
-    const workspace = catalog.workspaces.find(({ id }) => id === added.id)
-    assert.equal(workspace?.availability, 'available')
-    assert.equal(workspace?.projectCount, 1)
-    assert.deepEqual(await readFile(external.filePath), before)
+    await service.close(projectId)
+    assert.deepEqual(await readFile(saved.filePath), before)
   })
 })
+
+for (const returnedFolder of ['external', 'default'] as const) {
+  test(`Scoped Home counts Projects when the ${returnedFolder} workspace returns during discovery`, async () => {
+    await withWorkspaceFixture(async (fixture) => {
+      const added = await fixture.service.addWorkspace(
+        { color: 'green', displayName: 'External folder' },
+        await fixture.folder('external'),
+      )
+      const returned =
+        returnedFolder === 'external'
+          ? added
+          : await fixture.repository.workspaceById('uncategorized')
+      const saved = await ProjectSession.create(
+        path.join(returned.directoryPath, 'returned.igs'),
+        'Project in the returned workspace',
+        fixture.roots,
+      )
+      const before = await readFile(saved.filePath)
+      const moved = `${returned.directoryPath}.retained`
+      class TransientIndex extends ProjectIndexRepository {
+        attempts = 0
+
+        override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+          const [workspaceId] = args
+          if (workspaceId !== returned.id || ++this.attempts !== 1) {
+            return await super.scanWorkspace(...args)
+          }
+          await rename(returned.directoryPath, moved)
+          try {
+            return await super.scanWorkspace(...args)
+          } finally {
+            await rename(moved, returned.directoryPath)
+          }
+        }
+      }
+      const repository = new TransientIndex(fixture.database.db)
+      const service = fixture.makeService(repository)
+      const catalog = await service.listHomeCatalog(added.id)
+      assert.equal(repository.attempts, 2)
+      assert.deepEqual(
+        catalog.projects.map(({ health, recoveryStatus, title }) => [
+          health,
+          recoveryStatus,
+          title,
+        ]),
+        returnedFolder === 'external'
+          ? [['ready', 'none', 'Project in the returned workspace']]
+          : [],
+      )
+      const workspace = catalog.workspaces.find(({ id }) => id === returned.id)
+      assert.equal(workspace?.availability, 'available')
+      assert.equal(workspace?.projectCount, 1)
+      assert.deepEqual(await readFile(saved.filePath), before)
+    })
+  })
+}
 
 for (const replacementPoint of ['after scan', 'during shadow inspection'] as const) {
   test(`Home rechecks a package replaced ${replacementPoint}`, async () => {
