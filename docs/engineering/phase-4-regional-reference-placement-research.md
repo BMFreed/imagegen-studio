@@ -166,3 +166,69 @@ uses the existing isolated Invoke driver. The run under
 original outputs, masks, pinned inputs, graphs, blind observations and
 SQLite evidence. Cleanup released 22,470,656 allocated bytes after
 checking the 73 retained files.
+
+## A single reference on either plinth
+
+Studio base `9192d2f76d1a979ffaa44d4e13d5575f0342848a`. Re-read
+clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/frontend/webv2/src/features/generation/core/graph.ts` and
+`canvas/compileCanvasGraph.ts` graft the source encoder and region
+inputs. `canvas/addRegionalGuidance.ts` attaches each original image to
+its owning alpha tensor. In the backend,
+`invokeai/app/invocations/mask.py` produces that tensor and
+`invokeai/app/invocations/sd/ip_adapter.py` supplies the reference
+field. The preparation in `invokeai/app/invocations/sd/denoise_latents.py`
+calls `invokeai/backend/ip_adapter/ip_adapter.py`. The resulting
+reference masks are consumed by `regional_ip_data.py` and
+`shared_invokeai_diffusion.py` under
+`invokeai/backend/stable_diffusion/diffusion`. The installed InvokeAI
+6.14.3 comparison rechecked the same local and installed source bodies
+pinned by the earlier comparison. Each engine uses its existing
+source-latent, noise, denoising and output policies.
+
+This qualification keeps the original display scene, camera PNG, masks,
+official Illustrious XL v0.1 and adapter resources. It uses one image-only
+owner in each treatment and changes the earlier global text to describe
+the gallery without asking for two objects. All cases use that same
+scene-only text, seed 123, 512×512, Euler/Normal 30, denoise 0.6, CFG 5,
+empty negative and embedded FP16 VAE. The ordinary Project has no region.
+Each treatment has one original camera PNG at full adapter weight and
+one 61,440-pixel Alpha8 plane on the selected side.
+
+The preregistered gate requires an identifiable camera body and round
+lens on the assigned plinth in each treatment, an unoccupied opposite
+side and recognizable gallery anchors. Both ordinary frames passed the
+empty-scene control. In each engine the left treatment produced a dark
+lens-like inset fused into the upper pedestal. Both readers found the
+separate camera body ambiguous. With the reference on the right, both
+engines produced a floating dark ring and distorted plinth details.
+The ring lacked an attached camera body. Both blind readers recorded
+their observations before the case key was revealed.
+
+The visual verdict is **NOT_QUALIFIED** in both engines on this single
+recipe. The exact mask swap influences the same part of the scene in
+both engines. The experiment shows a shared limitation on recognizable
+placement. Human visual acceptance remains open.
+
+Studio executed three jobs and 57 progress steps on the existing signed
+runtime. The first launcher reached zero submissions because its private
+`payloads` directory was absent. A fresh R2 run provided that directory
+and finished in 122.708 s, reached 8,460 MiB sampled worker VRAM and used
+12,815,921,152 bytes of peak group memory with zero swap and OOM.
+Invoke executed three queue items and shut down cleanly in 66.435 s.
+Its group reached the 12 GiB ceiling with zero swap and OOM.
+
+Independent live readbacks joined the Studio requests and Invoke graphs
+to the exact source, reference and matching left and right mask planes.
+They checked all six output PNGs, both closed stores, the three saved
+Studio packages and all native process exits. Studio's private capture
+store had no queue or acceptance rows. Invoke's closed store held three
+completed queue rows. Typecheck, app build, scoped lint and 18 focused
+checks passed.
+
+The runs are retained under
+`runs/regional-reference-single-camera/20261125-r2` and
+`runs/invoke-regional-reference-single-camera/20261125-r1`. They include
+the six original images, comparison sheet, blind observations, source
+and input pins and exact graph and request receipts. This is a visual
+qualification of the existing Current Canvas IMG path on one RTX 4080.

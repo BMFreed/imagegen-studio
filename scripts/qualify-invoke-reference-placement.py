@@ -21,6 +21,11 @@ ROOT = Path.home() / ".codex/artifacts/imagegen-studio"
 # The serve process runs with HOME isolated. Its parent supplies the same absolute
 # run via the checked environment and --run.
 SCHEMA = "installed-invoke-reference-placement-v1"
+SINGLE_CAMERA_SCHEMA = "invoke-reference-single-camera-v1"
+RUN_SCHEMAS = {
+    "invoke-regional-reference-placement": SCHEMA,
+    "invoke-regional-reference-single-camera": SINGLE_CAMERA_SCHEMA,
+}
 VERSION = "6.14.3"
 VISION_NAME = "IP Adapter SD1.5 Image Encoder"
 POSITIVE = (
@@ -28,6 +33,16 @@ POSITIVE = (
     "oak divider in the center, teal trim above, cream gallery wall, gentle shadows"
 )
 ASSIGNMENTS = (("ordinary", []), ("assigned", ["A", "B"]), ("swapped", ["B", "A"]))
+SINGLE_CAMERA_POSITIVE = (
+    "a clean anime still life of two display plinths, "
+    "oak divider in the center, teal trim above, cream gallery wall, gentle shadows"
+)
+SINGLE_CAMERA_SIDES = {"camera-left": "left", "camera-right": "right"}
+SINGLE_CAMERA_ASSIGNMENTS = (
+    ("ordinary", []),
+    ("camera-left", ["B"]),
+    ("camera-right", ["B"]),
+)
 BOXES = {"left": (0, 64, 192, 384), "right": (320, 64, 512, 384)}
 SOURCE_SHA = "8bcb4ffb29df973fd7faa563d68ca6e00270f8c8359113b6ab2d04bb49a6264f"
 REFERENCE_SHAS = {
@@ -57,14 +72,17 @@ def load_mug_driver():
 def read_contract(run, *, server):
     assert run.resolve(strict=True) == run and run.stat().st_uid == os.getuid()
     assert re.fullmatch(r"[0-9]{8}-r[1-9][0-9]*", run.name)
-    assert not server or run.parent.name == "invoke-regional-reference-placement"
+    assert run.parent.name in RUN_SCHEMAS
     if not server:
-        assert run.parent == ROOT / "runs/invoke-regional-reference-placement"
+        assert run.parent == ROOT / "runs" / run.parent.name
     source = run / "reference-contract.json"
     assert source.resolve(strict=True) == source and source.is_file()
     assert 0 < source.stat().st_size < 64 * 1024
     contract = json.loads(source.read_bytes())
-    assert contract["schema"] == SCHEMA and contract["invokeVersion"] == VERSION
+    assert (
+        contract["schema"] == RUN_SCHEMAS[run.parent.name]
+        and contract["invokeVersion"] == VERSION
+    )
     temp, app = Path(contract["tempRoot"]), Path(contract["appRoot"])
     assert (
         temp.parent == run.parents[2]
@@ -97,11 +115,16 @@ def read_contract(run, *, server):
         contract["negative"],
     ) == (0.4, 1, "")
     assert contract["freshNativeRequestsMax"] == 3
+    single_camera = contract["schema"] == SINGLE_CAMERA_SCHEMA
+    assignments = SINGLE_CAMERA_ASSIGNMENTS if single_camera else ASSIGNMENTS
+    positive = SINGLE_CAMERA_POSITIVE if single_camera else POSITIVE
     assert contract["cases"] == [
-        {"label": label, "positive": POSITIVE, "images": images}
-        for label, images in ASSIGNMENTS
+        {"label": label, "positive": positive, "images": images}
+        for label, images in assignments
     ]
-    assert set(contract["referenceImages"]) == set(REFERENCE_SHAS)
+    assert set(contract["referenceImages"]) == (
+        {"B"} if single_camera else set(REFERENCE_SHAS)
+    )
     assert set(contract["maskImages"]) == set(BOXES)
     assert contract["vision"]["name"] == VISION_NAME
     return contract
@@ -257,10 +280,25 @@ def register_model(driver, api, run, role, model_path, name, base, model_type, f
     return {key: model[key] for key in MODEL_IDENTIFIER}
 
 
+def reference_bindings(contract, case):
+    if not case["images"]:
+        return []
+    sides = (
+        (SINGLE_CAMERA_SIDES[case["label"]],)
+        if contract["schema"] == SINGLE_CAMERA_SCHEMA
+        else BOXES
+    )
+    return list(zip(sides, case["images"], strict=True))
+
+
 def make_graph(driver, contract, case, model, source, adapter, references, masks):
     graph = driver.make_graph(contract, case, model, source)
-    graph["id"] = "igs-invoke-two-plinth-" + case["label"]
-    if not case["images"]:
+    profile = (
+        "single-camera" if contract["schema"] == SINGLE_CAMERA_SCHEMA else "two-plinth"
+    )
+    graph["id"] = f"igs-invoke-{profile}-{case['label']}"
+    bindings = reference_bindings(contract, case)
+    if not bindings:
         return graph
 
     nodes, edges = graph["nodes"], graph["edges"]
@@ -285,7 +323,7 @@ def make_graph(driver, contract, case, model, source, adapter, references, masks
     # Current Invoke Canvas addRegionalGuidance creates one native mask-reader
     # and one IP-Adapter field per owning region, then joins the fields with collect.
     add_node("reference-list", "collect")
-    for side, reference in zip(BOXES, case["images"], strict=True):
+    for side, reference in bindings:
         mask_node, adapter_node = f"mask-{side}", f"adapter-{side}"
         add_node(mask_node, "alpha_mask_to_tensor", image={"image_name": masks[side]})
         add_node(
@@ -305,7 +343,7 @@ def make_graph(driver, contract, case, model, source, adapter, references, masks
     return graph
 
 
-def check_completed_graph(driver, run, case, graph, adapter, vision):
+def check_completed_graph(driver, run, contract, case, graph, adapter, vision):
     item = json.loads((run / f"{case['label']}.queue-final-item.json").read_bytes())
     state = item["session"]
     received = state["graph"]
@@ -322,14 +360,15 @@ def check_completed_graph(driver, run, case, graph, adapter, vision):
     assert result("output")["type"] == "image_output"
     assert result("noise")["noise"]["seed"] == 123
     assert result("denoise")["type"] in {"latents_output", "latents_meta_output"}
-    if not case["images"]:
-        assert not any(
-            value["type"] == "ip_adapter_output" for value in state["results"].values()
-        )
+    bindings = reference_bindings(contract, case)
+    assert sum(
+        value["type"] == "ip_adapter_output" for value in state["results"].values()
+    ) == len(bindings)
+    if not bindings:
         return
 
     expected_fields = []
-    for side in BOXES:
+    for side, _ in bindings:
         mask = result(f"mask-{side}")
         field = result(f"adapter-{side}")["ip_adapter"]
         node = graph["nodes"][f"adapter-{side}"]
@@ -523,7 +562,9 @@ def main(run, contract):
                 side: upload(driver, api, run, f"mask-{side}", pin, mask=side)
                 for side, pin in contract["maskImages"].items()
             }
-            assert len({source, *references.values(), *masks.values()}) == 5
+            assert len({source, *references.values(), *masks.values()}) == (
+                1 + len(contract["referenceImages"]) + len(BOXES)
+            )
             for case in contract["cases"]:
                 graph = make_graph(
                     driver, contract, case, model, source, adapter, references, masks
@@ -531,10 +572,14 @@ def main(run, contract):
                 output = driver.generate(
                     api, run, case, graph, contract, started + 515, report
                 )
-                check_completed_graph(driver, run, case, graph, adapter, vision)
+                check_completed_graph(
+                    driver, run, contract, case, graph, adapter, vision
+                )
                 report["results"].append(output)
             assert (
-                report["enqueueAttempts"] == len(report["results"]) == len(ASSIGNMENTS)
+                report["enqueueAttempts"]
+                == len(report["results"])
+                == contract["freshNativeRequestsMax"]
             )
             report["status"] = "completed"
         except BaseException as error:

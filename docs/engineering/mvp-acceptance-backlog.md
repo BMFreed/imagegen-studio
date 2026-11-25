@@ -36,6 +36,11 @@ environment and remaining limits, and update the current stage and next run.
         with installed InvokeAI. Both engines failed recognizable
         placement on the held recipe.
         [Matched comparison](./phase-4-regional-reference-placement-research.md#matched-installed-invokeai-control)
+  - [x] Compared one film-camera reference on each of the same plinths.
+        Both engines produced lens-like fragments, and the camera body
+        remained unreadable on the right. The visual placement gate
+        stays open.
+        [Single-reference comparison](./phase-4-regional-reference-placement-research.md#a-single-reference-on-either-plinth)
 - [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
       contrast and Home performance checks on the candidate.
   - [x] The stock AppImage kept Trash across workspace removal and restart,

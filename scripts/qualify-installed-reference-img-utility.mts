@@ -23,11 +23,16 @@ import { captureInferenceWorkerOwner } from '../src/main/projects/inference-work
 import {
   produceReferenceImgUtilityProbe,
   produceReferencePlacementProbe,
+  produceReferenceSingleCameraProbe,
   REFERENCE_PLACEMENT_CASES,
   REFERENCE_PLACEMENT_MASKS,
   REFERENCE_PLACEMENT_POSITIVE,
   REFERENCE_PLACEMENT_ROOT,
+  REFERENCE_SINGLE_CAMERA_CASES,
+  REFERENCE_SINGLE_CAMERA_POSITIVE,
+  REFERENCE_SINGLE_CAMERA_ROOT,
   type ReferenceImgUtilityUseCase,
+  type ReferenceSingleCameraUseCase,
 } from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
 import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-client.js'
 import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.js'
@@ -42,7 +47,7 @@ interface ReportPin extends Omit<FilePin, 'byteSize'> {
 }
 interface Fixture {
   contract: FilePin
-  referenceImages: Record<'A' | 'B', FilePin>
+  referenceImages: Partial<Record<'A' | 'B', FilePin>>
   sourceImage: FilePin
 }
 interface Release {
@@ -79,7 +84,7 @@ type Owner = Awaited<ReturnType<typeof captureInferenceWorkerOwner>>
 type PlacementUseCase = Parameters<
   Parameters<typeof produceReferencePlacementProbe>[0]['useCase']
 >[0]
-type ProbeUseCase = PlacementUseCase | ReferenceImgUtilityUseCase
+type ProbeUseCase = PlacementUseCase | ReferenceImgUtilityUseCase | ReferenceSingleCameraUseCase
 
 const helperUrl = new URL('./upgrade-qualification-worker.mjs', import.meta.url)
 const { assertRuntimeIdle, assertUpgradeBounds } = (await import(helperUrl.href)) as {
@@ -405,29 +410,36 @@ function observeGpu(pid: number) {
   }
 }
 
-function placementMasks(input: ProbeUseCase, left: 'A' | 'B', fixture: Fixture) {
-  const keys = left === 'A' ? (['A', 'B'] as const) : (['B', 'A'] as const)
+function placementMasks(
+  input: ProbeUseCase,
+  fixture: Fixture,
+  assignments: readonly { key: 'A' | 'B'; maskIndex: 0 | 1 }[],
+) {
   const images = input.references?.images
-  assert.equal(images?.length, keys.length)
-  assert.equal(input.recipe.regions.length, keys.length)
-  assert.equal(new Set(input.recipe.regions.map(({ regionId }) => regionId)).size, keys.length)
-  assert.equal(new Set(input.recipe.regions.map(({ maskId }) => maskId)).size, keys.length)
-  assert.equal(new Set(images?.map(({ referenceId }) => referenceId)).size, keys.length)
+  assert.equal(images?.length, assignments.length)
+  assert.equal(input.recipe.regions.length, assignments.length)
+  assert.equal(
+    new Set(input.recipe.regions.map(({ regionId }) => regionId)).size,
+    assignments.length,
+  )
+  assert.equal(new Set(input.recipe.regions.map(({ maskId }) => maskId)).size, assignments.length)
+  assert.equal(new Set(images?.map(({ referenceId }) => referenceId)).size, assignments.length)
   return input.recipe.regions.map((region, index) => {
-    const mask = REFERENCE_PLACEMENT_MASKS[index]
-    const key = keys[index]
+    const { key, maskIndex } = assignments[index]
+    const mask = REFERENCE_PLACEMENT_MASKS[maskIndex]
+    const pin = fixture.referenceImages[key]
     const captured = images?.[index]
     const authored = region.referenceImages?.[0]
-    assert.ok(mask && key && captured && authored)
+    assert.ok(pin && captured && authored)
     assert.equal(region.positive, null)
     assert.equal(region.negative.source, 'regional')
     assert.equal(region.negative.prompt.text, '')
     assert.equal(region.referenceImages?.length, 1)
     assert.equal(captured.regionId, region.regionId)
     assert.equal(captured.referenceId, authored.id)
-    assert.equal(captured.image.byteSize, fixture.referenceImages[key].byteSize)
-    assert.equal(captured.image.sha256, fixture.referenceImages[key].sha256)
-    assert.equal(sha(Buffer.from(captured.image.bytes)), fixture.referenceImages[key].sha256)
+    assert.equal(captured.image.byteSize, pin.byteSize)
+    assert.equal(captured.image.sha256, pin.sha256)
+    assert.equal(sha(Buffer.from(captured.image.bytes)), pin.sha256)
     assert.equal(authored.asset.sha256, captured.image.sha256)
     assert.equal(authored.asset.bytes, captured.image.byteSize)
     assert.equal(authored.asset.width, captured.image.width)
@@ -465,30 +477,38 @@ function commonPlacementInput(request: IllustriousImg2ImgRequestV1) {
 
 async function main() {
   assert.deepEqual(process.argv.slice(2), ['--run', run])
-  const placement = path.dirname(run) === REFERENCE_PLACEMENT_ROOT
-  assert.equal(path.dirname(run), placement ? REFERENCE_PLACEMENT_ROOT : runRoot)
+  const singleCamera = path.dirname(run) === REFERENCE_SINGLE_CAMERA_ROOT
+  const placement = singleCamera || path.dirname(run) === REFERENCE_PLACEMENT_ROOT
+  assert.ok(placement || path.dirname(run) === runRoot)
   assert.match(path.basename(run), placement ? /^\d{8}-r[1-9]\d*$/ : /^20261118-r[1-9]\d*$/)
-  const cases = placement ? REFERENCE_PLACEMENT_CASES : utilityCases
-  const globalPositive = placement ? REFERENCE_PLACEMENT_POSITIVE : utilityPositive
+  const cases = singleCamera
+    ? REFERENCE_SINGLE_CAMERA_CASES
+    : placement
+      ? REFERENCE_PLACEMENT_CASES
+      : utilityCases
+  const globalPositive = singleCamera
+    ? REFERENCE_SINGLE_CAMERA_POSITIVE
+    : placement
+      ? REFERENCE_PLACEMENT_POSITIVE
+      : utilityPositive
   const denoisingStrength = placement ? 0.6 : 0.5
   const scheduledSteps = placement ? 19 : 16
-  const produce = placement ? produceReferencePlacementProbe : produceReferenceImgUtilityProbe
   assert.equal(await realpath(run), run)
   const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
   assert.ok(bounds.unit.endsWith('.service'))
   const fixture = JSON.parse((await bytesAt(path.join(run, 'fixture.json'))).toString()) as Fixture
   assert.deepEqual(Object.keys(fixture).sort(), ['contract', 'referenceImages', 'sourceImage'])
-  assert.deepEqual(Object.keys(fixture.referenceImages).sort(), ['A', 'B'])
+  const referenceKeys = singleCamera ? (['B'] as const) : (['A', 'B'] as const)
+  assert.deepEqual(Object.keys(fixture.referenceImages).sort(), referenceKeys)
   assert.equal(fixture.contract.path, path.join(run, 'experiment-contract.json'))
   assert.equal(
     fixture.sourceImage.path,
     path.join(run, placement ? 'display-source.png' : 'cat-source.png'),
   )
-  for (const key of ['A', 'B'] as const) {
-    assert.equal(
-      fixture.referenceImages[key].path,
-      path.join(placement ? run : referenceRun, `reference-${key}.png`),
-    )
+  for (const key of referenceKeys) {
+    const image = fixture.referenceImages[key]
+    assert.ok(image)
+    assert.equal(image.path, path.join(placement ? run : referenceRun, `reference-${key}.png`))
   }
   const fixturePins = [
     fixture.contract,
@@ -499,10 +519,28 @@ async function main() {
     await verifyFixtureFile(pin)
   }
   const contract = JSON.parse((await bytesAt(fixture.contract.path)).toString())
-  assert.equal(contract.schema, placement ? 'reference-placement-v1' : 'reference-img-utility-v1')
+  assert.equal(
+    contract.schema,
+    singleCamera
+      ? 'reference-single-camera-v1'
+      : placement
+        ? 'reference-placement-v1'
+        : 'reference-img-utility-v1',
+  )
   if (placement) {
     assert.deepEqual(contract.masks, REFERENCE_PLACEMENT_MASKS)
-    assert.notEqual(fixture.referenceImages.A.sha256, fixture.referenceImages.B.sha256)
+    if (singleCamera) {
+      assert.equal(
+        fixture.sourceImage.sha256,
+        '8bcb4ffb29df973fd7faa563d68ca6e00270f8c8359113b6ab2d04bb49a6264f',
+      )
+      assert.equal(
+        fixture.referenceImages.B?.sha256,
+        '87fdc62818ba1cecb580ca7da5e6ee23b238edfac0bf1e383b5a4ada2b7a3bdf',
+      )
+    } else {
+      assert.notEqual(fixture.referenceImages.A?.sha256, fixture.referenceImages.B?.sha256)
+    }
   }
   assert.equal(contract.nativeRequestCeiling, cases.length)
   assert.deepEqual(
@@ -616,9 +654,8 @@ async function main() {
   const observations: unknown[] = []
   let failure: unknown
   try {
-    await produce({
+    const options = {
       pythonExecutable: install.pythonExecutable,
-      referenceImages: fixture.referenceImages,
       resources,
       run,
       runtimeRoot: install.runtimeDir,
@@ -637,15 +674,36 @@ async function main() {
           targetSha,
           'All cases must consume the same opaque captured target.',
         )
-        assert.equal(input.recipe.regions.length, testCase.image === null ? 0 : placement ? 2 : 1)
+        assert.equal(
+          input.recipe.regions.length,
+          testCase.image === null ? 0 : placement && !singleCamera ? 2 : 1,
+        )
+        let caseMasks: ReturnType<typeof placementMasks> | undefined
         if (testCase.image === null) {
           assert.equal(input.references, undefined)
         } else {
           assert.equal(input.references?.profile, regionalReferenceProfileForMode('img2img'))
           if (placement) {
-            const actualMasks = placementMasks(input, testCase.image, fixture)
-            placedMasks ??= actualMasks
-            assert.deepEqual(actualMasks, placedMasks)
+            if (singleCamera) {
+              assert.ok('maskIndex' in testCase)
+              assert.equal(testCase.image, 'B')
+              caseMasks = placementMasks(input, fixture, [
+                { key: 'B', maskIndex: testCase.maskIndex },
+              ])
+              if (placedMasks) {
+                assert.notEqual(caseMasks[0].maskId, placedMasks[0].maskId)
+                assert.notEqual(caseMasks[0].regionId, placedMasks[0].regionId)
+                assert.notEqual(caseMasks[0].alphaSha256, placedMasks[0].alphaSha256)
+              }
+              placedMasks = caseMasks
+            } else {
+              caseMasks = placementMasks(input, fixture, [
+                { key: testCase.image, maskIndex: 0 },
+                { key: testCase.image === 'A' ? 'B' : 'A', maskIndex: 1 },
+              ])
+              placedMasks ??= caseMasks
+              assert.deepEqual(caseMasks, placedMasks)
+            }
           } else {
             assert.equal(input.references?.images.length, 1)
             assert.equal(input.recipe.regions[0].positive, null)
@@ -742,7 +800,7 @@ async function main() {
                 }
               }
               await writeJson(`${testCase.label}.request.json`, {
-                ...(placement && testCase.image !== null ? { masks: placedMasks } : {}),
+                ...(caseMasks ? { masks: caseMasks } : {}),
                 owner,
                 recipe: input.recipe,
                 references: input.references?.images.map(({ image, referenceId, regionId }) => ({
@@ -838,7 +896,16 @@ async function main() {
           }
         }
       },
-    })
+    }
+    const { A, B } = fixture.referenceImages
+    assert.ok(B)
+    if (singleCamera) {
+      await produceReferenceSingleCameraProbe({ ...options, referenceImages: { B } })
+    } else {
+      assert.ok(A)
+      const produce = placement ? produceReferencePlacementProbe : produceReferenceImgUtilityProbe
+      await produce({ ...options, referenceImages: { A, B } })
+    }
     assert.equal(submitted, cases.length)
   } catch (error) {
     failure = error
