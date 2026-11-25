@@ -680,3 +680,50 @@ Retained reports and bodies are under
 110 retained files and reclaimed 1,587,011,584 allocated bytes. It
 retired the superseded R53 AppImage after its cycle ended. The R54
 AppImage, final closed index and two archive samples remain available.
+
+## Time spent validating archives during explicit Refresh
+
+Studio `8dde2807839a1bb96a224f8688c8f9681131a4b7` and clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. Re-read the Home and
+Projects callers, library and API above, including
+`platform/state/singleFlight.ts` and the backend list route and
+summary query. The Invoke list reads already indexed database
+summaries. Studio also supports external archives and performs
+discovery, full archive validation and recovery checks on Refresh.
+Invoke's managed project list has no external archive-validation
+mechanism to adapt.
+
+The diagnostic ran the existing 128-project, four-Raster Main
+qualification with two timing wrappers. These call the original
+`scanWorkspace` and `indexSaved` methods. Each call went through
+`ProjectService.listHomeCatalog`, with 120% CPU, 4 GiB RAM and zero
+swap. This measurement excludes Electron, IPC and renderer work.
+Peak scope memory was 969,908,224 bytes, with no OOM or limit events.
+
+| Main Refresh                    | Whole request | In workspace scans | In `indexSaved`, included in scans |
+| ------------------------------- | ------------: | -----------------: | ---------------------------------: |
+| Unchanged files                 |       4.484 s |            4.414 s |                            4.403 s |
+| After external replace/add/move |       4.774 s |            4.763 s |                            4.747 s |
+| Scoped after external changes   |       5.314 s |            5.307 s |                            5.279 s |
+
+Every measured call did three workspace scans and checked 128 project
+files. The run verified the replacement and addition, marked the moved
+file missing, and retained 126 unchanged neighbors, preview checks and
+closed SQLite snapshots. This puts over 98% of the unchanged Refresh in
+the archive and index flow. Summary assembly and recovery annotations
+outside all scans accounted for about 70 ms.
+
+The separate V8 profile captured one additional visit to the stable
+catalog after the external changes. It shows samples in file and ZIP
+streaming, hash updates, Buffer allocation and garbage collection.
+The `indexSaved` wall spans include archive reading, validation, waits
+and SQLite writes. The V8 profile does not apportion native libuv work
+or establish a timing for those operations in isolation.
+
+The diagnostic, source pins and closed snapshots remain under
+`runs/home-catalog-layered-main/20261125-refresh-profile`.
+The independent audit matched 20 source pins, all 257 rows across the
+two SQLite snapshots, 30 migrations and the external-change evidence.
+After exit, cleanup rechecked 30 retained files and released
+520,179,712 allocated bytes. The application build and the new
+Invoke test controller's Ruff and Python syntax checks passed.

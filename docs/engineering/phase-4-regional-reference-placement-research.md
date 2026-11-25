@@ -108,3 +108,61 @@ Replay uses
 [`qualify-installed-reference-img-utility.mts`](../../scripts/qualify-installed-reference-img-utility.mts)
 with the placement profile and exact copied source and reference pins.
 The launcher bounds the native run to 12 GiB, zero swap and 600 seconds.
+
+## Matched installed InvokeAI control
+
+Studio base `8dde2807839a1bb96a224f8688c8f9681131a4b7`. The local
+InvokeAI checkout was clean at `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+Re-read `frontend/webv2/src/features/generation/core/graph.ts`,
+`canvas/compileCanvasGraph.ts` and `canvas/addRegionalGuidance.ts`;
+the canvas consumes a separate alpha tensor and IP-Adapter invocation
+per owning region. The installed comparison executed the unmodified
+InvokeAI 6.14.3 backend. The recorded AST comparisons match the current
+checkout for `AlphaMaskToTensorInvocation.invoke`,
+`IPAdapterInvocation.invoke`, both denoiser adapter preparation methods,
+the denoiser's regional-mask preprocessing and `IPAdapter.get_image_embeds`.
+The current checkout has additional encoder registration and denoiser
+behavior. The executed version keeps its own source-latent, noise,
+attention, scheduler and output policies.
+
+Three actual Invoke queue items reused the exact opaque scene, original
+duck and camera PNGs, checkpoint, adapter and ViT-H encoder. The
+Invoke mask uploads reproduce both full Alpha8 planes from the saved
+Studio handoff. PNG upload roundtrips preserved the decoded source,
+references and mask alpha. Ordinary authored zero references. Assigned
+and swapped kept both masks and the full weight-1 step range and changed
+only the image-to-mask assignment. Seed 123, 512×512, Euler 30, denoise
+0.6, CFG 5 and untiled FP16 VAE matched the prior job settings.
+The real graph and adapter outputs confirmed the submitted associations.
+
+The three Invoke jobs completed. In two independent blind reviews of
+all six outputs, the ordinary images had two recognizable empty plinths.
+Both engines' reference treatments distorted the shapes and introduced
+similar bright edge spill and floating fragments. The swapped images
+had the most convincing camera-like circle in the left region, with a
+deformed body. Neither engine showed the required recognizable duck
+and camera pair in both placements. Visual verdict **NOT_QUALIFIED**
+in both engines on this recipe. This comparison supplies a shared
+limitation and no observed divergence on the visual gate. Keep the
+existing backend behavior for this case. Human acceptance and other
+scenarios remain open.
+
+The isolated service finished in 66.96 s. Sampled server VRAM reached
+6,758 MiB. The cgroup reached 12 GiB with 8,389 memory `max` events,
+zero swap and zero OOM. The server and controller exited after a normal
+SIGINT shutdown. No new Studio models or images were generated.
+
+The independent audit joined all three queue records to the submitted,
+accepted and PNG-embedded graphs. It verified both executed
+reference-to-mask associations, five decoded uploads, 26 source pins,
+17 offline config files and the closed SQLite state. It replayed 237
+checksum-valid WAL frames across 23 commits. The closed snapshot has
+three completed queue items, eight images and three registered resources.
+It passes integrity and foreign-key checks.
+
+The [comparison controller](../../scripts/qualify-invoke-reference-placement.py)
+uses the existing isolated Invoke driver. The run under
+`runs/invoke-regional-reference-placement/20261125-r1` retains the
+original outputs, masks, pinned inputs, graphs, blind observations and
+SQLite evidence. Cleanup released 22,470,656 allocated bytes after
+checking the 73 retained files.

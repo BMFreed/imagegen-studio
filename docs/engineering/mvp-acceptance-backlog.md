@@ -2,9 +2,10 @@
 
 ## MVP acceptance checklist
 
-**We are qualifying the local candidate.** Next GPU work is an
-Illustrious regional-reference comparison with a usable scene baseline
-in step 1. Continue keyboard, contrast and explicit Refresh performance
+**We are qualifying the local candidate.** Next GPU work is the
+pinned AppImage and installed-worker check in step 4. The two-plinth
+reference swap failed the same visual gate in Studio and installed
+InvokeAI. Continue keyboard, contrast and explicit Refresh performance
 checks in step 2. Public delivery is blocked at step 5.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
@@ -27,6 +28,10 @@ environment and remaining limits, and update the current stage and next run.
         and both earlier local assignments. The local suppression gate
         stays open.
         [Image-wide negative control](./phase-4-anima-apple-negative-research.md#image-wide-negative-on-the-same-apple)
+  - [x] Compared the failed Illustrious two-plinth assignment and swap
+        with installed InvokeAI. Both engines failed recognizable
+        placement on the held recipe.
+        [Matched comparison](./phase-4-regional-reference-placement-research.md#matched-installed-invokeai-control)
 - [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
       contrast and Home performance checks on the candidate.
   - [x] The stock AppImage kept Trash across workspace removal and restart,
@@ -96,9 +101,10 @@ Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-trans
 [held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md), and
 [mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md) and
 [native first CivitAI Save](./phase-5-civitai-token-presence-research.md#integrating-setup-into-save).
-The next
-[two-plinth regional placement trial](./phase-4-regional-reference-placement-research.md)
-passes native execution and leaves visual regional utility open.
+The [two-plinth regional placement comparison](./phase-4-regional-reference-placement-research.md#matched-installed-invokeai-control)
+passes native execution in Studio and installed InvokeAI. The fixed
+recipe fails recognizable placement in both, and visual regional utility
+remains open.
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -198,8 +204,10 @@ entries record the state at their checkpoint.
    swap and a human verdict on the effect inside and outside the mask.
    The two-plinth trial preserved exact base inputs and moved the
    duck and camera reference PNGs between two fixed masks. The
-   native requests completed. The blind review saw no recognizable
-   pair in either treatment. Choose a new hypothesis before a repeat.
+   native requests completed. Installed InvokeAI reproduced the same
+   failed placement. Both blind reviewers found no recognizable pair
+   in either treatment in either engine. Any further visual trial
+   needs a distinct acceptance question.
    [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md),
    [strength comparison](./phase-4-ordinary-img-strength-research.md),
    [mug experiment](./phase-4-ordinary-img-mug-research.md),
