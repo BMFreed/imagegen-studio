@@ -62,6 +62,11 @@ six signed requests. Both ordinary controls and all four regional frames
 retained the tabletop and wall. Two regional frames met the joint placement
 criterion. The two-seed placement gate remains open.
 
+The [touching-mask comparison](./phase-4-anima-countertop-gap-closed-research.md)
+passed all six installed CUDA requests and replayed both ordinary controls
+byte for byte. Blind review passed one of the four regional placements.
+The scene background remained readable in all six frames.
+
 ## Startup recovery of committed Project deletion
 
 [Packaged Trash recovery](./phase-5-packaged-project-trash-recovery-research.md)

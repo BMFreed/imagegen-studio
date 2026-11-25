@@ -4,7 +4,7 @@ The [unweighted tabletop trial](./phase-4-anima-countertop-scene-research.md)
 and [subject weighting trial](./phase-4-anima-countertop-subject-weight-research.md)
 both passed two of four assignments. In both trials the seed-123 assigned
 image overlapped the objects at the center and the seed-124 swapped image
-omitted the apple. The next experiment gives each region positive
+omitted the apple. This experiment gives each region positive
 conditioning over half of the formerly uncovered strip.
 
 ## Source and fixed inputs
@@ -34,7 +34,7 @@ local negatives and the existing global negative. Each seed has one
 ordinary Project with no regional layers and two treatments swapping
 the complete local positives between the fixed masks.
 
-## CPU verification and pending native gate
+## CPU and installed worker verification
 
 The capture-only fixture uses the same scene authoring as the native
 runner. It saves and reopens the six Projects, compares the exact
@@ -45,10 +45,44 @@ All 266 focused tests, full typecheck, app build and scoped lint passed.
 [CPU test](../../src/main/projects/project-current-canvas-anima-regional-input.test.ts),
 [native runner](../../scripts/qualify-installed-anima-background-visual.mts).
 
-The native run uses an owned artifact directory under
-`runs/anima-countertop-gap-closed` and reuses the existing signed
-environment and three pinned model bodies. The two ordinary output PNGs
-must match the prior unweighted control byte for byte. The same blind
-rubric requires four recognizable, separate, correctly placed pairs,
-readable tabletop and wall, and no conspicuous seam. Six CUDA requests
-and human visual acceptance are pending.
+Studio `39faf6ac6db1f1abbf511c6aba579937eaa770fd` passed all six
+installed CUDA requests on the RTX 4080 in the existing signed runtime.
+The six workers each emitted 20 progress events and exited. Both
+ordinary PNGs matched the prior unweighted controls byte for byte. All
+four regional PNGs changed. The matched requests preserved their
+normalized worker job fields, compiled prompts and regional ownership.
+The changed alpha masks projected to 252 tokens per region and 520
+background tokens, with zero overlap.
+
+The maximum sampled worker VRAM was 7,014 MiB. The cgroup reached its
+12 GiB limit with zero OOM and zero swap. The independent read-only
+audit rehashed 17 Studio and Invoke source pins, 94 installed runtime
+and configuration pins and all three model files. The six closed
+`.igs` and six SQLite stores matched their respective pre-capture
+package and logical snapshot hashes. The test used the installed worker
+and Main capture path with six owned Projects.
+
+## Blind visual result
+
+Two readers independently described all six shuffled PNGs before
+reveal. Both ordinary controls and all four regional frames showed the
+pale tabletop and light blue wall. Neither reader saw a conspicuous
+mask seam. The same rubric requires all four regional frames to show
+recognizable, separate objects on their assigned sides.
+
+| Seed | Apple assigned left                                 | Mug assigned left                                                  |
+| ---- | --------------------------------------------------- | ------------------------------------------------------------------ |
+| 123  | Both objects overlap near the center                | Centered mug and an obscured shape that could be an apple          |
+| 124  | Recognizable apple on the left and mug on the right | Centered mug with a stem-like projection and no recognizable apple |
+
+One of four regional frames passed, down from two of four with the
+64-pixel strip. The seed-123 swapped frame lost its recognizable pair.
+The seed-124 assigned frame was the sole pass in this trial. The
+two-seed placement criterion remains `NOT_QUALIFIED`. Human acceptance
+and regional negative utility remain open. The trial varied the authored
+Project mask geometry.
+
+Local evidence is under `runs/anima-countertop-gap-closed/20261125-r7`.
+It includes the six original PNGs, reviewed contact sheet, blind
+observations and mapping, baseline comparison, archived Project and
+SQLite fixtures, and process, preservation and cleanup receipts.
