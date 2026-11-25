@@ -498,10 +498,14 @@ entries record the state at their checkpoint.
    across three folders also passed with 1024×1024 Rasters and merged previews.
    It measured 5.72 seconds to the complete list on indexed restart and 2.48
    seconds for aggregate Refresh. All three scoped views, a scoped Refresh,
-   Inspector previews and the closed indexes passed. Qualify larger populations
-   with large multi-layer Projects and the supported host matrix.
+   Inspector previews and the closed indexes passed. A matched CPU run with
+   128 projects and up to four 1024×1024 Rasters per project qualified the
+   Main catalog, external Refresh and preview resources. Qualify larger
+   populations and this layered workload in the packaged renderer on the
+   supported host matrix.
    [Home catalog performance](./phase-5-packaged-home-scale-research.md#packaged-comparison)
    [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
+   [Four Raster layers in Main](./phase-5-packaged-home-scale-research.md#four-raster-layers-per-project-in-main)
    The combined Home request now updates the sidebar count when a retry
    discovers a Project in a folder that has just returned.
    [Workspace retry regression](./phase-5-packaged-home-scale-research.md#sidebar-count-after-a-workspace-returns)

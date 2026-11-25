@@ -54,12 +54,12 @@ function pngChunk(name, data) {
   return chunk
 }
 
-function largeRasterFixture() {
+export function largeRasterFixture(seed = 'ImageGen Studio Home scale fixture v1') {
   const size = 1024
   const rowBytes = size * 3
   const texturedRows = size / 4
   const texture = createHash('shake256', { outputLength: rowBytes * texturedRows })
-    .update('ImageGen Studio Home scale fixture v1')
+    .update(seed)
     .digest()
   const rows = Buffer.alloc((rowBytes + 1) * size)
   for (let y = 0; y < size; y++) {
@@ -101,12 +101,42 @@ function scaleProjectTitle(index) {
   return `Scale Project ${String(index).padStart(4, '0')}`
 }
 
-async function writeScaleProject(filename, index, title, revision, identity, raster, workspaceId) {
-  const { canvas, png, pngSha256 } = raster
+export async function writeScaleProject(
+  filename,
+  index,
+  title,
+  revision,
+  identity,
+  raster,
+  workspaceId,
+) {
+  const { canvas, png } = raster
   const suffix = String(index).padStart(12, '0')
   const documentId = `2385c134-dc60-4fce-8ba5-${suffix}`
-  const layerId = `9f310111-d280-4db3-9351-${suffix}`
-  const assetPath = `assets/layers/${layerId}.png`
+  const assets = {}
+  const layers = [raster, ...(raster.additionalRasters ?? [])].map((layer, layerIndex) => {
+    assert.deepEqual(layer.canvas, canvas)
+    const layerId = `9f310111-d280-4db3-${9351 + layerIndex}-${suffix}`
+    const assetPath = `assets/layers/${layerId}.png`
+    assets[assetPath] = { bytes: layer.png }
+    return {
+      asset: {
+        bytes: layer.png.length,
+        height: canvas.height,
+        path: assetPath,
+        sha256: layer.pngSha256,
+        width: canvas.width,
+      },
+      blendMode: 'normal',
+      id: layerId,
+      kind: 'raster',
+      locked: false,
+      name: layerIndex === 0 ? 'Scale fixture raster' : `Scale fixture raster ${layerIndex + 1}`,
+      opacity: 1,
+      transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+      visible: layerIndex === 0,
+    }
+  })
   const project = parseProjectDocumentV1({
     ...createEmptyProjectDocumentV1({
       documentId,
@@ -114,28 +144,10 @@ async function writeScaleProject(filename, index, title, revision, identity, ras
       primaryBbox: canvas,
       title,
     }),
-    layers: [
-      {
-        asset: {
-          bytes: png.length,
-          height: canvas.height,
-          path: assetPath,
-          sha256: pngSha256,
-          width: canvas.width,
-        },
-        blendMode: 'normal',
-        id: layerId,
-        kind: 'raster',
-        locked: false,
-        name: 'Scale fixture raster',
-        opacity: 1,
-        transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
-        visible: true,
-      },
-    ],
+    layers,
   })
   await saveIgsPackage(filename, {
-    assets: { [assetPath]: { bytes: png } },
+    assets,
     preview: { merged: png, rect: canvas, status: 'rendered', thumbnail },
     project,
   })
@@ -150,14 +162,14 @@ async function writeScaleProject(filename, index, title, revision, identity, ras
   }
 }
 
-async function stageProject(workspace, index, identity, raster) {
+export async function stageProject(workspace, index, identity, raster) {
   const title = scaleProjectTitle(index)
   const filename = path.join(workspace.directoryPath, `${title}.igs`)
   const revision = `e98c6d46-5794-4dbb-9424-${String(index).padStart(12, '0')}`
   return await writeScaleProject(filename, index, title, revision, identity, raster, workspace.id)
 }
 
-async function stageProjects(workspaces, identity, raster) {
+export async function stageProjects(workspaces, identity, raster) {
   const files = []
   for (const workspace of workspaces) {
     for (let index = 0; index < workspace.projectCount; index++) {
@@ -167,7 +179,7 @@ async function stageProjects(workspaces, identity, raster) {
   return files
 }
 
-async function assertSavedState(workspaces, database, files, identity, missing) {
+export async function assertSavedState(workspaces, database, files, identity, missing) {
   for (const { directoryPath, id } of workspaces) {
     assert.deepEqual(
       (await readdir(directoryPath)).sort(),
@@ -504,7 +516,7 @@ async function measureHome(state, root, files, launchStart, canvas) {
   }
 }
 
-async function prepareWorkspaces(appData, projectCount, linked) {
+export async function prepareWorkspaces(appData, projectCount, linked) {
   const defaultWorkspace = {
     directoryPath: path.join(appData, 'workspaces/Uncategorized'),
     displayName: 'Uncategorized',

@@ -307,3 +307,62 @@ check on SQLite and the real Project packages. The earlier AppImage
 measurements remain the native baseline.
 [Project service](../../src/main/projects/project-service.ts),
 [workspace tests](../../src/main/projects/project-workspaces.test.ts).
+
+## Four Raster layers per Project in Main
+
+The CPU runner exercises the same `ProjectService.listHomeCatalog` used by
+Home's IPC handler. Each profile has 128 real `.igs` archives in three
+registered folders (32/48/48). The control has one 1024×1024 Raster per Project.
+The treatment adds three distinct hidden 1024×1024 Rasters so both profiles can
+keep the same primary Raster, merged PNG and WebP thumbnail. The Project writer
+and closed-index assertions come from the packaged fixture. The one-layer
+fixture preserves its original inputs and archive members.
+[Runner](../../scripts/qualify-home-catalog-main.mjs),
+[fixture](../../scripts/fixtures/packaged-home-scale.mjs),
+[Home IPC](../../src/main/index.ts).
+
+The current clean InvokeAI revision was
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The source check followed
+`invokeai/frontend/webv2/src/features/workflow/ui/library/WorkflowLibraryDialog.tsx`
+to `features/workflow/data/libraryBrowseStore.ts` and
+`platform/state/singleFlight.ts` under the same frontend root. The API
+`invokeai/app/api/routers/workflows.py` calls
+`invokeai/app/services/workflow_records/workflow_records_default.py`, backed
+by `invokeai/app/services/shared/database/queries/workflows.py`.
+The qualification uses Studio's existing archive reader, scan and refresh
+policy through their current owners.
+
+| Main operation                   | 1 Raster | 4 Rasters |
+| -------------------------------- | -------: | --------: |
+| Open DB, initialize, first list  |   4.60 s |   11.58 s |
+| Reopen indexed DB to first list  |   4.32 s |   12.92 s |
+| Aggregate Refresh, same files    |   3.82 s |   10.70 s |
+| Aggregate Refresh, changed files |   4.50 s |   10.93 s |
+| Scoped Refresh, 49 cards         |   2.58 s |    8.62 s |
+
+The profiles contain 202,856,320 and 506,926,848 archive bytes. Each operation
+has one sample in a fixed order on the same host. The runner first creates
+and hashes its files, then closes and reopens the real database and creates a
+new service in the same Node process. The OS cache remains in its ordinary
+state. The 120% CPU quota, 4 GiB memory ceiling and zero swap applied to the
+whole run. Peak cgroup memory was 1.20 GiB with zero memory-limit and OOM
+events. A game was open on the desktop during the run. These measurements cover
+Main's archive and index work on this host. Native launch, visual preview
+rendering and application performance targets require their own measurements.
+
+The external-change Refresh found a same-path replacement with a new title and revision,
+found a new Project in a linked folder, and marked the archive moved outside
+the catalog as missing. The resulting 129 rows include 128 ready and one
+`FILE_MISSING` entry. Sidebar counts are 32/49/48. All 126 unchanged neighbors
+and the moved archive retain their exact bytes. The real preview reader served
+the replacement and new Project's saved PNG and rejected the replaced and
+moved entries' prior capabilities.
+
+All 70 focused owner tests passed, alongside scoped lint, format and syntax
+checks. An independent read-only audit checked all 514 rows in the four closed
+SQLite copies, decoded seven PNGs and two WebP thumbnails, and matched 12 live
+archive witnesses and both retained samples. The run exited zero. Following
+physical exit and retention verification, cleanup reclaimed 716,541,952
+allocated bytes from this run's synthetic payload. The reports, input hashes,
+closed indexes and one sample per profile remain under
+`runs/home-catalog-layered-main/20261125-r1` in the artifact root.
