@@ -207,12 +207,23 @@ const removalReview = ref<ModelRemovalReview | null>(null)
 const removalAcknowledged = ref(false)
 const pendingCancellationAcknowledged = ref(false)
 const removalError = ref<string | null>(null)
+const removalCancelButton = ref<InstanceType<typeof NButton> | null>(null)
+let removalReturnFocus: {
+  removed: boolean
+  resourceId: string
+  trigger: HTMLButtonElement
+} | null = null
 
-async function reviewRemoval() {
+async function reviewRemoval(event: MouseEvent) {
   const resource = selectedResource.value
   if (!resource || busy.value || importOpen.value || removalReview.value) {
     return
   }
+  const trigger = event.currentTarget
+  removalReturnFocus =
+    trigger instanceof HTMLButtonElement && document.activeElement === trigger
+      ? { removed: false, resourceId: resource.id, trigger }
+      : null
   busy.value = 'remove-review'
   const current = readGuard.begin('removal')
   try {
@@ -229,12 +240,60 @@ async function reviewRemoval() {
     removalReview.value = result.value
   } catch (cause) {
     if (current()) {
+      removalReturnFocus = null
       error.value = failureMessage(cause)
     }
   } finally {
     if (current()) {
       busy.value = null
     }
+  }
+}
+
+function removalAfterEnter() {
+  const cancel = removalCancelButton.value?.$el
+  if (
+    removalReview.value &&
+    cancel instanceof HTMLButtonElement &&
+    !cancel.closest('[role="dialog"]')?.contains(document.activeElement)
+  ) {
+    cancel.focus({ preventScroll: true })
+  }
+}
+
+async function removalAfterLeave() {
+  const focus = removalReturnFocus
+  if (!focus || busy.value === 'remove-review') {
+    return
+  }
+  // The inner focus trap can still restore its original DOM target while unmounting.
+  await nextTick()
+  if (removalReturnFocus !== focus) {
+    return
+  }
+  removalReturnFocus = null
+  const shell = managerShell.value
+  const active = document.activeElement
+  if (
+    !show.value ||
+    removalReview.value ||
+    importOpen.value ||
+    !shell?.isConnected ||
+    shell.closest('[inert]') ||
+    !document.hasFocus() ||
+    (active !== document.body && active !== focus.trigger)
+  ) {
+    return
+  }
+  if (
+    !focus.removed &&
+    selectedResource.value?.id === focus.resourceId &&
+    shell.contains(focus.trigger) &&
+    !focus.trigger.disabled
+  ) {
+    focus.trigger.focus({ preventScroll: true })
+  } else {
+    catalogSearch.value?.focus()
   }
 }
 
@@ -262,6 +321,9 @@ async function removeReviewedResource() {
     }
     if (!result.ok) {
       throw new Error(result.error.message)
+    }
+    if (removalReturnFocus) {
+      removalReturnFocus.removed = true
     }
     removalReview.value = null
     selectedId.value = null
@@ -1134,6 +1196,7 @@ watch(show, (visible) => {
     loading.value = false
     busy.value = null
     removalReview.value = null
+    removalReturnFocus = null
     importOpen.value = false
     tokenPopoverOpen.value = false
     tokenInput.value = ''
@@ -1884,10 +1947,13 @@ onBeforeUnmount(() => {
   </NModal>
 
   <NModal
+    :autoFocus="false"
     :closeOnEsc="!busy"
     :maskClosable="false"
     :show="Boolean(removalReview)"
     :zIndex="AppLayer.appOverlay + 1"
+    @afterEnter="removalAfterEnter"
+    @afterLeave="removalAfterLeave"
     @update:show="!busy && !$event && (removalReview = null)"
   >
     <NCard
@@ -1943,7 +2009,13 @@ onBeforeUnmount(() => {
       </template>
       <template v-slot:footer>
         <div class="removal-actions">
-          <NButton :disabled="Boolean(busy)" @click="removalReview = null">Cancel</NButton>
+          <NButton
+            ref="removalCancelButton"
+            :disabled="Boolean(busy)"
+            @click="removalReview = null"
+          >
+            Cancel
+          </NButton>
           <NButton
             :disabled="
               !removalAcknowledged ||

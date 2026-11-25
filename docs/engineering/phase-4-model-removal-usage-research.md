@@ -163,3 +163,49 @@ Final counts, actual reclaimed bytes, staged-tree/commit/remote continuity and
 lifecycle state are recorded in RUN `qualification-summary.json`,
 `final-retained-audit.json`, `release-gates.json`, `commit-proof.json` and
 `artifact-lifecycle.json`. Raw paths must not be resumed after retained cleanup.
+
+## Keyboard focus after local resource removal
+
+The asynchronous review disables the removal trigger. Escape could leave
+focus on the document body once review completed. After successful removal,
+Vue could reuse the trigger for the neighboring resource. An initial fix
+focused catalog search, but the built Electron trace showed the nested Naive
+UI focus trap taking focus back on unmount. A fast browser review also showed
+that releasing the Enter used to open the confirmation could check the
+acknowledgement when the checkbox received initial focus.
+
+Read InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1` at
+`invokeai/frontend/webv2/src/features/models/ui/shared/ModelActionsMenu.tsx`,
+`features/models/ui/library/ModelRowContextMenu.tsx`,
+`features/models/ui/manager/DetailPane.tsx`, and
+`platform/ui/ConfirmDialog.tsx` under the same frontend source root.
+Invoke starts destructive confirmation on Cancel and considers whether the
+original opener is still mounted when returning focus. Model Manager starts
+on Cancel, requires a separate acknowledgement, and restores focus after the
+nested trap completes. Dismissal can return to the original resource action.
+Successful removal leads to the persistent catalog search.
+
+Both focus failures were reproduced in Chromium with the production component
+and controlled IPC. The same two cases passed after the fix, including the
+separate acknowledgement after fast review. The selected browser run passed
+19 cases across Model Manager and Resource Select. The four existing Main
+removal suites passed 53 checks. Full typecheck, app build and scoped
+formatting and lint passed.
+
+Built Electron passed at 900 × 620 in software rendering on private KDE
+Wayland. Trusted native Enter and Escape exercised review and dismissal.
+Tab and an explicit Chromium input event for Space set the acknowledgement,
+then trusted native Enter confirmed removal. A temporary SQLite profile used
+two independent synthetic managed files. The real remove handler unlinked the
+target and retained its reference identity. After normal close and restart the
+neighbor remained installed with its original hash and the target remained
+absent. Two normal lifetimes and screenshots for the confirmation and search
+are retained. An independent read-only audit rehashed all 16 source and
+bundle pins, checked the closed SQLite database and neighbor file and
+confirmed the process and socket cleanup. This run covers the scoped
+keyboard path in built Electron.
+
+Local receipts and screenshots are in
+`runs/model-removal-focus/20261125-r5` under the artifact root. Earlier
+failures, including the native focus transition that exposed DOM reuse, are
+retained separately. No promise changes follow from this checkpoint.

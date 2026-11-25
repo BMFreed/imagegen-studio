@@ -521,6 +521,11 @@ entries record the state at their checkpoint.
    Inspector action. Both paths passed in the built Electron app on private
    KWin with real SQLite and Project files.
    [Remove from Home keyboard focus](./phase-4-home-missing-remove-research.md#keyboard-focus-after-the-missing-entry-disappears)
+   The Model Manager removal dialog now starts on Cancel and requires a
+   separate acknowledgement. Escape returns focus to the original action.
+   On confirmed removal, focus moves to catalog search. Built Electron
+   passed both paths on private KWin with real removal and catalog reopen.
+   [Model Manager removal keyboard focus](./phase-4-model-removal-usage-research.md#keyboard-focus-after-local-resource-removal)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

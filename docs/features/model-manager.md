@@ -797,6 +797,12 @@ managed-file and registry removal. No running job is canceled by Remove, and no 
 deleted by cancellation. Finite qualification and its limits are recorded in the
 checkpoint note; this is not full resource/MVP acceptance.
 
+The removal review opens with keyboard focus on **Cancel**. Confirming
+removal requires a separate acknowledgement. Escape or Cancel returns focus
+to the action for the reviewed resource if it is still available. After a
+successful removal, focus moves to **Search installed models** if the
+confirmation would otherwise leave it on the page or on the old action.
+
 Only exact unshared managed files are unlinked; other resources' shared paths and
 Anima companions remain. The full installed registry record is deleted. Minimal
 UUID/source/kind/family/hash/size metadata survives solely as a missing-reference
