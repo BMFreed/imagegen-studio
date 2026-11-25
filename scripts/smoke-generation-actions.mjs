@@ -214,6 +214,17 @@ async function launch() {
   await window.getByRole('tab', { name: 'Home', exact: true }).waitFor()
 }
 
+async function openHome() {
+  await window
+    .locator('.app-chrome')
+    .getByRole('button', { name: 'Open Home', exact: true })
+    .click()
+  await expect(window.getByRole('tab', { name: 'Home', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+}
+
 async function api(method, ...args) {
   const response = await apiResult(method, ...args)
   assert.equal(response.ok, true, JSON.stringify(response))
@@ -657,8 +668,13 @@ const thumbnail104 = Buffer.from(${JSON.stringify(widerThumbnail.toString('base6
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const exitLog = ${JSON.stringify(peerExits)}
 const args = process.argv.slice(2)
-const role = args.join(' ') === '-I -m imagegen_worker.inference_main' ? 'inference'
-  : args.join(' ') === '-I -m imagegen_worker' ? 'derivatives' : null
+// The controlled peer validates the launch contract without arming Python's kernel guard.
+const ownsInference = process.platform === 'linux'
+  ? args.length === 7 &&
+    args.slice(0, 6).join(' ') === '-I -m imagegen_worker.owned_inference --parent-pid ' + process.ppid + ' --scratch-base' &&
+    path.isAbsolute(args[6]) && path.resolve(args[6]) === args[6]
+  : args.join(' ') === '-I -m imagegen_worker.inference_main'
+const role = ownsInference ? 'inference' : args.join(' ') === '-I -m imagegen_worker' ? 'derivatives' : null
 if (!role) process.exit(21)
 if (process.env.IGS_SDXL_CONFIG_DIR !== expectedConfig || process.env.HF_HOME !== expectedCache) process.exit(22)
 if (['HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE', 'HF_DATASETS_OFFLINE'].some(key => process.env[key] !== '1')) process.exit(23)
@@ -681,11 +697,13 @@ function png(width,height,opaque) {
 }
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
-process.stdout.write(JSON.stringify(role === 'inference'
+const ready = role === 'inference'
   ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.10.0',
     runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora','illustrious-vae-precision','illustrious-external-vae','illustrious-embeddings']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
-    runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
+    runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']}
+if (role === 'inference' && process.platform === 'linux') ready.capabilities.push('linux-owned-inference-v1')
+process.stdout.write(JSON.stringify(ready)+'\n')
 process.stdin.setEncoding('utf8')
 let buffer=''
 process.stdin.on('data',data=>{
@@ -804,7 +822,7 @@ function release(entry) {
 
 /** New fixtures are created, configured and saved through the production UI, not main setters. */
 async function createConfiguredProject(title, prompt, seed, generationWidth, checkpointVersionId) {
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'New Project', exact: true }).first().click()
   const dialog = window.getByRole('dialog', { name: 'New Project', exact: true })
   await dialog.locator('input[aria-label="Project name"]').fill(title)
@@ -947,6 +965,7 @@ try {
   await window.getByRole('button', { name: 'Close project queue', exact: true }).click()
   await window.getByRole('button', { name: `Close ${projectTitle}`, exact: true }).click()
   await expect(window.getByRole('tab', { name: projectTitle, exact: true })).toHaveCount(0)
+  await openHome()
   await window.getByRole('button', { name: `Open ${projectTitle}`, exact: true }).click()
   await window.getByRole('tab', { name: projectTitle, exact: true }).waitFor()
   await expect(count).toHaveValue(initialCount)
@@ -964,7 +983,7 @@ try {
   await window.getByRole('tab', { name: projectTitle, exact: true }).waitFor()
   const ready = await window.evaluate(() => window.api.runtime.getStatus())
   assert.equal(ready.ok, true)
-  assert.equal(ready.value.kind, 'ready')
+  assert.equal(ready.value.kind, 'ready', ready.value.detail)
   await expect(generate).toBeEnabled({ timeout: 20_000 })
   liveDatabase = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   await window.getByText('Advanced Options', { exact: true }).click()
@@ -1278,7 +1297,7 @@ try {
     await expect(
       window.getByRole('button', { name: 'Preview candidate 1', exact: true }),
     ).toHaveCount(0)
-    await window.getByRole('tab', { name: 'Home', exact: true }).click()
+    await openHome()
     await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
     const resultManager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
     const resultRow = resultManager.locator(
@@ -1539,7 +1558,7 @@ try {
     assert.equal((await readIgsPackage(packagePath)).project.documentId, created.documentId)
   }
 
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   const openManager = window.getByRole('button', { name: 'Open Queue Manager', exact: true })
   await openManager.click()
   const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
@@ -2282,7 +2301,7 @@ try {
   assert.equal(cfgSaved.generationDraft.cfgRescale, 0.2)
   assert.equal(cfgSaved.layers[0].generationProvenance.generationConfiguration.cfgRescale, 0.7)
   await window.getByRole('button', { name: 'Close CFG Rescale acceptance', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
   await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
   assert.equal((await tab(cfgProject.id)).generationDraft.cfgRescale, 0.2)
@@ -2340,7 +2359,7 @@ try {
       status: legacyPackage.manifest.preview.status,
     },
   })
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
   await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
   assert.equal((await tab(cfgProject.id)).generationDraft.cfgRescale, 1)
@@ -2469,7 +2488,7 @@ try {
   )
   assert.equal(imgLayer.generationProvenance.generationConfiguration.sampling.actualSeed, 42)
   await window.getByRole('button', { name: 'Close CFG Rescale acceptance', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
   await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
   await expect
@@ -2676,7 +2695,7 @@ try {
   assert.equal(loraSaved.generationDraft.loras[1].enabled, false)
   const loraSavedBytes = readFileSync(loraProject.packagePath)
   await window.getByRole('button', { name: 'Close LoRA acceptance', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open LoRA acceptance', exact: true }).click()
   await window.getByRole('tab', { name: 'LoRA acceptance', exact: true }).waitFor()
   assert.equal(
@@ -2884,7 +2903,7 @@ try {
   assert.equal(vaeSaved.layers[0].generationProvenance.generationConfiguration.vaePrecision, 'FP32')
   const vaeSavedBytes = readFileSync(vaeProject.packagePath)
   await window.getByRole('button', { name: 'Close VAE precision acceptance', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open VAE precision acceptance', exact: true }).click()
   await window.getByRole('tab', { name: 'VAE precision acceptance', exact: true }).waitFor()
   const vaeReopened = await tab(vaeProject.id)
@@ -3041,7 +3060,7 @@ try {
   })
   await api('save', embeddingProject.id)
   await window.getByRole('button', { name: 'Close Embedding inference', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open Embedding inference', exact: true }).click()
   await window.getByRole('tab', { name: 'Embedding inference', exact: true }).waitFor()
   const embeddingAuthored = (await tab(embeddingProject.id)).generationDraft
@@ -3215,7 +3234,7 @@ try {
   assert.equal('authoredPrompts' in recordedEmbedding, false)
   const embeddingSavedBytes = readFileSync(embeddingProject.packagePath)
   await window.getByRole('button', { name: 'Close Embedding inference', exact: true }).click()
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await openHome()
   await window.getByRole('button', { name: 'Open Embedding inference', exact: true }).click()
   await window.getByRole('tab', { name: 'Embedding inference', exact: true }).waitFor()
   const embeddingRead = await api(

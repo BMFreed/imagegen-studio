@@ -564,6 +564,10 @@ entries record the state at their checkpoint.
    The accepted Project and remaining frozen inputs stayed exact, and
    the final empty queue persisted on restart.
    [Queue Manager Delete focus](./phase-5-generation-queue-delete-focus-research.md)
+   The restored controlled-worker Electron smoke passed all 36 checks,
+   including confirmed bulk Clear with an unaccepted candidate, and
+   verified the saved Project, draft and last seed after cleanup.
+   [Generation-action smoke recovery](./phase-5-generation-queue-delete-focus-research.md#generation-action-smoke-recovery)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

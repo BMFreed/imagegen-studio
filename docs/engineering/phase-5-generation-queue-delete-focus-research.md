@@ -58,3 +58,44 @@ normal Electron closes. The local runs are
 before and after screenshots, source and build pins, database snapshots
 and the accepted Project. Disposing the closed private profiles and scratch
 directories reclaimed 14,548,992 allocated bytes.
+
+## Generation-action smoke recovery
+
+Studio base `14ec788c`. InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`
+was reread in `app/api/routers/session_queue.py`,
+`app/services/session_queue/session_queue_default.py`,
+`app/services/shared/database/queries/session_queue.py` and
+`app/services/session_processor/session_processor_default.py`. The queue
+write and clear tests exercise actual queue persistence with controlled
+processor dependencies. Studio's Electron smoke already uses this
+boundary and adds Main/preload/rendered UI through the local wire peer.
+
+At Linux startup the app sends the controlled peer the current
+`imagegen_worker.owned_inference` command. The old fixture exited before
+its ready line because it only recognized `inference_main`. The fixture
+now follows the client test's exact Linux arguments, checks the parent PID
+and canonical scratch argument, and declares the required Linux capability.
+The CPU derivatives role retains its own command.
+
+The first updated run reached candidate publication. It still assumed Home
+was an open tab during result navigation. All Home transitions in the smoke
+now use Open Home in the app chrome and verify that Home is active. This
+preserves the navigation scenario even when the Project already closed Home.
+The app, its worker client and the queue operations remain on the production
+path throughout.
+
+Two private KDE Wayland runs passed the full 36 checks. The final run
+used the formatted script and rebuilt app. It reached the real Delete
+and confirmed Clear flows with an unaccepted result and verified the
+candidate resource, seed, draft and exact saved Project bytes. It also
+covered frozen Retry, held CPU preparation beside active inference,
+and accepted LoRA, VAE and embedding provenance. No page errors were
+reported. Focused ESLint and the application build passed.
+
+The Node peer provides controlled readiness and deterministic pixels.
+The smoke qualifies Electron behavior and actual Main IPC and persistence.
+It uses forced teardown for the last Electron lifetime. The trusted
+keyboard runs above supply the normal-close evidence. The retained smoke
+reports and screenshots are under `runs/generation-actions-restored`.
+Three exact idle scratch directories totaling 7,102,464 allocated bytes
+were released after their scopes exited.
