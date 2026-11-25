@@ -2,6 +2,7 @@ import { ANIMA_PROMPT_INTERPRETATION } from '../src/shared/projects/anima-prompt
 import type { AnimaWorkerRequest } from '../src/shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.js'
 import type { GenerationDenoisingProgress } from '../src/shared/projects/generation-progress.js'
+import type { IgsRectV1 } from '../src/shared/projects/project-schema.js'
 import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../src/shared/projects/regional-invoke-generation.js'
 
 import assert from 'node:assert/strict'
@@ -66,16 +67,18 @@ const sceneCases = sceneSeeds.flatMap(
       { label: `seed-${seed}-swapped`, seed, uncoveredBackground: false, variant: 'swapped' },
     ] as const,
 )
-const scenePrompts = {
-  'countertop-scene': {
-    globalPositive:
-      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
-    regionalPositives: {
-      apple:
-        'a red apple with a small green leaf on a continuous pale wooden tabletop in front of a plain light blue wall',
-      mug: 'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
-    },
+const countertopScene = {
+  globalPositive:
+    'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
+  regionalPositives: {
+    apple:
+      'a red apple with a small green leaf on a continuous pale wooden tabletop in front of a plain light blue wall',
+    mug: 'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
   },
+} as const
+const scenePrompts = {
+  'countertop-gap-closed': countertopScene,
+  'countertop-scene': countertopScene,
   'countertop-subject-weight': {
     globalPositive:
       'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
@@ -97,6 +100,10 @@ const scenePrompts = {
 const sceneMasks = [
   { height: 288, width: 192, x: 32, y: 64 },
   { height: 288, width: 192, x: 288, y: 64 },
+] as const
+const closedGapMasks = [
+  { height: 288, width: 224, x: 32, y: 64 },
+  { height: 288, width: 224, x: 256, y: 64 },
 ] as const
 const expectedActualSteps = 20
 const sampling = {
@@ -221,6 +228,7 @@ function sceneRegionalInputs(
   positive: string,
   regionalTexts: readonly [string, string],
   weightedSubjects: boolean,
+  masks: readonly IgsRectV1[],
 ) {
   const texts =
     testCase.variant === 'ordinary'
@@ -245,7 +253,7 @@ function sceneRegionalInputs(
     })
     assert.equal(region.coverage.kind, 'covered')
     assert.deepEqual(region.coverage.bounds, bbox)
-    const { height, width, x, y } = sceneMasks[index]
+    const { height, width, x, y } = masks[index]
     assert.deepEqual(region.coverage.intersection, { height, width, x: bbox.x + x, y: bbox.y + y })
     const { alpha, ...coverage } = region.coverage
     const expected = Buffer.alloc(512 ** 2)
@@ -274,6 +282,7 @@ function sceneRegionalInputs(
 function sampledSupport(
   testCase: (typeof cases)[number] | (typeof sceneCases)[number],
   recipe: CurrentCanvasRegionalRecipe,
+  closedGap: boolean,
 ) {
   if (testCase.variant === 'ordinary') {
     return null
@@ -298,7 +307,9 @@ function sampledSupport(
   assert.deepEqual(
     [background, leftSupport, rightSupport, overlap],
     'seed' in testCase
-      ? [592, 216, 216, 0]
+      ? closedGap
+        ? [520, 252, 252, 0]
+        : [592, 216, 216, 0]
       : testCase.uncoveredBackground
         ? [448, 306, 288, 18]
         : [0, 544, 512, 32],
@@ -440,6 +451,8 @@ async function main() {
     (name) => path.dirname(run) === path.join(artifactRoot, 'runs', `anima-${name}`),
   )
   const scene = sceneName && scenePrompts[sceneName]
+  const closedGap = sceneName === 'countertop-gap-closed'
+  const masks = closedGap ? closedGapMasks : sceneMasks
   const profile = sceneName
     ? `anima-${sceneName}`
     : equalWeight
@@ -509,7 +522,7 @@ async function main() {
     ],
   )
   if (scene) {
-    assert.deepEqual(contract.regionalMasks, sceneMasks)
+    assert.deepEqual(contract.regionalMasks, masks)
     assert.equal(contract.compositionProfile, ANIMA_REGIONAL_COMPOSITION_PROFILE)
   }
   if (equalWeight) {
@@ -639,7 +652,6 @@ async function main() {
         installedVisual: {
           pythonExecutable: install.pythonExecutable,
           runtimeRoot: install.runtimeDir,
-          ...(sceneName ? { scene: sceneName } : {}),
           async useCase({ compiledPrompts, models, prepared, recipe }) {
             assert.equal(prepared.context.mode, 'txt2img')
             assert.deepEqual(prepared.context.bbox, bbox)
@@ -664,9 +676,10 @@ async function main() {
                     selectedGlobalPositive,
                     regionalTexts,
                     sceneName === 'countertop-subject-weight',
+                    masks,
                   )
                 : regionalInputs(testCase, recipe, equalWeight ? 1.5 : 0.75)
-            const support = sampledSupport(testCase, recipe)
+            const support = sampledSupport(testCase, recipe, closedGap)
             assert.deepEqual(compiledPrompts, [
               ...selectedGlobalCompiled,
               ...regional.map(({ compiled }) => compiled),
@@ -926,6 +939,7 @@ async function main() {
           },
         },
         regionalTexts,
+        ...(sceneName ? { scene: sceneName } : {}),
         seed: caseSeed,
         steps: sampling.nominalSteps,
         trainedBundle,

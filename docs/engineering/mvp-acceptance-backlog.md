@@ -159,6 +159,11 @@ entries record the state at their checkpoint.
    The 123 assigned frame still overlapped the subjects at the center
    and the 124 swapped frame still omitted the apple.
    [Weighted tabletop subjects](./phase-4-anima-countertop-subject-weight-research.md)
+   The next prepared comparison closes the 64-pixel strip between the
+   two masks and uses the original unweighted prompts. The CPU fixture
+   checks save and reopen, exact mask planes and the two empty ordinary
+   controls. The six native requests and visual verdict are pending.
+   [Touching tabletop masks](./phase-4-anima-countertop-gap-closed-research.md)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

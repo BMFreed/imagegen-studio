@@ -5,6 +5,7 @@ import type {
 } from '../../shared/projects/prompt-embeddings.js'
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -440,6 +441,85 @@ for (const variant of ['base', 'swapped', 'zero', 'empty', 'inherited'] as const
     }
   })
 }
+
+test('the closed-gap tabletop scene saves and recaptures two touching masks and a true ordinary control on CPU', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-tabletop-gap-'))
+  const regionalTexts = [
+    'a red apple with a small green leaf on a continuous pale wooden tabletop in front of a plain light blue wall',
+    'a blue ceramic mug with a loop handle on a continuous pale wooden tabletop in front of a plain light blue wall',
+  ] as const
+  const alphaHashes = [
+    '48bdbde8e9f8c28dd9cb6b5a3d97e22494d8ea0470a5a25fe3a1d18c8cf738de',
+    '998e3f76d3edfc664d5d3fbfdcf681ebae147cfdacd7de96cb1adb70574379b8',
+  ]
+  const bounds = [
+    { height: 288, width: 224, x: 19, y: 69 },
+    { height: 288, width: 224, x: 243, y: 69 },
+  ]
+  try {
+    for (const seed of [123, 124]) {
+      for (const variant of ['ordinary', 'base', 'swapped'] as const) {
+        const { authoredDocument, compiledPrompts, durablePreservation, paths, recipe } =
+          await produceAnimaRegionalInputFixture(path.join(root, `${seed}-${variant}`), {
+            height: 512,
+            regionalTexts,
+            scene: 'countertop-gap-closed',
+            seed,
+            steps: 20,
+            variant,
+            width: 512,
+          })
+        assert.deepEqual(recipe.bbox, { height: 512, width: 512, x: -13, y: 5 })
+        assert.equal(recipe.item.seed, seed)
+        assert.equal(durablePreservation.savedAndReopened, true)
+        assert.equal(durablePreservation.durableUnchanged, true)
+        assert.equal(durablePreservation.modelMetadataOnly, true)
+        if (variant === 'ordinary') {
+          assert.deepEqual(authoredDocument.regionalGuidance, [])
+          assert.deepEqual(recipe.regions, [])
+          assert.deepEqual(paths.masks, [])
+          assert.equal(compiledPrompts.length, 2)
+          continue
+        }
+        assert.deepEqual(
+          authoredDocument.regionalGuidance?.map(({ mask }) => {
+            assert.ok(mask && 'bounds' in mask)
+            return mask.bounds
+          }),
+          bounds,
+        )
+        assert.deepEqual(
+          recipe.regions.map(({ coverage }) => coverage.intersection),
+          bounds,
+        )
+        assert.deepEqual(
+          recipe.regions.map(({ coverage }) =>
+            createHash('sha256').update(Buffer.from(coverage.alpha)).digest('hex'),
+          ),
+          alphaHashes,
+        )
+        const assigned = variant === 'base' ? regionalTexts : [regionalTexts[1], regionalTexts[0]]
+        assert.deepEqual(
+          recipe.regions.map(({ positive }) => positive?.text),
+          assigned,
+        )
+        assert.deepEqual(
+          compiledPrompts.slice(2).map(({ prompt, sourceId }) => ({ prompt, sourceId })),
+          assigned.map((cleanedText, index) => ({
+            prompt: {
+              cleanedText,
+              spans: [{ end: cleanedText.length, start: 0, weight: 1 }],
+              version: 'anima-prompt-weighting-v1',
+            },
+            sourceId: id(101 + index),
+          })),
+        )
+      }
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 test('genuine Anima fixture preserves explicit useful steps and CFG in saved Main authoring and plan', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-sampling-'))
