@@ -1,4 +1,4 @@
-/** Reap the real installation owner at one cut and observe stock AppImage startup twice. */
+/** Observe stock AppImage startup with a live installation owner and after its exit. */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -198,7 +198,7 @@ async function assertRuntimeState(roots, receipt, identity, recovered = false) {
   }
 }
 
-async function cutInstallation(root, appData, cut, identity) {
+async function withCutInstallation(root, appData, cut, identity, observe) {
   const receiptFile = path.join(root, 'live-cut.json')
   const child = spawn(process.execPath, ['--import', 'tsx', producer, appData, cut, receiptFile], {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -256,29 +256,36 @@ async function cutInstallation(root, appData, cut, identity) {
       (await readFile('/proc/sys/kernel/random/boot_id', 'ascii')).trim(),
     )
     assert.match(receipt.startTicks, /^\d+$/)
-    assert.equal(await processStart(child.pid), receipt.startTicks)
     const roots = await createRuntimeRoots(appData)
+    async function assertOwnerAlive() {
+      assert.equal(child.exitCode, null, output)
+      assert.equal(child.signalCode, null, output)
+      assert.equal(await processStart(child.pid), receipt.startTicks)
+    }
+    await assertOwnerAlive()
     const live = await assertRuntimeState(roots, receipt, identity)
     // The same well-formed journal must refuse recovery while its exact owner is alive.
     await assert.rejects(new RuntimeInstallationController(roots).recover(), {
       code: 'RUNTIME_INSTALL_BUSY',
     })
+    async function reap() {
+      await assertOwnerAlive()
+      assert.ok(child.kill('SIGKILL'))
+      const exit = await Promise.race([exited, delay(8000, null, { ref: false })])
+      assert.deepEqual(exit, { code: null, signal: 'SIGKILL' })
+      const remainingStart = await processStart(child.pid)
+      assert.notEqual(remainingStart, receipt.startTicks)
+      assert.deepEqual(await assertRuntimeState(roots, receipt, identity), live)
+      await writeJson(root, 'reaped-cut.json', {
+        exit,
+        remainingStart,
+        owner: { pid: receipt.pid, startTicks: receipt.startTicks, bootId: receipt.bootId },
+        live,
+        liveRecovery: 'RUNTIME_INSTALL_BUSY',
+      })
+    }
     assert.deepEqual(await assertRuntimeState(roots, receipt, identity), live)
-    assert.equal(await processStart(child.pid), receipt.startTicks)
-    assert.ok(child.kill('SIGKILL'))
-    const exit = await Promise.race([exited, delay(8000, null, { ref: false })])
-    assert.deepEqual(exit, { code: null, signal: 'SIGKILL' })
-    const remainingStart = await processStart(child.pid)
-    assert.notEqual(remainingStart, receipt.startTicks)
-    assert.deepEqual(await assertRuntimeState(roots, receipt, identity), live)
-    await writeJson(root, 'reaped-cut.json', {
-      exit,
-      remainingStart,
-      owner: { pid: receipt.pid, startTicks: receipt.startTicks, bootId: receipt.bootId },
-      live,
-      liveRecovery: 'RUNTIME_INSTALL_BUSY',
-    })
-    return { roots, receipt, live }
+    return await observe({ roots, receipt, live, assertOwnerAlive, reap })
   } finally {
     if (child.pid && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     assert.ok(
@@ -347,7 +354,34 @@ export async function runPackagedRuntimeInstallationRecovery({
   assert.equal(await realpath(root), root)
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   await assert.rejects(lstat(appData), { code: 'ENOENT' })
-  const { roots, receipt, live } = await cutInstallation(root, appData, cut, identity)
+  return await withCutInstallation(root, appData, cut, identity, (owner) =>
+    observeRuntimeLifetimes({
+      root,
+      appData,
+      cut,
+      launch,
+      closeNormally,
+      retainOwnStore,
+      identity,
+      ...owner,
+    }),
+  )
+}
+
+async function observeRuntimeLifetimes({
+  root,
+  appData,
+  cut,
+  launch,
+  closeNormally,
+  retainOwnStore,
+  identity,
+  roots,
+  receipt,
+  live,
+  assertOwnerAlive,
+  reap,
+}) {
   const workspace = path.join(appData, 'workspaces/Uncategorized')
   await mkdir(workspace, { mode: 0o700, recursive: true })
   const filename = 'Runtime recovery.igs'
@@ -362,11 +396,17 @@ export async function runPackagedRuntimeInstallationRecovery({
   const database = path.join(appData, 'database/app.sqlite')
   const safe = cut === 'before-publication'
   const lifetimes = []
-  for (const name of ['first', 'reopened']) {
+  for (const name of ['live', 'first', 'reopened']) {
+    const ownerAlive = name === 'live'
+    if (ownerAlive) await assertOwnerAlive()
     const state = await launch(name)
     let observed
     try {
-      observed = await observeRepair(state, root, safe ? invalidDetail : recoveryDetail)
+      observed = await observeRepair(
+        state,
+        root,
+        safe && !ownerAlive ? invalidDetail : recoveryDetail,
+      )
       await state.page.getByRole('button', { name: `Open ${projectTitle}`, exact: true }).click()
       await expect(
         state.page.getByRole('tab', { name: projectTitle, exact: true }),
@@ -374,12 +414,13 @@ export async function runPackagedRuntimeInstallationRecovery({
     } finally {
       await closeNormally(state)
     }
-    const after = await assertRuntimeState(roots, receipt, identity, true)
+    const after = await assertRuntimeState(roots, receipt, identity, !ownerAlive)
     assert.deepEqual(JSON.parse(after.journalBody), {
       ...JSON.parse(live.journalBody),
       phase: after.phase,
     })
-    if (lifetimes.length > 0) assert.deepEqual(after, lifetimes[0].after)
+    if (ownerAlive) assert.deepEqual(after, live)
+    if (name === 'reopened') assert.deepEqual(after, lifetimes[1].after)
     assert.deepEqual(await fileWitness(project, identity), original)
     const index = indexSnapshot(database)
     assert.deepEqual(
@@ -400,7 +441,16 @@ export async function runPackagedRuntimeInstallationRecovery({
     assert.equal(row.title, projectTitle)
     const saved = await retainOwnStore(`${name}-closed`, filename)
     assert.equal(saved.project.sha256, original.sha256)
-    lifetimes.push({ name, observed, after, saved, index })
+    const observation = { name, observed, after, saved, index }
+    lifetimes.push(observation)
+    if (ownerAlive) {
+      await assertOwnerAlive()
+      await writeJson(root, 'live-app-observed.json', {
+        owner: { pid: receipt.pid, bootId: receipt.bootId, startTicks: receipt.startTicks },
+        ...observation,
+      })
+      await reap()
+    }
   }
 
   // A separate host RuntimeManager with no release available exposes the admission order
@@ -426,7 +476,7 @@ export async function runPackagedRuntimeInstallationRecovery({
         },
   )
   assert.equal(releaseReads, safe ? 1 : 0)
-  assert.deepEqual(await assertRuntimeState(roots, receipt, identity, true), lifetimes[1].after)
+  assert.deepEqual(await assertRuntimeState(roots, receipt, identity, true), lifetimes[2].after)
   const result = { cut, original, lifetimes, controlledBackend: { preview, releaseReads } }
   await writeJson(root, 'runtime-recovery-proof.json', result)
   return result

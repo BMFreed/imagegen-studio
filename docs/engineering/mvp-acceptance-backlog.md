@@ -260,7 +260,10 @@ entries record the state at their checkpoint.
    died before pointer publication, the stock AppImage kept the previous
    pointer and cleared the dead claim. After death during post-activation
    qualification, it kept the candidate pointer, journal and claim and showed
-   that recovery was required. The saved Project reopened in both cases. A
+   that recovery was required. Stock AppImage startup while the exact owner
+   was still alive showed the recovery notice at both cuts and kept the
+   runtime files and installation claim. The same Project opened before
+   and after owner exit at both cuts. A
    separate manager check with an empty release loader refused the uncertain
    Repair before contacting that loader. Repeat on the shipping artifact and
    supported host matrix when the publisher is available.
@@ -272,7 +275,7 @@ entries record the state at their checkpoint.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md),
    [Packaged rollback](./phase-5-packaged-runtime-rollback-research.md),
-   [Packaged startup after installer death](./phase-5-packaged-runtime-installation-recovery-research.md),
+   [Packaged startup with live and exited installers](./phase-5-packaged-runtime-installation-recovery-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).

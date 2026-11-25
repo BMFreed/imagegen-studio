@@ -101,3 +101,77 @@ Cleanup reclaimed 550,010,880 allocated bytes from exact private build and
 fixture paths. The retained evidence includes the regular pointer, journal,
 claim or temporary file as applicable, slot files, original link metadata,
 closed Projects and indexes, screenshots and process receipts.
+
+## Stock startup while the runtime installation owner is alive
+
+Studio base `cc808287`. Rechecked the clean InvokeAI checkout at
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The current
+`invokeai/app/services/model_install/install_staging_ledger.py` publishes
+the claim with Linux boot ID and start ticks, and
+`sweep_stale_claims` preserves owners whose exit cannot be established.
+The startup path in `model_install_default.py::start` sweeps before
+`_restore_incomplete_installs_async`. The API startup in
+`invokeai/app/api/dependencies.py` constructs the installer through
+`invokeai/app/services/model_manager/model_manager_default.py`.
+The Studio fixture exercises the
+existing `RuntimeInstallationController.recover` → `RuntimeManager.getStatus`
+→ runtime IPC → renderer notice path with the same real owner held at each
+cut. The previous two post-exit launches are still checked.
+
+The installer remained alive throughout a complete AppImage lifetime at
+each cut. The controller returned `RUNTIME_INSTALL_BUSY` and the native
+status reported that recovery was required before image work. The saved
+Project opened through Home, and the app closed normally before the
+controller test ended the installer. The pointer, journal, claim, slot
+members and temporary pointer matched their pre-launch witnesses. The test
+then reaped the exact owned installer and confirmed the original PID/start
+identity had gone before the next cold startup.
+
+| Cut                                  | While the owner is alive                                               | After the installer exits                                                                                        |
+| ------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Before pointer publication           | Old pointer and `activating` journal survive with the claim            | Same pointer, `rolled-back` journal and removed claim. The notice reports an invalid runtime for the inert slot. |
+| During post-activation qualification | Candidate pointer and `post-qualifying` journal survive with the claim | The same pointer, journal and claim remain. The recovery notice persists.                                        |
+
+All six normal AppImage lifetimes opened the saved Project without saving
+or generating. Each closed index kept one ready Project and an empty
+generation queue. Stock Repair still returned `RUNTIME_INSTALL_UNAVAILABLE`
+with zero active operations. The empty release-loader control still reads
+its source once after the safe recovery and zero times at the retained cut.
+The disposable slots contain no executable interpreter. This covers
+startup admission and process exit with inert payloads. Installed worker
+health, power-loss durability and production release delivery are separate
+boundaries.
+
+Passing runs `20261125-r2` (post-qualifying) and `20261125-r3`
+(before publication) reuse the byte-pinned stock AppImage
+`bead81dfeb229ee31d174fd0793cf479aa53e8284ef4ceefc914c0ff175c9078`
+from the Project export qualification. Its 43 build files matched the
+packaging manifest. No production source changed since that build.
+Both runs used private KDE Wayland with 4 GiB, zero swap and a 150-second
+deadline. Run `20261125-r1` reached all three lifetimes, then the outer
+wrapper refused the old expectation of two. The wrapper now checks the
+exact names and requires normal physical close for each lifetime.
+
+The isolated AppImage in `20261125-r4` changed only the bundled
+`RuntimeManager.getStatus` recovery branch. The real installer and kernel
+claim were unchanged. The app showed the ordinary invalid-runtime detail
+while the owner was still alive, and the exact native recovery-detail
+assertion failed. The failure includes the actual accessibility tree.
+The test AppImage still closed normally. The original stock package and
+the tracked sources were untouched by the mutation. Repeating the same
+pre-publication test with the exact stock AppImage in `20261125-r5`
+passed all three lifetimes again.
+
+The independent R2/R3 readback verified the AppImage, ASAR, wallet helper,
+19 distinct source pins, six closed Projects, six SQLite snapshots and
+both branch-specific sets of retained runtime metadata. It confirmed
+physical exit of all 60 recorded AppImage identities and both installers.
+The higher sampled peak was 1,334,218,752 bytes. The focused runtime,
+IPC and package matrix passed 485 cases. The two opt-ins for actual LaMa
+publication and host preflight were skipped. Scoped ESLint, formatting
+and syntax checks passed.
+
+Cleanup freed 588,738,560 allocated bytes by removing the private mutation
+build, fixture profiles and scratch. The receipt rechecked 209 evidence
+files and includes 31 copies of exact runtime metadata and slot contents.
+The reusable stock package stays at its original path.

@@ -574,7 +574,7 @@ const offlineProjectScope = {
   'workspace-chooser':
     'Stock AppImage registers and locates a saved workspace through the native KDE folder picker.',
   'runtime-installation-recovery':
-    'Stock AppImage inspects an interrupted runtime installation and preserves its owned data.',
+    'Stock AppImage preserves a live runtime installation and inspects recovery after its owner exits.',
   'saved-results':
     'Stock AppImage navigates to exact saved results in owned Projects without changing their contents.',
   'project-launch':
@@ -894,6 +894,7 @@ if (runtimeInstallationRecovery)
       'src/main/runtime/index.ts',
       'src/main/runtime/offline-runtime-assembly.ts',
       'src/main/runtime/runtime-installation.ts',
+      'src/main/runtime/runtime-setup-ipc.ts',
       'src/main/projects/project-session.ts',
       'src/preload/index.ts',
       'src/renderer/App.vue',
@@ -2433,10 +2434,19 @@ try {
     }
   }
   if (protocolHarness || legacyHarness || privateDesktop || projectExport || continuity) {
-    assert.equal(
-      lifetimes.length,
-      portableLocate || offlineProject === 'trash' || modelInstallCrash || workspaceChooser ? 3 : 2,
-    )
+    if (runtimeInstallationRecovery) {
+      assert.deepEqual(
+        lifetimes.map(({ name }) => name),
+        ['live', 'first', 'reopened'],
+      )
+    } else {
+      assert.equal(
+        lifetimes.length,
+        portableLocate || offlineProject === 'trash' || modelInstallCrash || workspaceChooser
+          ? 3
+          : 2,
+      )
+    }
     for (const state of lifetimes) {
       if (modelInstallCrash && state === lifetimes[0]) {
         assert.equal(state.name, 'first')
