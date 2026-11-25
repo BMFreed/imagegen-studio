@@ -57,6 +57,8 @@ async function recordDist(directory) {
   }
 }
 await recordDist('dist')
+const nativeResources = new Map(config.linux.extraResources.map(({ from, to }) => [from, to]))
+for (const source of nativeResources.keys()) assert.match(dist[source], /^[0-9a-f]{64}$/)
 const main = path.join(repo, 'src/main/index.ts')
 const collaborator = path.join(repo, 'scripts/fixtures/packaged-noobai-preview-transport.ts')
 const variantName = 'noobai-preview-qualification.cjs'
@@ -130,8 +132,16 @@ const packages = await build({
       const archive = path.join(resources, 'app.asar')
       const packagedMetadata = JSON.parse(extractFile(archive, 'package.json').toString('utf8'))
       assert.equal(packagedMetadata.main, entrypoint)
-      for (const [file, expected] of Object.entries(dist))
-        assert.equal(digest(extractFile(archive, file)), expected, file)
+      for (const [file, expected] of Object.entries(dist)) {
+        const resource = nativeResources.get(file)
+        if (resource) {
+          const packaged = path.join(resources, resource)
+          assert.equal((await pin(packaged)).sha256, expected, file)
+          assert.ok((await lstat(packaged)).mode & 0o111, file)
+        } else {
+          assert.equal(digest(extractFile(archive, file)), expected, file)
+        }
+      }
       if (variant) assert.equal(digest(extractFile(archive, entrypoint)), variant.sha256)
       assert.deepEqual(
         await pin(

@@ -395,6 +395,11 @@ entries record the state at their checkpoint.
    the export scratch cleared and the original installed CPU profile
    was restored.
    [Native existing PNG refusal](./phase-5-packaged-project-image-export-research.md#existing-png-selected-through-the-kde-overwrite-prompt)
+   A combined stock AppImage run exported both PNGs, put the saved Project
+   in Trash, and refused Open before and after cold startup. Restore kept
+   the same Project identity, inode, exact .igs and accepted index. Both
+   repeat exports matched their original PNG bytes.
+   [Trash and export after Restore](./phase-5-packaged-project-image-export-research.md#trash-cold-restart-and-both-exports-after-restore)
    The stock Model Manager removed one unshared IllustriousPhoto embedding
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.

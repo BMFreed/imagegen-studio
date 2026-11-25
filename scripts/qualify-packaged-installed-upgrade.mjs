@@ -185,11 +185,12 @@ async function readNoobaiPackageProof(filename) {
     }
   }
   await verifyDist('dist')
-  assert.equal(Object.keys(dist).length, 42)
+  assert.equal(Object.keys(dist).length, 43)
   for (const member of [
     'dist/main/main.cjs',
     'dist/preload/preload.cjs',
     'dist/renderer/index.html',
+    'dist/native/igs-wallet-bootstrap',
   ]) {
     assert.match(dist[member], /^[0-9a-f]{64}$/)
   }

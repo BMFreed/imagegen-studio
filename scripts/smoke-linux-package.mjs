@@ -1788,7 +1788,8 @@ async function verifyNoobaiStockPackage(output) {
   assert.equal(proof.entrypoint, 'dist/main/main.cjs')
   assert.equal(proof.variant, null)
   assert.deepEqual(proof.package, packageBefore)
-  assert.equal(Object.keys(proof.dist).length, 42)
+  assert.equal(Object.keys(proof.dist).length, 43)
+  assert.match(proof.dist['dist/native/igs-wallet-bootstrap'], /^[0-9a-f]{64}$/)
   for (const [file, expected] of Object.entries(proof.dist)) {
     assert.ok(file.startsWith('dist/') && path.normalize(file) === file)
     assert.equal((await identity(path.join(repo, file))).sha256, expected, file)

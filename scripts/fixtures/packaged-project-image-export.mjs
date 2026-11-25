@@ -1,4 +1,4 @@
-/** Stock File actions, installed CPU worker and independently verified PNG publication. */
+/** Stock File exports before and after a cold Project Trash restore. */
 import { expect } from '@playwright/test'
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
@@ -28,6 +28,7 @@ const activeVariantId = 'b291f539-810d-4e0a-a124-dd0638f6988a'
 const windowTitles = { canvas: 'Export As', bbox: 'Export Generation BBox' }
 const outputSizes = { canvas: [2075, 36], bbox: [64, 64] }
 const bboxName = 'primary generation box.png'
+const restoredBboxName = 'restored generation box.png'
 const collisionDiagnostic = 'A file with that name already exists. Choose a different filename.'
 const pngOracle = fileURLToPath(
   new URL('./packaged-project-image-export-oracle.py', import.meta.url),
@@ -102,9 +103,11 @@ function databaseSnapshot(filename) {
       'project_index',
       'project_accepted_result_index',
       'project_file_lifecycle',
+      'project_identity_retired_key',
       'generation_queue_item',
       'generation_candidate_receipt',
       'generation_seed_cursor',
+      'generation_acceptance_journal',
       'presets',
       'model_resource_version',
     ]
@@ -155,6 +158,31 @@ async function openProject(state, readPorts, localKey) {
   await selectSmart.click()
   await expect(selectSmart).toHaveAttribute('aria-pressed', 'true')
   return await readTab(page, localKey)
+}
+
+const workspaceNavigation = (page) => page.getByLabel('Workspace navigation', { exact: true })
+
+async function showTrash(page) {
+  await workspaceNavigation(page)
+    .getByRole('button', { name: /^Trash(?:\s+\d+)?$/ })
+    .click()
+  await expect(page.getByRole('heading', { name: 'Trash', exact: true })).toBeVisible()
+}
+
+async function trashClosedProject(page) {
+  const tab = page.locator(`[role="tab"][aria-label="${title}"]`)
+  await tab.getByRole('button', { name: `Close ${title}`, exact: true }).click()
+  await expect(tab).toHaveCount(0)
+  await page.locator('.app-chrome').getByRole('button', { name: 'Open Home', exact: true }).click()
+  const home = page.getByRole('region', { name: 'Home', exact: true })
+  await home.getByRole('button', { name: `${title} project actions`, exact: true }).click()
+  await page
+    .locator('.n-dropdown-option-body__label')
+    .filter({ hasText: /^Move to Trash$/ })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Move Project to Trash', exact: true })
+  await dialog.getByRole('button', { name: 'Move to Trash', exact: true }).click()
+  await expect(dialog).toBeHidden()
 }
 
 async function readProcIdentity(pid) {
@@ -328,13 +356,17 @@ export async function runPackagedProjectImageExport({
     return published
   }
 
-  async function unchanged(state, tab, rows) {
-    assert.deepEqual(await readTab(state.page, project.localKey), tab)
-    assert.deepEqual(databaseSnapshot(database), rows)
+  async function assertProjectFiles() {
     assert.deepEqual(await assertOwnedFile(project.filename), project.inode)
     assert.deepEqual(await assertOwnedFile(project.original), project.originalInode)
     assert.deepEqual(await identity(project.filename), { path: project.filename, ...sourceBytes })
     assert.deepEqual(await identity(project.original), { path: project.original, ...sourceBytes })
+  }
+
+  async function unchanged(state, tab, rows) {
+    assert.deepEqual(await readTab(state.page, project.localKey), tab)
+    assert.deepEqual(databaseSnapshot(database), rows)
+    await assertProjectFiles()
   }
 
   const first = await launch('first')
@@ -342,10 +374,90 @@ export async function runPackagedProjectImageExport({
   const rows = databaseSnapshot(database)
   assert.equal(rows.project_index.length, 1)
   assert.equal(rows.project_index[0].local_project_key, project.localKey)
+  assert.equal(rows.project_index[0].trashed_at, null)
+  assert.equal(rows.project_accepted_result_index.length, 3)
   assert.deepEqual(
-    [rows.generation_queue_item, rows.generation_candidate_receipt, rows.generation_seed_cursor],
-    [[], [], []],
+    [
+      rows.project_file_lifecycle,
+      rows.project_identity_retired_key,
+      rows.generation_queue_item,
+      rows.generation_candidate_receipt,
+      rows.generation_seed_cursor,
+      rows.generation_acceptance_journal,
+    ],
+    [[], [], [], [], [], []],
   )
+  function withoutNavigationTimes(record) {
+    return { ...record, indexed_at: null, last_opened_at: null }
+  }
+
+  function assertLifecycleOnly(current, trashedAt) {
+    const { project_index: index, project_file_lifecycle: lifecycle, ...otherTables } = current
+    assert.deepEqual(
+      { ...otherTables, project_index: rows.project_index, project_file_lifecycle: [] },
+      rows,
+    )
+    assert.deepEqual(index.map(withoutNavigationTimes), [
+      { ...withoutNavigationTimes(rows.project_index[0]), trashed_at: trashedAt },
+    ])
+    if (trashedAt === null) assert.deepEqual(lifecycle, [])
+    return lifecycle
+  }
+
+  async function verifyTrashed(state) {
+    const { page } = state
+    assert.deepEqual((await readPorts(state)).projects.value, [])
+    const result = await page.evaluate(() => window.api.projects.listTrash())
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.value.length, 1)
+    const [{ thumbnailUrl, previewUrl, ...summary }] = result.value
+    assert.equal(summary.id, project.localKey)
+    assert.equal(summary.title, title)
+    assert.equal(summary.fileName, path.basename(project.filename))
+    assert.equal(summary.originalWorkspaceDirectoryPath, path.dirname(project.filename))
+    assert.equal(summary.deletionStatus, 'trashed')
+    assert.match(summary.trashId, /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/)
+    assert.equal(new Date(summary.trashedAt).toISOString(), summary.trashedAt)
+    await expect(page.locator(`[data-project-id="${project.localKey}"]`)).toHaveAttribute(
+      'data-trash-id',
+      summary.trashId,
+    )
+    const refusal = await page.evaluate((id) => window.api.projects.open(id), project.localKey)
+    assert.equal(refusal.ok, false, JSON.stringify(refusal))
+    assert.equal(refusal.error.code, 'PROJECT_TRASHED')
+    await expect(page.getByRole('tab', { name: title, exact: true })).toHaveCount(0)
+    const lifecycle = assertLifecycleOnly(databaseSnapshot(database), summary.trashedAt)
+    assert.equal(lifecycle.length, 1)
+    const [record] = lifecycle
+    assert.equal(record.local_project_key, project.localKey)
+    assert.equal(record.canonical_path, project.filename)
+    assert.equal(record.workspace_directory_path, path.dirname(project.filename))
+    assert.equal(record.trash_id, summary.trashId)
+    assert.equal(record.trashed_at, summary.trashedAt)
+    assert.equal(record.state, 'trashed')
+    assert.equal(record.delete_operation_id, null)
+    assert.equal(record.file_missing, 0)
+    await assertProjectFiles()
+    const previews = [
+      ['thumbnail', thumbnailUrl, 2, 'webp'],
+      ['merged', previewUrl, 3, 'png'],
+    ].map(([kind, address, identityLength, extension]) => {
+      assert.equal(typeof address, 'string')
+      const url = new URL(address)
+      assert.equal(url.protocol, 'igs-preview:')
+      assert.equal(url.hostname, kind)
+      assert.equal(url.username + url.password + url.port + url.search + url.hash, '')
+      const parts = url.pathname.slice(1).split('/')
+      const signedFile = parts.pop()
+      assert.match(signedFile, new RegExp(`^[0-9a-f]{64}\\.${extension}$`))
+      assert.equal(parts.length, identityLength)
+      assert.equal(parts[0], project.localKey)
+      for (const hash of parts.slice(1)) assert.match(hash, /^[0-9a-f]{64}$/)
+      return { identity: [kind, ...parts], signedFile }
+    })
+    return { summary, refusal: refusal.error.code, lifecycle: record, previews }
+  }
+
   await exportImage(first, 'canvas', null)
   await unchanged(first, tab, rows)
   const canvas = await exportImage(first, 'canvas', 'visible canvas.png')
@@ -357,25 +469,55 @@ export async function runPackagedProjectImageExport({
   assert.equal(existingPng.sizeBytes, bbox.sizeBytes)
   await exportImage(first, 'canvas', bboxName, existingPng)
   await unchanged(first, tab, rows)
+  const existingCanvas = await existingPngWitness(canvas.path, identity)
+  await trashClosedProject(first.page)
+  await showTrash(first.page)
+  const trashed = await verifyTrashed(first)
   await closeNormally(first)
+  await assertProjectFiles()
   const saved = await retainOwnStore('after-export')
 
   const second = await launch('restarted')
+  await second.page.getByRole('button', { name: 'List view', exact: true }).click()
+  await showTrash(second.page)
+  const coldTrashed = await verifyTrashed(second)
+  const { previews: originalPreviews, ...originalTrashState } = trashed
+  const { previews: coldPreviews, ...coldTrashState } = coldTrashed
+  assert.deepEqual(coldTrashState, originalTrashState)
+  for (const [index, preview] of coldPreviews.entries()) {
+    assert.deepEqual(preview.identity, originalPreviews[index].identity)
+    assert.notEqual(preview.signedFile, originalPreviews[index].signedFile)
+  }
+  await second.page.getByRole('button', { name: `Restore ${title}`, exact: true }).click()
+  await expect(second.page.getByText('Trash is empty', { exact: true })).toBeVisible()
+  assert.deepEqual(await second.page.evaluate(() => window.api.projects.listTrash()), {
+    ok: true,
+    value: [],
+  })
+  assertLifecycleOnly(databaseSnapshot(database), null)
+  await assertProjectFiles()
+  await workspaceNavigation(second.page)
+    .getByRole('button', { name: 'Projects', exact: true })
+    .click()
   const reopened = await openProject(second, readPorts, project.localKey)
   const reopenedRows = databaseSnapshot(database)
-  for (const [table, before] of Object.entries(rows)) {
-    if (table !== 'project_index') assert.deepEqual(reopenedRows[table], before)
-  }
+  assertLifecycleOnly(reopenedRows, null)
   const repeated = await exportImage(second, 'canvas', 'reopened canvas.png')
   assert.deepEqual(repeated, { ...canvas, path: repeated.path })
   await unchanged(second, reopened, reopenedRows)
+  const repeatedBbox = await exportImage(second, 'bbox', restoredBboxName)
+  assert.deepEqual(repeatedBbox, { ...bbox, path: repeatedBbox.path })
+  await unchanged(second, reopened, reopenedRows)
   await closeNormally(second)
+  await assertProjectFiles()
   const restarted = await retainOwnStore('after-export-restart')
   assert.deepEqual(saved.project, restarted.project)
   assert.deepEqual(await existingPngWitness(bbox.path, identity), existingPng)
+  assert.deepEqual(await existingPngWitness(canvas.path, identity), existingCanvas)
   assert.deepEqual((await readdir(destinations)).sort(), [
     bboxName,
     'reopened canvas.png',
+    restoredBboxName,
     'visible canvas.png',
   ])
   return {
@@ -392,6 +534,7 @@ export async function runPackagedProjectImageExport({
         activeVariantId,
       },
       observations,
+      trashRestore: { trashed, coldTrashed, repeatedCanvas: repeated, repeatedBbox },
       normalPhysicalExits: 2,
     },
   }

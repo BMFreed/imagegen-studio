@@ -150,3 +150,60 @@ PNGs, three exact `.igs` copies, four SQLite bodies and all 112 restored
 AppData entries. All 18 enrolled AppImage process identities and five
 export workers had exited. Cleanup of the build and private profiles
 released 572,149,760 allocated bytes and rechecked 68 retained files.
+
+## Trash, cold restart and both exports after Restore
+
+The joint qualification combines File export and Home Trash on the same
+saved Project. Studio base `8fc6bd39`. The current local InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7` was read through
+`workbench/widgets/canvas/useCanvasGallerySave.ts`,
+`workbench/canvas-operations/saveCanvasToGallery.ts`,
+`workbench/canvas-operations/exportCanvasComposite.ts` and
+`workbench/canvas-engine/exportRasterComposite.ts` under its web frontend.
+These owners flush uploads, choose the alpha bounds or primary box, and
+verify the compositing snapshot before the gallery upload. The current
+`app/api/routers/projects.py` and
+`app/services/project_records/project_records_default.py` expose server
+Project deletion with board release/deletion options. The qualification
+composes Studio's existing local Trash and native file export actions.
+
+The first packaging attempt exposed an out-of-date qualification check.
+The current stock configuration puts the executable `igs-wallet-bootstrap`
+next to `app.asar` via Linux `extraResources`. The package verifier now
+checks 42 ASAR members and verifies the separate resource's exact bytes and
+executable mode. The installed-runtime and live-install proof consumers
+include the helper in the 43-file build pin. A read-only SquashFS inspection
+also verified the helper in the generated AppImage.
+
+The first combined AppImage run reached cold Trash readback. The test
+had compared signed preview URLs verbatim. The production resource owner
+uses a fresh process key. The corrected fixture checks the exact stable
+resource path components and requires both signature filenames to change
+across lifetimes. It compares the other Trash fields and the persisted
+lifecycle row exactly.
+
+The passing run is `runs/packaged-installed-engine/20261118/project-export-r5`.
+Both lifetimes observed `PROJECT_TRASHED` while the same Project was in
+Trash. After Restore the Project reopened with its original local key,
+saved revision, active Smart variant and three accepted result index rows.
+Both content PNGs were byte-identical at 2075×36. Both primary Generation
+BBox PNGs were byte-identical at 64×64. The saved .igs kept the same
+device, inode and bytes throughout. The retained source and published
+PNGs passed the independent RGBA and ICC oracle.
+
+Six real KDE SaveFile responses covered four publications, Cancel and
+the existing-file refusal. Each installed CPU export worker exited and
+its export scratch cleared. Both AppImage lifetimes closed normally.
+The wrapper restored all 112 original installed-profile entries with
+exact identity and bytes. The bounded service ran for 33.417 seconds
+with a reported 2.5 GiB peak under the 4 GiB zero-swap limit. All 70
+focused export, Trash, preview and package checks passed with zero
+failures or skips. App build, stock AppImage packaging, scoped ESLint,
+formatting and syntax checks passed.
+
+The independent audit repeated the PNG oracle and checked the six portal
+traces, both SQLite bodies, 112 restored entries and 24 exited process
+identities. It also verified the exact AppImage and its packaged wallet
+helper. Cleanup released 778,485,760 allocated bytes and rechecked 83
+retained files. The AppImage remains pinned while the desktop integration
+daemon holds open descriptors to it.
