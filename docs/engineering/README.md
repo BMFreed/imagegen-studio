@@ -66,6 +66,9 @@ The [touching-mask comparison](./phase-4-anima-countertop-gap-closed-research.md
 passed all six installed CUDA requests and replayed both ordinary controls
 byte for byte. Blind review passed one of the four regional placements.
 The scene background remained readable in all six frames.
+The [matched original Invoke source comparison](./phase-4-anima-countertop-gap-closed-research.md#matched-current-invokeai-source-comparison)
+repeated the seed-123 outcome. A gap preserved the two subjects on their
+assigned sides. Touching masks left a centered mug without a recognizable apple.
 
 ## Startup recovery of committed Project deletion
 

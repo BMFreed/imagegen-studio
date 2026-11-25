@@ -86,3 +86,71 @@ Local evidence is under `runs/anima-countertop-gap-closed/20261125-r7`.
 It includes the six original PNGs, reviewed contact sheet, blind
 observations and mapping, baseline comparison, archived Project and
 SQLite fixtures, and process, preservation and cleanup receipts.
+
+## Matched current InvokeAI source comparison
+
+Studio `f927063b27fa877664a104631f005ab9ab0b3250` and clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The comparison selected
+the seed-123 ordinary TXT control and both seed-123 swapped treatments
+before generating any Invoke frames. The Studio treatments differed in
+mask geometry and used the same mug-left and apple-right prompts. The
+probe verified the saved Alpha8 bytes against the authored RGBA mask
+assets and against the corresponding native handoffs.
+
+The current Invoke Canvas compiler calls
+`invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts`
+to connect regional conditioning through `AlphaMaskToTensorInvocation` in
+`invokeai/app/invocations/mask.py`. The binary fixture pixels make its
+opaque-alpha conversion equivalent to the signed Studio mask input.
+`invokeai/app/invocations/text_encoder/anima_text_encoder.py` calls
+`invokeai/backend/anima/prompt_weighting.py` for text and weighted T5
+inputs. The original `AnimaDenoiseInvocation._run_diffusion` in
+`invokeai/app/invocations/anima/anima_denoise.py` calls
+`invokeai/backend/anima/regional_prompting.py` and
+`invokeai/backend/anima/anima_transformer_patch.py` and runs its built-in
+Euler loop. The probe loads the original transformer and checkpoint
+layout in `invokeai/backend/anima/` using the mapping read from the
+Anima loader in `invokeai/backend/model_manager/load/model_loaders/anima.py`.
+
+The existing [source-control harness](./phase-4-anima-negative-invoke-control-research.md#original-denoiser-visual-control)
+binds the original denoising methods and supplies application service
+ports. This TXT probe reused the signed Studio dependencies, Qwen encoder
+and untiled Wan decode and exercised the current original Invoke
+transformer, text preparation and denoising source. The runtime comparison
+covers those source owners. The installed Invoke application and its model
+registry are outside this run.
+
+The first attempt exited at the first transformer pre-hook with no
+generated PNGs. The harness had expected the progress scale
+`sigma × 1000` in the transformer argument. The second attempt checked
+the transformer's normalized sigma and kept the separate progress
+assertion. Both attempts used the same authored inputs and donor revision.
+
+The three CUDA requests completed in 44.039 s with 20 Euler steps and
+20 positive and 20 negative transformer calls per image. The initial noise
+matched the signed Studio rule of seeded CPU FP32 generation followed by
+BF16 conversion. All four raw prompts matched in cleaned text, span
+weights, Qwen IDs, attention mask and hidden states, and weighted T5 IDs
+and weights. The positive permissions matched the installed Studio mask
+builder byte for byte, with global/left/right support of 592/216/216 with
+the gap and 520/252/252 with touching masks. Both masks were absent for
+ordinary TXT. The global-only negative was unrestricted in all three
+cases. The donor's even-block patch was scoped to each regional call and
+restored afterward. Peak group memory was 8,889,339,904 bytes, peak
+Torch CUDA allocation was 5,699,738,112 bytes, and swap and OOM were zero.
+
+Both blind readers passed the ordinary scene and the 64-pixel-gap
+placement in both engines. With touching masks both readers saw a
+centered blue mug and no recognizable apple body. All six frames
+retained the tabletop and wall. The paired RGB bytes differ across
+engines. The same placement failure occurs with the original source and
+the signed Studio worker for this scene and seed. The comparison offers
+no verified Studio fix to port for the touching-mask case. The complete
+two-seed visual criterion and human acceptance remain open.
+
+Under the artifact root, `runs/anima-countertop-invoke-control/20261125-r1`
+retains the failed harness diagnostic. R2 retains the three original Invoke
+PNGs, visual comparison sheet, blind readings, source pins, resource receipt
+and independent audit. Duplicate handoffs can be recovered byte for byte
+from the previous verified Studio payload archives using the recorded
+member names.

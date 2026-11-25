@@ -169,6 +169,11 @@ entries record the state at their checkpoint.
    of the four regional placements, down from two with the strip. The
    two-seed placement criterion remains open.
    [Touching tabletop masks](./phase-4-anima-countertop-gap-closed-research.md)
+   The matched original Invoke source at seed 123 reproduced the same
+   visual result. The ordinary scene and swapped placement with a gap
+   passed, and the swapped touching-mask case lost the recognizable apple.
+   Compiled prompts and token-grid permissions agreed across the measured paths.
+   [Current Invoke comparison](./phase-4-anima-countertop-gap-closed-research.md#matched-current-invokeai-source-comparison)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed
