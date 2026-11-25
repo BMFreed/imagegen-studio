@@ -2,11 +2,12 @@
 
 ## MVP acceptance checklist
 
-**We are qualifying the local candidate.** Next GPU work is the
-pinned AppImage and installed-worker check in step 4. The two-plinth
-reference swap failed the same visual gate in Studio and installed
-InvokeAI. Continue keyboard, contrast and explicit Refresh performance
-checks in step 2. Public delivery is blocked at step 5.
+**We are qualifying the local candidate.** One pinned stock AppImage
+passed installed-worker EPS/V, frozen Retry and historical-worker refusal
+in step 4. Continue with candidate Setup/Repair and exact model relink.
+The two-plinth reference swap failed the same visual gate in Studio and
+installed InvokeAI. Continue keyboard, contrast and explicit Refresh
+performance checks in step 2. Public delivery is blocked at step 5.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -67,6 +68,15 @@ environment and remaining limits, and update the current stage and next run.
         recovery states after confirmed installer exit. Cold launches matched
         both observations.
         [Same-window recheck](./phase-5-packaged-runtime-installation-recovery-research.md#check-again-after-installer-exit-in-the-open-appimage)
+  - [x] The pinned stock AppImage ran both NoobAI objectives on the
+        RTX 4080. V passed Add, Undo, Redo, Save and reopen. EPS recovered
+        one live CUDA job after Main death, completed frozen Retry and
+        preserved the accepted Raster through Save and reopen.
+        [Pinned candidate results](./phase-5-pinned-stock-candidate-research.md)
+  - [x] The same AppImage backed up and migrated historical DB29, refused
+        Generate and Retry with a protocol-2 worker, and preserved the
+        historical Project and queued inputs across Save and reopen.
+        [Historical refusal and migration](./phase-5-pinned-stock-candidate-research.md#historical-db29-and-incompatible-worker-refusal)
 
 ### Public release
 
