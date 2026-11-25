@@ -600,3 +600,83 @@ index and two sample archives. The R52 interruption retains its separate
 SQLite trio and first-launch receipt. After exit and retention checks,
 cleanup freed 3,411,804,160 allocated bytes across the scale and focus
 runs. One verified AppImage is kept for the next CPU qualification.
+
+## Browse folders from a completed Home catalog
+
+Studio base `9cac30bac0736492d030076db793469e1e4c0a7c`. Re-read clean
+InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`. Under
+`invokeai/frontend/webv2/src/workbench`, the
+`launchpad/pages/{HomePage,ProjectsPage}.tsx` callers use
+`projects/{library,api}.ts`. The library publishes account-current
+summary snapshots. `launchpad/projects/ProjectsBrowser.tsx` derives rows
+from that snapshot via `projectLibraryView.ts` without a new fetch.
+The `invokeai/app/api/routers/projects.py` handler calls
+`app/services/project_records/project_records_default.py`, whose
+`app/services/shared/database/queries/projects.py` query projects summaries
+without opening documents. Invoke's summaries come from managed records.
+Studio keeps its existing discovery and recovery checks for external
+`.igs` files.
+
+After a complete combined load, Home projects the same list for
+`Projects` or the selected workspace. The sidebar switches views without
+requesting a catalog, folder list or Trash list. Explicit Refresh and
+Rescan still rediscover external files and publish current card and
+sidebar data. An explicit Refresh while scoped loads a complete snapshot
+so the user sees changes from other folders when returning to Projects.
+Opening and recovery still validate the live files. The application
+continues to refresh on Home return and after mutations. Independent
+fallbacks use the current requested scope and cannot authorize fast
+navigation. Superseded requests cannot publish a complete catalog.
+
+A production-renderer browser check selected a card, switched through
+two folders and the all-Projects view, and verified one initial catalog
+and Trash request. Explicit Refresh in the first folder discovered a
+change in the second folder. The second folder and aggregate then showed
+the changed card from the same refreshed catalog. Running the same
+check with the previous committed renderer reached the request-count
+assertion and failed with five catalog and five Trash requests. The
+restored version passed along with the existing fallback, stale-reply
+and Remove from Home focus checks.
+
+The stock AppImage in `20261125-r54` finished both private Wayland
+lifetimes at 900×620 and closed normally. The matched R53/R54 fixture
+has the same 256 titles, document identities and revisions, four Raster
+assets, saved previews, per-file sizes and 64/96/96 split. Archive and
+workspace path identities are pinned independently for each run.
+Both scopes used 120% CPU, 4 GiB memory, zero swap and software
+compositing. R54 peaked at 3,443,650,560 bytes with zero limit or OOM
+events. These are one-sample comparisons on the local host.
+
+| Operation                      |         R53 first / restart |     R54 first / restart |
+| ------------------------------ | --------------------------: | ----------------------: |
+| First complete view            |             25.40 / 22.59 s |         23.28 / 21.51 s |
+| Three folder selections, range | 15.15–20.70 / 14.57–15.21 s | 0.18–0.38 / 0.21–0.34 s |
+| Return to all cards            |             16.06 / 15.77 s |           0.56 / 0.53 s |
+| Aggregate Refresh              |             27.60 / 23.73 s |         22.46 / 19.43 s |
+| Scoped Refresh                 |             17.35 / 17.31 s |         16.75 / 15.12 s |
+
+The regression distinguishes browsing from explicit file discovery.
+The elapsed-time comparison leaves Refresh and supported-host
+performance open. A separate audit rehashed 256 archives, 1,792
+manifest members, 43 shipped application files, the ASAR, the native
+wallet and the SQLite addon. The closed SQLite matched its 256 ready
+projects and 30 migration pins, and passed integrity and foreign-key
+checks. There were two normal closes and 20 exited process identities.
+
+The same AppImage ran the keyboard, native folder picker, workspace
+unregister and Trash restoration scenario. Escape and confirmed removal
+returned focus to the expected actions. The different folder refused
+Restore, and the original folder restored the exact Project after cold
+reopen. An independent audit checked the three portal exchanges, three
+Project pairs, both SQLite snapshots and both normal closes.
+[Workspace preservation](./phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
+
+Final typecheck, app build, scoped lint, 65 Node checks and four
+production-renderer browser checks passed.
+
+Retained reports and bodies are under
+`runs/packaged-home-scale/20261125-r54` and
+`runs/packaged-workspace-trash-restore/20261125-r8`. Cleanup rechecked
+110 retained files and reclaimed 1,587,011,584 allocated bytes. It
+retired the superseded R53 AppImage after its cycle ended. The R54
+AppImage, final closed index and two archive samples remain available.

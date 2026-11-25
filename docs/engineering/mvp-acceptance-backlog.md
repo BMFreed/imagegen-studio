@@ -2,11 +2,10 @@
 
 ## MVP acceptance checklist
 
-**We are qualifying the local candidate.** Next GPU work is the
-regional visual pass in step 1. Next CPU work is to profile Home folder
-selection and Refresh in the 256-project layered catalog and continue
-the keyboard and contrast checks in step 2. Public delivery is blocked
-at step 5.
+**We are qualifying the local candidate.** Next GPU work is an
+Illustrious regional-reference comparison with a usable scene baseline
+in step 1. Continue keyboard, contrast and explicit Refresh performance
+checks in step 2. Public delivery is blocked at step 5.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -23,6 +22,11 @@ environment and remaining limits, and update the current stage and next run.
       no-region controls and record human verdicts.
       [Anima visual results](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
       · [Illustrious visual results](./phase-4-regional-reference-placement-research.md)
+  - [x] Checked responsiveness to the Anima apple negative across the full
+        image. The apple remained recognizable with the image-wide phrase
+        and both earlier local assignments. The local suppression gate
+        stays open.
+        [Image-wide negative control](./phase-4-anima-apple-negative-research.md#image-wide-negative-on-the-same-apple)
 - [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
       contrast and Home performance checks on the candidate.
   - [x] The stock AppImage kept Trash across workspace removal and restart,
@@ -35,9 +39,13 @@ environment and remaining limits, and update the current stage and next run.
         [Workspace focus and search contrast](./phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
-        normal close. Folder selection and Refresh still need a response
-        time pass.
+        normal close.
         [256-project catalog result](./phase-5-packaged-home-scale-research.md#256-projects-with-four-raster-layers-each)
+  - [x] Folder selection uses the complete catalog and passed at 0.18–0.38 s
+        on the 256-project fixture. The same AppImage passed native workspace
+        removal and Trash restoration. Explicit Refresh still needs a
+        response-time pass.
+        [Home navigation result](./phase-5-packaged-home-scale-research.md#browse-folders-from-a-completed-home-catalog)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -285,6 +293,11 @@ entries record the state at their checkpoint.
    [Baseline with named subjects](./phase-4-anima-apple-negative-research.md#baseline-with-named-subjects),
    [spatial comparison](./phase-4-anima-apple-negative-research.md#installed-spatial-result),
    [matched Invoke source comparison](./phase-4-anima-apple-negative-research.md#current-original-invoke-denoiser-on-the-matched-apple-scene).
+   The held recipe also retained the apple with the same weighted phrase
+   added to the global negative and both local negatives cleared. Both
+   blind readers recognized both objects and the scene in all four
+   matched Studio images.
+   [Global negative control](./phase-4-anima-apple-negative-research.md#image-wide-negative-on-the-same-apple)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

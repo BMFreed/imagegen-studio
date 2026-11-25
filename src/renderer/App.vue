@@ -364,7 +364,8 @@ const queueResultOpeningId = ref<string | null>(null)
 const queueResultNavigationError = ref<string | null>(null)
 const generationResultFocusByTab = ref<Record<string, GenerationResultFocusRequest>>({})
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
-const projects = ref<ProjectSummary[]>([])
+const homeProjectSummaries = ref<ProjectSummary[]>([])
+let hasCompleteHomeCatalog = false
 // Home is remounted on Project navigation; browse controls belong to the app session.
 const homeProjectSearch = ref('')
 const homeView = ref<InstanceType<typeof HomeView> | null>(null)
@@ -384,6 +385,12 @@ const workspaceMarkerColors: ReadonlySet<string> = new Set(PROJECT_WORKSPACE_COL
 const workspacesLoading = ref(false)
 const workspacesError = ref<string | null>(null)
 const selectedWorkspaceId = ref<string | null>(null)
+const projects = computed(() => {
+  const workspaceId = selectedWorkspaceId.value
+  return workspaceId === null
+    ? homeProjectSummaries.value
+    : homeProjectSummaries.value.filter((project) => project.workspaceId === workspaceId)
+})
 watch([selectedWorkspaceId, selectedTrashView], () => {
   homeSelectedProjectId.value = null
 })
@@ -3796,14 +3803,16 @@ async function refreshProjects() {
   const request = ++projectListRequest
   const workspaceId = selectedWorkspaceId.value
   const trashView = selectedTrashView.value
+  hasCompleteHomeCatalog = false
   projectsLoading.value = true
   homeError.value = null
   // Active Home reads share discovery in Main. On failure the existing independent
   // requests recover whichever lists are still available to the current view.
   const combined = trashView
     ? undefined
-    : apiValue(() => projectApi().listHomeCatalog(workspaceId ?? undefined)).catch(() => null)
+    : apiValue(() => projectApi().listHomeCatalog()).catch(() => null)
   const catalogRefresh = refreshWorkspaces(combined)
+  const workspaceRequest = workspacesRequest
   const trashRefresh = refreshTrash()
   const current = () =>
     !rendererDisposed &&
@@ -3821,7 +3830,9 @@ async function refreshProjects() {
       const list =
         catalog?.projects ?? (await apiValue(() => projectApi().list(workspaceId ?? undefined)))
       if (current()) {
-        projects.value = list
+        homeProjectSummaries.value = list
+        hasCompleteHomeCatalog =
+          catalog !== null && catalog !== undefined && workspacesRequest === workspaceRequest
       }
     }
   } catch (cause) {
@@ -3863,6 +3874,9 @@ async function refreshTrash() {
 
 async function refreshWorkspaces(combined?: Promise<ProjectHomeCatalog | null>) {
   const request = ++workspacesRequest
+  if (!combined) {
+    hasCompleteHomeCatalog = false
+  }
   workspacesLoading.value = true
   workspacesError.value = null
   try {
@@ -3885,13 +3899,17 @@ async function refreshWorkspaces(combined?: Promise<ProjectHomeCatalog | null>) 
   }
 }
 
-async function selectWorkspace(id: string | null, refreshEvenIfSelected = false) {
-  if (id === selectedWorkspaceId.value && !selectedTrashView.value && !refreshEvenIfSelected) {
+async function selectWorkspace(id: string | null, forceRefresh = false) {
+  if (id === selectedWorkspaceId.value && !selectedTrashView.value && !forceRefresh) {
     return
   }
   selectedTrashView.value = false
   selectedWorkspaceId.value = id
-  projects.value = []
+  if (hasCompleteHomeCatalog && !forceRefresh) {
+    homeError.value = null
+    return
+  }
+  homeProjectSummaries.value = []
   await refreshProjects()
 }
 
@@ -4186,7 +4204,7 @@ async function removeMissingProject() {
     if (focus) {
       missingProjectReturnFocus = { home: focus, projectId, workspaceId }
     }
-    projects.value = projects.value.filter(({ id }) => id !== projectId)
+    homeProjectSummaries.value = homeProjectSummaries.value.filter(({ id }) => id !== projectId)
     showRemoveMissingProject.value = false
     await refreshProjects()
   } catch (cause) {
@@ -4403,7 +4421,7 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
     }
     workspaces.value = [...workspaces.value.filter(({ id }) => id !== workspace.id), workspace]
     showAddWorkspace.value = false
-    await selectWorkspace(workspace.id)
+    await selectWorkspace(workspace.id, true)
   } catch (cause) {
     addWorkspaceError.value = errorMessage(cause)
   } finally {
@@ -6926,7 +6944,7 @@ onBeforeUnmount(() => {
           :workspacesError
           :workspacesLoading
           @addWorkspace="beginAddWorkspace"
-          @browseProjects="selectWorkspace(null, true)"
+          @browseProjects="selectWorkspace(null, !hasCompleteHomeCatalog)"
           @browseTrash="selectTrash"
           @createProject="beginNewProject"
           @deleteProject="beginDeleteProject"

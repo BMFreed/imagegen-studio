@@ -374,6 +374,11 @@ The filter control is labeled `Status` in the prototype, even though the underly
 
 `Reset filters` clears Name search and Status only. It preserves the chosen sort and grid/list view mode. Changing between `Projects`, `Trash` and a workspace clears project selection but keeps those browser controls for the Home session.
 
+Switching between `Projects` and a workspace filters the last complete
+Home catalog. Refresh and Rescan discover external file changes and
+update the catalog. Opening a Project still checks the saved file and
+recovery state.
+
 Typing an unmatched name does not offer inline project creation. Creation and
 import remain explicit actions with their own destination, validation and
 lifecycle dialogs.

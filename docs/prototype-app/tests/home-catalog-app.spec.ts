@@ -3,11 +3,14 @@ import type { ApiResult, ProjectHomeCatalog, ProjectSummary } from '../../../src
 import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
 
-type CatalogScenario = 'fallback' | 'late-error' | 'missing-removal'
+type CatalogScenario = 'fallback' | 'late-error' | 'missing-removal' | 'workspace-navigation'
 
 interface HomeCatalogFixture {
+  catalogScopes: (string | null)[]
   finishPendingCatalog: () => Promise<void>
+  observeExternalFileChange: () => void
   requests: { catalog: number; projects: number; workspaces: number }
+  trashRequests: number
 }
 
 type HomeCatalogGlobal = { homeCatalogFixture: HomeCatalogFixture } & typeof globalThis
@@ -61,7 +64,15 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           writable: true,
         },
       ]
+      const secondWorkspace = {
+        ...workspaces[0]!,
+        directoryPath: '/fixture/linked-workspace',
+        displayName: 'Other workspace',
+        id: '93ec4b82-7a6b-4ff2-8e0b-58b1591749f5',
+        isDefault: false,
+      }
       let removed = false
+      let externalFileChanged = false
       const batchError = {
         error: { code: 'PROJECT_INTERNAL_ERROR', message: 'Controlled combined read failure.' },
         ok: false,
@@ -72,12 +83,17 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         resolvePending = resolve
       })
       const fixture: HomeCatalogFixture = {
+        catalogScopes: [],
         async finishPendingCatalog() {
           // Wait a renderer frame after settling the response so the old continuations can run.
           resolvePending(batchError)
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
         },
+        observeExternalFileChange() {
+          externalFileChanged = true
+        },
         requests,
+        trashRequests: 0,
       }
       const unsubscribe = () => () => undefined
       ;(globalThis as { api: unknown } & typeof globalThis).api = {
@@ -98,8 +114,25 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               value: [project(scenario === 'fallback' ? 'Readable sketch' : 'Stale sketch')],
             }
           },
-          listHomeCatalog: async (): Promise<ApiResult<ProjectHomeCatalog>> => {
+          listHomeCatalog: async (workspaceId?: string): Promise<ApiResult<ProjectHomeCatalog>> => {
             requests.catalog++
+            fixture.catalogScopes.push(workspaceId ?? null)
+            if (scenario === 'workspace-navigation') {
+              const secondProject = {
+                ...project(externalFileChanged ? 'Updated linked sketch' : 'Linked sketch'),
+                id: `project-v1-${'c'.repeat(64)}`,
+                workspaceId: secondWorkspace.id,
+              }
+              return {
+                ok: true,
+                value: {
+                  projects: [project('Current sketch'), secondProject].filter(
+                    (item) => workspaceId === undefined || item.workspaceId === workspaceId,
+                  ),
+                  workspaces: [...workspaces, secondWorkspace],
+                },
+              }
+            }
             if (scenario === 'fallback') {
               return batchError
             }
@@ -126,7 +159,10 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               },
             }
           },
-          listTrash: async () => ({ ok: true, value: [] }),
+          listTrash: async () => {
+            fixture.trashRequests++
+            return { ok: true, value: [] }
+          },
           listWorkspaces: async () => {
             requests.workspaces++
             return { error: { code: 'PROJECT_INTERNAL_ERROR', message: workspaceError }, ok: false }
@@ -233,4 +269,62 @@ test('production Home restores keyboard focus after removing a missing project f
   const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
   await expect(search).toBeFocused()
   expect(await search.evaluate((input) => input.matches(':focus-visible'))).toBe(true)
+})
+
+test('production Home switches workspaces from a complete catalog and Refresh discovers other folders', async ({
+  page,
+}) => {
+  const home = await mountHome(page, 'workspace-navigation')
+  const aggregate = home.getByRole('button', { exact: true, name: 'Projects' })
+  const currentWorkspace = home.getByRole('button', { name: /^Current workspace\s*1$/ })
+  const otherWorkspace = home.getByRole('button', { name: /^Other workspace\s*1$/ })
+  const current = home.getByRole('button', { exact: true, name: 'Select Current sketch' })
+  const other = home.getByRole('button', { exact: true, name: 'Select Linked sketch' })
+  const updated = home.getByRole('button', { exact: true, name: 'Select Updated linked sketch' })
+  const refresh = home.getByRole('button', { exact: true, name: 'Refresh projects' })
+  const observed = () =>
+    page.evaluate(() => {
+      const { catalogScopes, requests, trashRequests } = (globalThis as HomeCatalogGlobal)
+        .homeCatalogFixture
+      return { catalogScopes, requests, trashRequests }
+    })
+
+  await expect(current).toBeVisible()
+  await expect(other).toBeVisible()
+  await other.click()
+  await expect(other).toHaveAttribute('aria-pressed', 'true')
+  await otherWorkspace.click()
+  await expect(otherWorkspace).toHaveAttribute('aria-pressed', 'true')
+  await expect(other).toHaveAttribute('aria-pressed', 'false')
+  await expect(current).toHaveCount(0)
+  await currentWorkspace.click()
+  await expect(current).toBeVisible()
+  await expect(other).toHaveCount(0)
+  await aggregate.click()
+  await expect(other).toBeVisible()
+  await currentWorkspace.click()
+  expect(await observed()).toEqual({
+    catalogScopes: [null],
+    requests: { catalog: 1, projects: 0, workspaces: 0 },
+    trashRequests: 1,
+  })
+
+  await page.evaluate(() =>
+    (globalThis as HomeCatalogGlobal).homeCatalogFixture.observeExternalFileChange(),
+  )
+  await refresh.click()
+  await expect.poll(observed).toEqual({
+    catalogScopes: [null, null],
+    requests: { catalog: 2, projects: 0, workspaces: 0 },
+    trashRequests: 2,
+  })
+  await expect(refresh).not.toHaveAttribute('aria-busy', 'true')
+  await expect(updated).toHaveCount(0)
+  await aggregate.click()
+  await expect(updated).toBeVisible()
+  await expect(other).toHaveCount(0)
+  await otherWorkspace.click()
+  await expect(updated).toBeVisible()
+  await expect(current).toHaveCount(0)
+  expect((await observed()).requests.catalog).toBe(2)
 })
