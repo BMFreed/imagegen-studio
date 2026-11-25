@@ -2,7 +2,8 @@
 
 ## Current MVP acceptance
 
-[MVP acceptance backlog](./engineering/mvp-acceptance-backlog.md) reconciles
+[MVP acceptance checklist](./engineering/mvp-acceptance-backlog.md#mvp-acceptance-checklist)
+shows the current stage and next checks. The backlog reconciles
 packaged engine compatibility, visual utility and capacity, Setup/Repair,
 interrupted update and the joint NoobAI/release matrix with the current code.
 Production signed runtime metadata/artifact endpoints and the public publisher

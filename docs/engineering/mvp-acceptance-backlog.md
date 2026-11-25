@@ -1,5 +1,63 @@
 # MVP acceptance backlog
 
+## MVP acceptance checklist
+
+**We are qualifying the local candidate.** Next GPU work is the
+regional visual pass in step 1. Next CPU work is the workspace and Trash
+scenario in step 2. Public delivery is blocked at step 5.
+
+The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
+are complete for their recorded builds and fixtures. Check off a step when
+its acceptance criteria pass. Link the result with the tested build,
+environment and remaining limits, and update the current stage and next run.
+
+### Local candidate
+
+- [ ] **1. Qualify visual generation utility.** On Anima, verify two-seed
+      regional object placement with swapped assignments and test local negative
+      independently. On official Illustrious XL v0.1, verify visible influence
+      from swapped references while preserving the scene. For Smart Inpaint,
+      verify useful insertion and preservation of protected pixels. Use
+      no-region controls and record human verdicts.
+      [Anima visual results](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
+      · [Illustrious visual results](./phase-4-regional-reference-placement-research.md)
+- [ ] **2. Close remaining UI and data checks.** In the stock AppImage, test
+      Trash after unregistering a workspace, cold startup, refusal before
+      re-registering the original folder, and exact Restore after re-registration
+      through the native picker. Finish the keyboard, focus, contrast and Home
+      performance checks on the candidate.
+      [Workspace and Trash contract](../features/home-screen.md#app-managed-trash)
+- [ ] **3. Finish interrupted application-update recovery.** Saving and
+      launching a signed recovery copy and applying the next signed update from
+      that path already passed locally. Define and qualify how to retire the old
+      copy, its stage and backup while accounting for legacy processes that can
+      still write to the same path.
+      [Update ownership and recovery](./phase-5-application-update-interruption-research.md#interrupted-and-adjacent-paths)
+- [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
+      with a clean profile and a copy of historical state. Exercise Setup/Repair,
+      SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
+      and frozen Retry, NoobAI EPS/V, exact model relink and incompatible-worker
+      refusal.
+      [Packaged upgrade and worker Repair](./phase-5-packaged-runtime-protocol-repair-research.md)
+
+### Public release
+
+- [ ] **5. Configure production delivery.** Publish signed runtime metadata
+      and artifacts, provide the trusted public Ed25519 key and configure the
+      AppImage update channel. The production runtime URLs and public publisher
+      key are still unavailable. [Delivery gates](#scope-and-delivery-gates)
+- [ ] **6. Qualify delivery on supported Linux/NVIDIA hosts.** Pin the
+      driver, CUDA and VRAM matrix. Exercise clean installation, upgrade with
+      existing data, damaged download and interrupted update recovery. Verify
+      actual post-upgrade generation with the installed worker and models.
+      [Release criteria](../specs/01-implementation-roadmap.md#фаза-5-первый-linuxnvidia-релиз)
+- [ ] **7. Record release acceptance.** Save the AppImage, runtime and model
+      identities and the results for supported scenarios. Update each promise
+      and its matrix row together when the production flow passes.
+      [Promise matrix](../product-promises.md)
+
+## Background
+
 Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
 [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
 [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md),
