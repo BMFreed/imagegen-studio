@@ -91,6 +91,7 @@ type Options = {
   preflightHeld?: Promise<void>
   retainedStageOnAdmission?: boolean
   saveHeld?: Promise<void>
+  walletSetupHeld?: Promise<void>
 }
 type CloseState = {
   appDataSealed: boolean
@@ -412,6 +413,8 @@ function fixture(options: Options = {}) {
     },
     sealedAdmission: undefined as unknown as () => unknown,
     setTimeout,
+    walletSetup: options.walletSetupHeld,
+    walletSetupAbort: new AbortController(),
     window,
     WINDOW_CLOSE_CANCELED_MESSAGE,
     WindowCloseCanceledError,
@@ -460,10 +463,16 @@ function fixture(options: Options = {}) {
 
 test('actual Main keeps sealed close blocked until exact-artifact handoff settles', async () => {
   const held = deferred()
-  const f = fixture({ installHeld: held.promise })
+  const wallet = deferred()
+  const f = fixture({ installHeld: held.promise, walletSetupHeld: wallet.promise })
   try {
     const ack = await f.request()
     assert.equal(ack.status, 'close-requested')
+    await f.until(() => f.context.walletSetupAbort.signal.aborted)
+    assert.equal(f.context.closeState().appDataSealed, true)
+    assert.equal(f.stats().databaseClosed, false)
+    assert.equal(f.stats().installCalls, 0)
+    wallet.resolve()
     await f.until(() => f.stats().installCalls === 1)
     assert.equal(f.context.closeState().appDataSealed, true)
     assert.equal(f.context.closeState().closingAfterResolution, false)
@@ -484,6 +493,7 @@ test('actual Main keeps sealed close blocked until exact-artifact handoff settle
     const denied = (await f.invokeProject(ipcChannels.projects.open)) as { ok: boolean }
     assert.equal(denied.ok, false)
   } finally {
+    wallet.resolve()
     held.resolve()
   }
   await f.until(() => f.stats().destroyed)

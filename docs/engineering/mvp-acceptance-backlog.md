@@ -311,6 +311,12 @@ entries record the state at their checkpoint.
    reopened it after relaunch. C verified the target and kept its B backup
    in a separate stage, while A and its original stage stayed intact.
    [Next update from KDE's recovered path](./phase-5-packaged-recovery-kde-next-update-research.md)
+   The local AppImage also reopened the real post-rename `activating` stage
+   after its owned installer exited. Updates kept recovery required and the
+   target unverified, while the completed-stage control verified the same
+   signed target. Both preserved the original path and backup and reopened
+   the same Project from the separately saved signed recovery copy.
+   [Native startup after the publication cut](./phase-5-packaged-recovery-kde-chooser-research.md#startup-after-replacement-before-the-activation-journal)
    Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.

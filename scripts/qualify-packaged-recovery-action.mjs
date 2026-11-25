@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { createInterface } from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
@@ -33,13 +34,18 @@ assert.ok(
   run &&
     (rest.length === 0 ||
       (rest.length === 1 &&
-        ['--install-next', '--kde-install-next', '--kde-save', '--kde-save-default'].includes(
-          rest[0],
-        ))),
+        [
+          '--install-next',
+          '--kde-install-next',
+          '--kde-save',
+          '--kde-save-after-replace',
+          '--kde-save-default',
+        ].includes(rest[0]))),
 )
 const kdeInstallNext = rest[0] === '--kde-install-next'
 const installNext = rest[0] === '--install-next' || kdeInstallNext
-const kdeSaveDefault = rest[0] === '--kde-save-default' || kdeInstallNext
+const afterReplace = rest[0] === '--kde-save-after-replace'
+const kdeSaveDefault = rest[0] === '--kde-save-default' || kdeInstallNext || afterReplace
 const kdeSave = rest[0] === '--kde-save' || kdeSaveDefault
 const outputRoot = path.join(
   kdeSave ? os.userInfo().homedir : os.homedir(),
@@ -292,6 +298,11 @@ const newPath = path.join(
   applicationDir,
   kdeSaveDefault ? 'ImageGen-Studio-0.2.0-Recovery.appimage' : 'Recovered.AppImage',
 )
+const stageFor = (filename) =>
+  path.join(
+    path.dirname(filename),
+    `.igs-app-update-${createHash('sha256').update(path.basename(filename)).digest('hex').slice(0, 16)}`,
+  )
 const events = async () =>
   (
     await fs.readFile(path.join(root, 'native-events.ndjson'), 'utf8').catch((error) => {
@@ -361,44 +372,48 @@ predecessor.writeUInt16LE(62, 18)
 predecessor.writeUInt32LE(1, 20)
 predecessor.writeUInt16LE(64, 52)
 await fs.writeFile(original, predecessor, { flag: 'wx', mode: 0o755 })
-const handle = await fs.open(original, 'r')
-let retainedDirectory
-try {
-  const capture = captureApplicationUpdateCurrentSource({
-    archiveFd: handle.fd,
-    archivePath: original,
-    currentAppImage: original,
-    executableFd: handle.fd,
-    executablePath: original,
-  })
+const retainedDirectory = stageFor(original)
+
+async function prepareActivatedStage() {
+  const handle = await fs.open(original, 'r')
   try {
-    const currentSource = await capture.complete()
-    const admission = acquireApplicationUpdateAdmission(original)
+    const capture = captureApplicationUpdateCurrentSource({
+      archiveFd: handle.fd,
+      archivePath: original,
+      currentAppImage: original,
+      executableFd: handle.fd,
+      executablePath: original,
+    })
     try {
-      const staged = await stageVerifiedApplicationArtifact({
-        artifact: {
-          authority: a.authority,
-          manifest: verifyApplicationReleaseAuthority(a.authority, manifest.trust),
-          path: a.filename,
-          verifyCompleteSnapshot: async () =>
-            assert.deepEqual(await fileWitness(a.filename), packaged[0]),
-        },
-        currentAppImage: original,
-        currentSource,
-      })
-      const transaction = await staged.prepareBackup()
-      const activated = await transaction.activate(() => admission.assertHeld())
-      retainedDirectory = activated.stagingDirectory
-      assert.deepEqual(await fs.readFile(activated.backupPath), predecessor)
+      const currentSource = await capture.complete()
+      const admission = acquireApplicationUpdateAdmission(original)
+      try {
+        const staged = await stageVerifiedApplicationArtifact({
+          artifact: {
+            authority: a.authority,
+            manifest: verifyApplicationReleaseAuthority(a.authority, manifest.trust),
+            path: a.filename,
+            verifyCompleteSnapshot: async () =>
+              assert.deepEqual(await fileWitness(a.filename), packaged[0]),
+          },
+          currentAppImage: original,
+          currentSource,
+        })
+        const transaction = await staged.prepareBackup()
+        const activated = await transaction.activate(() => admission.assertHeld())
+        assert.equal(activated.stagingDirectory, retainedDirectory)
+        assert.deepEqual(await fs.readFile(activated.backupPath), predecessor)
+      } finally {
+        admission.release()
+      }
     } finally {
-      admission.release()
+      capture.dispose()
     }
   } finally {
-    capture.dispose()
+    await handle.close()
   }
-} finally {
-  await handle.close()
 }
+
 async function retainedState() {
   const members = await fs.readdir(retainedDirectory)
   assert.deepEqual(members.sort(), [
@@ -415,6 +430,96 @@ async function retainedState() {
     lock: await fileWitness(retainedDirectory + '.lock'),
   }
 }
+
+async function prepareInterruptedStage() {
+  const cut = 'after-replace-before-journal'
+  const oldImage = await fileWitness(original)
+  const filename = path.join(root, 'interruption.json')
+  await fs.writeFile(
+    filename,
+    JSON.stringify({
+      archivePath: original,
+      artifactPath: a.filename,
+      authority: a.authority,
+      currentAppImage: original,
+      cut,
+      executablePath: original,
+      trust: manifest.trust,
+    }) + '\n',
+    { flag: 'wx', mode: 0o600 },
+  )
+  const entry = path.join(
+    repo,
+    'src/main/application-updates/test-fixtures/application-update-interruption-child.ts',
+  )
+  const child = spawn(process.execPath, ['--import', 'tsx', entry, filename], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  const closed = once(child, 'close')
+  const lines = createInterface({ input: child.stdout })
+  let owner
+  let state
+  let exit
+  try {
+    const [line] = await Promise.race([
+      once(lines, 'line', { signal: AbortSignal.timeout(15_000) }),
+      closed.then(([code, signal]) => assert.fail(`Cut owner exited early: ${code}/${signal}.`)),
+    ])
+    const receipt = JSON.parse(line)
+    owner = await proc(child.pid)
+    assert.deepEqual(receipt, {
+      cut,
+      lockPath: retainedDirectory + '.lock',
+      pid: child.pid,
+      stageDirectory: retainedDirectory,
+      startTicks: owner.start,
+      type: 'cut',
+    })
+    assert.equal(owner.group, (await proc(process.pid)).group)
+    assert.throws(() => acquireApplicationUpdateAdmission(original).release(), {
+      code: 'APPLICATION_UPDATE_BUSY',
+    })
+    state = await retainedState()
+    const journal = JSON.parse(await fs.readFile(path.join(retainedDirectory, 'journal.json')))
+    assert.equal(journal.state, 'activating')
+    assert.equal(journal.current.sha512, createHash('sha512').update(predecessor).digest('base64'))
+    assert.equal(journal.current.identity.ino, oldImage.ino)
+    assert.equal(journal.current.identity.dev, oldImage.dev)
+    assert.equal(journal.candidate.sha512, a.sha512)
+    assert.equal(journal.candidate.snapshot.ino, state.image.ino)
+    assert.equal(journal.candidate.snapshot.dev, state.image.dev)
+    assert.notEqual(state.image.ino, oldImage.ino)
+    assert.equal(state.image.mode, 0o755)
+    assert.equal(state.image.sha256, a.sha256)
+    assert.equal(state['previous.AppImage'].mode, 0o600)
+    assert.deepEqual(
+      await fs.readFile(path.join(retainedDirectory, 'previous.AppImage')),
+      predecessor,
+    )
+    assert.deepEqual(await proc(child.pid), owner)
+  } finally {
+    lines.close()
+    if (child.exitCode === null && child.signalCode === null) assert.ok(child.kill('SIGKILL'))
+    exit = await closed
+  }
+  assert.deepEqual(exit, [null, 'SIGKILL'])
+  await proc(owner.pid).then(
+    (observed) => assert.notEqual(observed.start, owner.start),
+    (error) => assert.equal(error.code, 'ENOENT'),
+  )
+  acquireApplicationUpdateAdmission(original).release()
+  assert.deepEqual(await retainedState(), state)
+  const evidence = { cut, owner, exit, state }
+  await fs.writeFile(
+    path.join(run, 'interrupted-publication.json'),
+    JSON.stringify(evidence, null, 2) + '\n',
+    { flag: 'wx', mode: 0o600 },
+  )
+  return evidence
+}
+
+const interruption = afterReplace ? await prepareInterruptedStage() : null
+if (!afterReplace) await prepareActivatedStage()
 const retained = await retainedState()
 
 const requests = []
@@ -930,11 +1035,6 @@ const writeFlag = async (name, value) =>
     flag: 'wx',
     mode: 0o600,
   })
-const stageFor = (filename) =>
-  path.join(
-    path.dirname(filename),
-    `.igs-app-update-${createHash('sha256').update(path.basename(filename)).digest('hex').slice(0, 16)}`,
-  )
 async function installFromRecoveredPath(recovered, modal, project, trainedBefore) {
   const prior = await proc(recovered.pid)
   assert.equal(prior.start, recovered.start)
@@ -1195,6 +1295,7 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
 }
 const report = {
   installNext,
+  ...(interruption ? { interruption } : {}),
   outcome: 'FAIL',
   retainedBefore: retained,
   requests,
@@ -1207,6 +1308,13 @@ try {
   assert.equal(requests.length, 0)
   const recovery = await call(first, 'applicationUpdates', 'getRecoveryStatus')
   assert.equal(recovery.status, 'required')
+  if (kdeSaveDefault) {
+    assert.deepEqual(recovery, {
+      status: 'required',
+      target: afterReplace ? 'unverified' : 'verified',
+      runtime: 'unverified',
+    })
+  }
   assert.notEqual(retained.image.ino, packaged[0].ino)
   assert.equal(retained.image.sha256, a.sha256)
   const home = first.getByRole('region', { name: 'Home', exact: true })
@@ -1240,6 +1348,30 @@ try {
   const updates = await openUpdates(first)
   const save = updates.getByRole('button', { name: 'Save recovery AppImage', exact: true })
   await expect(save).toBeEnabled({ timeout: 120_000 })
+  if (kdeSaveDefault) {
+    const status = updates.getByRole('region', { name: 'Application update recovery at startup' })
+    await expect(
+      status.getByText('Application update recovery required', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      status.getByText(
+        afterReplace
+          ? 'Application file: could not be verified.'
+          : 'Application file: publisher signature verified.',
+        { exact: true },
+      ),
+    ).toBeVisible()
+    await expect(
+      status.getByText('Runtime files: could not be verified.', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      updates.getByRole('button', { name: 'Review installation', exact: true }),
+    ).toBeHidden()
+    await expect(
+      updates.getByRole('button', { name: 'Install and restart', exact: true }),
+    ).toBeHidden()
+    await first.screenshot({ path: path.join(run, 'retained-startup-status.png') })
+  }
   const downloadedB = await call(first, 'applicationUpdates', 'getStatus')
   assert.equal(downloadedB.availableVersion, '0.2.0')
   assert.equal(downloadedB.verification, 'signed-release')
