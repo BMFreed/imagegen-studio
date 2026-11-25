@@ -78,6 +78,9 @@ table edge. Both defects already appear in the processing PNGs.
 The [matched original inpaint denoiser](./phase-4-anima-smart-regional-public-research.md#matched-original-invokeai-inpaint-comparison)
 reproduced both defects on the same source and masks. Two blind readers
 passed both ordinary controls and failed both pairs of regional images.
+The [connected Smart mask](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
+preserved all 163,636 zero-contribution source pixels and kept the table
+edge continuous. Both regional frames produced a single centered mug.
 
 ## Startup recovery of committed Project deletion
 

@@ -186,6 +186,12 @@ entries record the state at their checkpoint.
    remains open on this scene.
    [Smart Inpaint tabletop insertion](./phase-4-anima-smart-regional-public-research.md#installed-tabletop-insertion-with-a-frozen-smart-mask)
    [Matched original Invoke](./phase-4-anima-smart-regional-public-research.md#matched-original-invokeai-inpaint-comparison)
+   Filling only the gap in the Smart mask retained exact outside pixels
+   and removed the interrupted silhouettes and table steps. Both connected
+   regional cases produced a single centered mug with no recognizable apple.
+   The connected ordinary control kept both subjects. This one-variable
+   trial leaves regional placement open on the scene.
+   [Connected Smart edit](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

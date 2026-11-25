@@ -352,3 +352,64 @@ The retained local run is `runs/anima-smart-inpaint-invoke-control/20261125-r1`.
 It contains the source snapshots, capture contract, native report, both blind
 observations and visual comparison. Cleanup reclaimed 4,575,232 allocated bytes
 of owned scratch and blind duplicate images after verification and exit.
+
+### Connected Smart edit with the same regional masks
+
+The follow-up keeps the seed-123 source, sampling, prompt text, compiled
+conditioning, region owner IDs and both regional masks. It fills only the
+96×208 gap in the authored Smart edit, changing two rectangles with the same
+outer bounds into one rectangle. The region assignment and swap keep separate
+supports on the left and right. The whole edit uses the same Gaussian Blur
+coherence and 8-pixel contribution fade. This tests whether the protected gap
+contributes to the interrupted silhouette and rear-edge steps. A whole mug
+that stays centered still fails the assigned placement criterion.
+
+Studio base `d943d9642080953679ef00613280a62be60a9e7b`. The clean local InvokeAI
+checkout had advanced to `64ff2c600f04d220e470fdaeec570bd402af42a7`. A fresh read
+of the Canvas preparation, compiler and region collector above confirmed that
+the Smart mask and regional inputs still enter the same denoiser separately.
+The Anima denoiser's revision adds output metadata. The relevant KEEP,
+regional attention and sampler bodies retain their earlier behavior. The
+gradient-mask and rectified-flow extension paths above also remain applicable.
+This follow-up uses installed Studio CUDA with the retained earlier Studio
+images as the disjoint controls.
+
+The experiment pins the authored geometry before execution and independently
+reconstructs the expected latent KEEP and contribution alpha. The top wall,
+bottom lip, center above and below the edit, and both side landmarks are
+protected. The center within the edit becomes an explicit opaque core.
+
+All three installed CUDA requests completed with 17 Euler progress events per
+request. The saved Projects contain the expected connected edit and the
+original regional owner IDs. Native requests matched the prior source, model,
+sampling and compiled prompt bytes. Both regional Alpha8 planes and mask
+descriptors matched exactly. The comparison covered the private capture and
+compose path on saved Projects. Its three packages stayed byte-identical
+during execution, with zero generation queue, receipt or acceptance rows.
+
+The decoded KEEP and contribution alpha matched both independent predictions.
+The 19,968 added authoring pixels changed 19,040 contribution-alpha positions,
+all within x=[216,296), y=[241,479). All three results preserved 163,636
+zero-contribution source pixels and all six protected landmarks. The center
+core moved from zero to fully opaque contribution and had changed RGB in all
+three results. The run completed in 139.3 seconds, with 11.53 GiB peak cgroup
+memory, zero OOM events, zero swap and 6,556 MiB maximum sampled worker VRAM.
+
+Two independent readers scored both sets of three composites without the
+geometry or case labels. The connected edit produced a continuous table
+edge and intact mug silhouettes in all three images. The ordinary control
+kept a recognizable apple and blue mug and passed. The connected assigned
+image contained just a red mug at the center. The connected swapped image
+contained just a blue mug at the center. Both regional results lost the
+apple and failed placement. The disjoint swapped image had both subjects
+in their intended areas with visible edge steps. Changing Smart edit coverage
+affected both scene continuity and generation content. Regional usefulness
+and human acceptance remain open for this scene.
+
+An independent read-only audit verified the source and runtime pins, the
+three original model files, all three saved Project packages and the closed
+SQLite fixture. All workers and the controller exited. The retained evidence
+is under `runs/anima-smart-inpaint-connected/20261125-r1` with the PNGs, pixel
+and blind reports, and a nine-entry verified Project/SQLite archive. Cleanup
+reclaimed 5,451,776 allocated bytes of owned scratch, payloads and blind
+duplicates.
