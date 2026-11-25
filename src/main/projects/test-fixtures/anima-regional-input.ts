@@ -591,9 +591,15 @@ const ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES = [
   { label: 'negative-left', negativeSide: 'left' },
   { label: 'negative-right', negativeSide: 'right' },
 ] as const
+const ANIMA_APPLE_GLOBAL_NEGATIVE_VISUAL_CASE = {
+  label: 'global-negative',
+  negativeSide: null,
+} as const
 
 export interface AnimaRegionalNegativeVisualUseCase {
-  case: (typeof ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES)[number]
+  case:
+    | (typeof ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES)[number]
+    | typeof ANIMA_APPLE_GLOBAL_NEGATIVE_VISUAL_CASE
   compiledPrompts: readonly CompiledCurrentCanvasAnimaRegionalPrompt[]
   models: ModelService
   prepared: PreparedAnimaGeneration
@@ -606,7 +612,9 @@ export interface AnimaRegionalNegativeVisualUseCase {
  * its mask. app/invocations/anima/anima_denoise.py calls backend/anima/scheduler_driver.py and
  * applies the signed masks using backend/anima/{regional_prompting,anima_transformer_patch}.py. The
  * webv1 buildAnimaGraph.ts and addImageToImage.ts pass the canvas composite to
- * app/invocations/vae/anima_image_to_latents.py, which converts its input before encoding.
+ * app/invocations/vae/anima_image_to_latents.py, which converts its input before encoding. InvokeAI
+ * 64ff2c600f04d220e470fdaeec570bd402af42a7: webv2 core/graph.ts authors the unmasked negative into
+ * the CFG collector. The same denoiser keeps that bank image-wide.
  */
 export async function produceAnimaRegionalNegativeVisualProbe(options: {
   pythonExecutable: string
@@ -622,8 +630,10 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
   const runs = path.join(os.homedir(), '.codex/artifacts/imagegen-studio/runs')
   const runParent = path.dirname(run)
   const anchoredBaselineProfile = runParent === path.join(runs, 'anima-apple-negative-anchored')
+  const appleGlobalProfile = runParent === path.join(runs, 'anima-apple-negative-global')
   const anchoredAppleProfile =
     anchoredBaselineProfile ||
+    appleGlobalProfile ||
     runParent === path.join(runs, 'anima-apple-negative-anchored-spatial')
   const appleProfile = anchoredAppleProfile || runParent === path.join(runs, 'anima-apple-negative')
   if (appleProfile) {
@@ -752,9 +762,11 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
     }
 
     let targetSha: string | undefined
-    const cases = anchoredBaselineProfile
-      ? [ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES[0]]
-      : ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES
+    const cases = appleGlobalProfile
+      ? [ANIMA_APPLE_GLOBAL_NEGATIVE_VISUAL_CASE]
+      : anchoredBaselineProfile
+        ? [ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES[0]]
+        : ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES
     for (const testCase of cases) {
       const regionalGuidance = sides.map((side, index) => ({
         enabled: true,
@@ -776,7 +788,9 @@ export async function produceAnimaRegionalNegativeVisualProbe(options: {
           cfgRescale: 0,
           loras: [],
           model: reference,
-          negativePrompt: prompt('(blur)0.75, noise'),
+          negativePrompt: prompt(
+            appleGlobalProfile ? '(blur)0.75, noise, (red apple)2.0' : '(blur)0.75, noise',
+          ),
           positivePrompt: prompt(globalPositive),
           sampling: {
             animaMethod: 'heun',

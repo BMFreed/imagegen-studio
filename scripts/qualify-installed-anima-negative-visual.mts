@@ -46,7 +46,8 @@ const anchoredSpatialProfile =
   runParent === path.join(artifactRoot, 'runs/anima-apple-negative-anchored-spatial')
 const anchoredBaselineProfile =
   runParent === path.join(artifactRoot, 'runs/anima-apple-negative-anchored')
-const anchoredAppleProfile = anchoredBaselineProfile || anchoredSpatialProfile
+const appleGlobalProfile = runParent === path.join(artifactRoot, 'runs/anima-apple-negative-global')
+const anchoredAppleProfile = anchoredBaselineProfile || anchoredSpatialProfile || appleGlobalProfile
 const appleProfile =
   anchoredAppleProfile || runParent === path.join(artifactRoot, 'runs/anima-apple-negative')
 if (appleProfile) {
@@ -77,11 +78,13 @@ const profile = appleProfile
               'a blue ceramic mug with a loop handle on a pale wooden tabletop against a plain light blue wall, even lighting',
           }
         : 'a pale wooden tabletop against a plain light blue wall, even lighting',
-      schema: anchoredSpatialProfile
-        ? 'anima-apple-negative-anchored-spatial-v1'
-        : anchoredBaselineProfile
-          ? 'anima-apple-negative-anchored-v1'
-          : 'anima-apple-negative-v1',
+      schema: appleGlobalProfile
+        ? 'anima-apple-negative-global-v1'
+        : anchoredSpatialProfile
+          ? 'anima-apple-negative-anchored-spatial-v1'
+          : anchoredBaselineProfile
+            ? 'anima-apple-negative-anchored-v1'
+            : 'anima-apple-negative-v1',
       sourceFilename: 'apple-mug-source.png',
       startStep: 7,
     }
@@ -99,13 +102,19 @@ const profile = appleProfile
       startStep: 10,
     }
 const { expectedActualSteps, globalPositive, regionalNegative, regionalPositive } = profile
-const globalNegative = '(blur)0.75, noise'
+const globalNegative = appleGlobalProfile
+  ? '(blur)0.75, noise, (red apple)2.0'
+  : '(blur)0.75, noise'
 const negativeCases = [
   { label: 'baseline', negativeSide: null },
   { label: 'negative-left', negativeSide: 'left' },
   { label: 'negative-right', negativeSide: 'right' },
 ] as const
-const cases = anchoredBaselineProfile ? [negativeCases[0]] : negativeCases
+const cases = appleGlobalProfile
+  ? [{ label: 'global-negative', negativeSide: null }]
+  : anchoredBaselineProfile
+    ? [negativeCases[0]]
+    : negativeCases
 const seed = 123
 const sampling = {
   cfgScale: 4,
@@ -323,8 +332,12 @@ const ownerFiles = [
 const invokeFiles = [
   'invokeai/frontend/webv1/src/features/nodes/util/graph/generation/buildAnimaGraph.ts',
   'invokeai/frontend/webv1/src/features/nodes/util/graph/generation/addImageToImage.ts',
+  'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
+  'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
   'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
+  'invokeai/app/invocations/text_encoder/anima_text_encoder.py',
   'invokeai/app/invocations/anima/anima_denoise.py',
+  'invokeai/backend/anima/prompt_weighting.py',
   'invokeai/backend/anima/scheduler_driver.py',
   'invokeai/backend/anima/regional_prompting.py',
   'invokeai/backend/anima/anima_transformer_patch.py',
@@ -400,11 +413,17 @@ try {
       assert.deepEqual(global, {
         polarity: 'negative',
         prompt: {
-          cleanedText: 'blur , noise',
-          spans: [
-            { end: 4, start: 0, weight: 0.75 },
-            { end: 12, start: 4, weight: 1 },
-          ],
+          cleanedText: appleGlobalProfile ? 'blur , noise, red apple' : 'blur , noise',
+          spans: appleGlobalProfile
+            ? [
+                { end: 4, start: 0, weight: 0.75 },
+                { end: 14, start: 4, weight: 1 },
+                { end: 23, start: 14, weight: 2 },
+              ]
+            : [
+                { end: 4, start: 0, weight: 0.75 },
+                { end: 12, start: 4, weight: 1 },
+              ],
           version: 'anima-prompt-weighting-v1',
         },
         sourceId: 'current-canvas',

@@ -308,3 +308,55 @@ and made no additional CUDA calls. The run keeps the three PNGs, exact
 adapters and preregistration, owner and scheduler receipts, anonymous
 observations and verdict. Cleanup released 5,386,240 allocated bytes
 from two temporary paths. All 31 sealed files matched after cleanup.
+
+## Image-wide negative on the same apple
+
+Studio base `9cac30bac0736492d030076db793469e1e4c0a7c`. In clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/frontend/webv2/src/features/generation/core/graph.ts::buildAnimaGraph`
+connects the unmasked global negative to the CFG collector. The canvas
+`compileCanvasGraph.ts` calls `addRegionalGuidance.ts` to attach local text
+and its owner mask. `invokeai/app/invocations/text_encoder/anima_text_encoder.py`
+uses `invokeai/backend/anima/prompt_weighting.py` to parse and weight the text.
+`invokeai/app/invocations/anima/anima_denoise.py` passes the negative bank
+to `invokeai/backend/anima/regional_prompting.py` with global coverage.
+The new Studio profile uses the existing saved Project, capture and
+installed-worker paths.
+
+The visual question was whether the same weighted phrase suppresses the
+apple when it has image-wide coverage. The single new IMG request kept
+seed 123, 512×512, Heun/20 steps, strength 0.65, CFG 4, the exact target,
+both regional positive texts and both mask owners. Both local negatives
+were explicitly empty. The global negative became
+`(blur)0.75, noise, (red apple)2.0`. The resulting text
+`blur , noise, red apple` has spans `[0,4)` at 0.75, `[4,14)` at 1 and
+`[14,23)` at 2. The separate literal oracle matches the current Invoke
+parser on this input. This control changes the global encoder input and
+the span scope together. It measures responsiveness to the phrase in
+this recipe.
+
+The exact earlier baseline and both local-negative outputs were
+compared with the new PNG. Two readers who had no condition labels saw
+a recognizable red apple with stem and leaf, a blue handled mug and a
+continuous table edge in all four images. The global output changed
+the stem, leaf and highlights, and retained the object. The fixed
+13,572-pixel ROI contained 10,353 red pixels with the global negative,
+compared with 10,219 in the baseline, 10,370 for the apple mask and
+10,053 for the mug mask. Visual verdict **NOT_QUALIFIED**. This recipe
+also lacks useful suppression when the phrase is image-wide. Human
+acceptance and the separate regional placement tests remain open.
+
+The installed worker completed one submission and 25 ordered Heun
+evaluations in a scope lasting 53.741 s. Worker VRAM reached 6,556 MiB.
+Peak cgroup memory reached its 12 GiB limit with 1,651 `max` events,
+zero swap and zero OOM. The controller and worker exited. An independent
+audit checked the actual requests against all three pinned controls,
+the resulting PNG, saved Project and closed SQLite with 30 migrations.
+It matched 77 runtime and 17 config files, the live identities of all
+three model files and both source snapshots. The runner streamed the
+model file digests.
+
+`runs/anima-apple-negative-global/20261125-r1` keeps the exact contract,
+PNG, two blind reports, request, saved Project, closed SQLite and
+audit. Cleanup removed six owned temporary paths and reclaimed
+6,139,904 allocated bytes after checking all 30 retained files.
