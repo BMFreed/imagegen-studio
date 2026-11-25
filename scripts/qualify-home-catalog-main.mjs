@@ -20,6 +20,7 @@ import { ProjectShadowStore } from '../src/main/projects/project-shadow.ts'
 import {
   assertSavedState,
   largeRasterFixture,
+  layeredRasterFixture,
   prepareWorkspaces,
   stageProject,
   stageProjects,
@@ -276,16 +277,9 @@ assert.ok(root && extra.length === 0 && path.dirname(root) === runRoot)
 assert.equal(await realpath(root), root)
 const payloads = path.join(root, 'payloads')
 await mkdir(payloads, { mode: 0o700 })
-const raster = largeRasterFixture()
 const profiles = [
-  ['single', raster],
-  [
-    'layered',
-    {
-      ...raster,
-      additionalRasters: [2, 3, 4].map((index) => largeRasterFixture(`Home scale layer ${index}`)),
-    },
-  ],
+  ['single', largeRasterFixture()],
+  ['layered', layeredRasterFixture()],
 ]
 const results = {}
 for (const [profile, fixture] of profiles) {

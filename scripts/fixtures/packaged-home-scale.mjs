@@ -16,6 +16,7 @@ import {
   parseProjectDocumentV1,
 } from '../../src/shared/projects/project-schema.ts'
 import { connectNativeInput } from './packaged-home-recovery-keyboard.mjs'
+import { sessionMethod } from './packaged-kde-chooser.mjs'
 import {
   assertOfflineProjectDesktop,
   indexSnapshot,
@@ -83,6 +84,13 @@ export function largeRasterFixture(seed = 'ImageGen Studio Home scale fixture v1
   ])
   assert.ok(bytes.length >= 768 * 1024 && bytes.length < 1024 * 1024)
   return rasterFixture(size, bytes)
+}
+
+export function layeredRasterFixture() {
+  return {
+    ...largeRasterFixture(),
+    additionalRasters: [2, 3, 4].map((index) => largeRasterFixture(`Home scale layer ${index}`)),
+  }
 }
 
 const writeJson = async (root, name, value) =>
@@ -618,13 +626,13 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
-  const linked = profile === 'linked-tiny' || profile === 'linked-raster'
+  const linked = ['linked-tiny', 'linked-raster', 'linked-layered'].includes(profile)
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
   assert.ok(
     linked
       ? countArgument === '128'
       : profile === undefined && ['32', '512'].includes(countArgument),
-    'Use 32 or 512 with the default fixture, or 128 with linked-tiny/linked-raster.',
+    'Use 32 or 512 by default, or 128 with linked-tiny, linked-raster or linked-layered.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -642,13 +650,27 @@ export async function runPackagedHomeScale({
     scenario: 'home-scale',
     suite: 'packaged-home-scale',
   })
+  if (process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1') {
+    const information = await sessionMethod(
+      'org.kde.KWin',
+      '/KWin',
+      'org.kde.KWin.supportInformation',
+    )
+    assert.match(information, /llvmpipe|Compositing Type: QPainter|Compositing is not active/i)
+    await writeJson(root, 'software-compositor.json', { information })
+  }
   assert.equal(await realpath(root), root)
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   assert.equal(await realpath(path.dirname(appData)), path.dirname(appData))
   await assert.rejects(lstat(appData), { code: 'ENOENT' })
   const database = path.join(appData, 'database/app.sqlite')
   const workspaces = await prepareWorkspaces(appData, projectCount, linked)
-  const raster = profile === 'linked-raster' ? largeRasterFixture() : tinyRaster
+  const raster =
+    profile === 'linked-layered'
+      ? layeredRasterFixture()
+      : profile === 'linked-raster'
+        ? largeRasterFixture()
+        : tinyRaster
   const files = await stageProjects(workspaces, identity, raster)
   assert.equal(files.length, projectCount)
   const { canvas, png, pngSha256 } = raster
@@ -662,7 +684,11 @@ export async function runPackagedHomeScale({
       width: canvas.width,
     },
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
-    ...(linked && { profile, workspaces }),
+    ...(linked && {
+      layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
+      profile,
+      workspaces,
+    }),
   }
   await writeJson(root, 'home-scale-input.json', input)
 

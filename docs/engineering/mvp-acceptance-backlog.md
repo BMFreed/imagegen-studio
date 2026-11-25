@@ -500,12 +500,16 @@ entries record the state at their checkpoint.
    seconds for aggregate Refresh. All three scoped views, a scoped Refresh,
    Inspector previews and the closed indexes passed. A matched CPU run with
    128 projects and up to four 1024×1024 Rasters per project qualified the
-   Main catalog, external Refresh and preview resources. Qualify larger
-   populations and this layered workload in the packaged renderer on the
-   supported host matrix.
+   Main catalog, external Refresh and preview resources. A matched AppImage
+   run at 900×620 in private software-rendered KWin then passed the layered
+   catalog, folder navigation, Refresh and saved Inspector previews. The
+   four-layer profile took 23.82 s to all cards and 18.81 s for Refresh on
+   indexed restart under the CPU limit. Qualify larger layered populations
+   and the supported host matrix.
    [Home catalog performance](./phase-5-packaged-home-scale-research.md#packaged-comparison)
    [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
    [Four Raster layers in Main](./phase-5-packaged-home-scale-research.md#four-raster-layers-per-project-in-main)
+   [Layered AppImage measurements](./phase-5-packaged-home-scale-research.md#multi-layer-home-in-the-appimage-renderer)
    The combined Home request now updates the sidebar count when a retry
    discovers a Project in a folder that has just returned.
    [Workspace retry regression](./phase-5-packaged-home-scale-research.md#sidebar-count-after-a-workspace-returns)

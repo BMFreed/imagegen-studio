@@ -60,6 +60,14 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
+const homeScaleSoftwareMode = process.env.IMAGEGEN_HOME_SCALE_SOFTWARE
+const homeScaleSoftware = homeScaleSoftwareMode === '1'
+if (homeScaleSoftwareMode !== undefined) {
+  assert.ok(
+    homeScaleSoftware && homeScale && kdeChooser && process.env.LIBGL_ALWAYS_SOFTWARE === '1',
+    'Use IMAGEGEN_HOME_SCALE_SOFTWARE=1 with the private KDE Home scale session and software Mesa.',
+  )
+}
 const workspaceChooser = offlineProject === 'workspace-chooser'
 const runtimeInstallationRecovery = offlineProject === 'runtime-installation-recovery'
 const savedResults = offlineProject === 'saved-results'
@@ -1329,13 +1337,9 @@ async function launch(name, selectedAppImage = appImage, projectArguments = []) 
       kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
       // Exercise unavailable secure storage by default. The opt-in uses the stock
       // credential providers with the same private KWin and software graphics.
-      ...(kdeChooser && modelInstallHistory
-        ? [
-            '--disable-gpu',
-            ...(kdeDefaultWallet
-              ? []
-              : ['--disable-features=DbusSecretPortal', '--password-store=basic']),
-          ]
+      ...(kdeChooser && (modelInstallHistory || homeScaleSoftware) ? ['--disable-gpu'] : []),
+      ...(kdeChooser && modelInstallHistory && !kdeDefaultWallet
+        ? ['--disable-features=DbusSecretPortal', '--password-store=basic']
         : []),
       ...projectArguments,
     ],
@@ -1372,6 +1376,16 @@ async function launch(name, selectedAppImage = appImage, projectArguments = []) 
       }),
     )
     state.aggregateLimits = assertAggregate(state.checks)
+  }
+  if (homeScaleSoftware) {
+    const session = await state.browser.newBrowserCDPSession()
+    try {
+      const { gpu } = await session.send('SystemInfo.getInfo')
+      await writeJson(`${state.name}-software-renderer.json`, { gpu })
+      assert.equal(gpu.featureStatus?.gpu_compositing, 'disabled_software')
+    } finally {
+      await session.detach()
+    }
   }
   if (projectArguments.length === 0) {
     await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()

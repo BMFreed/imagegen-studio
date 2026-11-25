@@ -366,3 +366,72 @@ physical exit and retention verification, cleanup reclaimed 716,541,952
 allocated bytes from this run's synthetic payload. The reports, input hashes,
 closed indexes and one sample per profile remain under
 `runs/home-catalog-layered-main/20261125-r1` in the artifact root.
+
+## Multi-layer Home in the AppImage renderer
+
+The matched AppImage run uses the existing `linked-raster` control and
+`linked-layered` with their shared CPU fixture. Each profile contains 128
+Projects distributed 32/48/48, with the same saved 1024×1024 preview and
+WebP thumbnail in both. The test runs the stock AppImage with
+`APPIMAGE_EXTRACT_AND_RUN=1`, one private virtual KWin session per profile,
+and `IMAGEGEN_HOME_SCALE_SOFTWARE=1`. The opt-in requires software Mesa and
+asserts the private compositor's software mode and Chromium's disabled
+hardware compositing.
+[Packaged driver](../../scripts/smoke-linux-package.mjs),
+[fixture](../../scripts/fixtures/packaged-home-scale.mjs),
+[private Wayland launcher](../../scripts/fixtures/packaged-project-chooser-wayland.py).
+
+The current InvokeAI source check at
+`4875d96531ca6712b288f6e660fcbb34143408c1` followed the workflow library's
+mount and refresh through
+`invokeai/frontend/webv2/src/features/workflow/ui/library/WorkflowLibraryDialog.tsx`,
+`features/workflow/data/libraryBrowseStore.ts`,
+`invokeai/app/api/routers/workflows.py`,
+`invokeai/app/services/workflow_records/workflow_records_default.py`, and
+`invokeai/app/services/shared/database/queries/workflows.py`.
+The clean launcher at `c267bdb439519216b277a7a8c6ad408b9d79efce` supplies
+the packaging pattern in `electron-builder.config.ts`, the `package` command and
+the Linux caller in `.github/workflows/build.yml`.
+
+| Packaged Home operation          | 1 Raster | 4 Rasters |
+| -------------------------------- | -------: | --------: |
+| First index to all 128 cards     |  14.89 s |   24.04 s |
+| Indexed launch to all 128 cards  |  13.29 s |   23.82 s |
+| Aggregate Refresh on first start |   9.10 s |   20.47 s |
+| Aggregate Refresh after restart  |   7.66 s |   18.81 s |
+| Scoped Refresh after restart     |   5.50 s |   13.84 s |
+
+All four lifetimes showed all 128 cards, searched by name, switched Grid and
+List, and selected all three folders with exact sidebar counts. Each lifetime
+loaded three saved Inspector previews at the native 900×620 window size.
+The layered pair decoded those previews in 133–200 ms from selection. Both
+profiles verified all archive bytes and their SQLite rows after each normal
+physical close. Screenshot inspection at 900×620 confirmed that search,
+folder counts, the selected card and Inspector preview were visible. Keyboard
+and contrast acceptance need dedicated checks.
+
+The build used source `2691507484ea0ba8b609a3020b600b6c1370b75f` and produced
+AppImage SHA-256
+`ba00ee21460d24561a7f43ebfaf3d6001d98d3f562055f398336635f4cea1ffb`.
+The private compositor reported QPainter and Chromium reported
+`gpu_compositing: disabled_software` in all four lifetimes.
+Each profile had a 120% CPU quota, 4 GiB memory limit and zero swap. CS2
+was open during the measurements. Each duration is one sample in fixed test
+order with the normal OS cache. The measurements include AppImage extraction
+and renderer work on this host. The release candidate still needs the
+supported host matrix and settled performance targets.
+
+An independent live audit rehashed the AppImage and verified all 40 process
+identities had exited, both closed indexes with 256 exact rows and both sample
+archives with decoded PNG and WebP members. Source review moved the Chromium
+software assertion after bounded process enrollment so a failed check still
+has process-exit authority. Two additional 32-project AppImage lifetimes
+then passed on the final harness. Those lifetimes are outside the table.
+All 47 resource-bound tests passed, along with scoped lint, format and syntax
+checks.
+
+The build receipts, matched profiles and 32-project regression are under
+`runs/packaged-home-scale/20261125-r1` through `20261125-r4`. Cleanup after
+physical exit and retention checks reclaimed 1,252,777,984 allocated bytes.
+The reports, screenshots, source hashes, closed SQLite indexes and sample
+archives remain.
