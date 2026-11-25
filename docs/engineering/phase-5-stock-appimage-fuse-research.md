@@ -101,3 +101,63 @@ Cleanup reclaimed 564,113,408 allocated bytes from the exact private build,
 failed fixture inputs and test profiles. Package proofs, native mount and
 process receipts, portal traces, screenshots, closed indexes and synthetic
 Project witnesses remain.
+
+## Saved generations keyboard and modal semantics
+
+The existing [Saved generations contract](../features/project/generate-mode/generation-results.md#app-level-saved-accepted-result-history)
+uses a modal opened from AppChrome. The stock AppImage at `019ce08c` already
+kept focus inside the dialog and restored it to the opener after Escape
+and Close. Chromium exposed the named dialog with `modal: false`.
+
+The installed Naive UI `modal/src/BodyWrapper.mjs` supplies
+`aria-modal="true"` to its preset surfaces. Saved generations uses a custom
+card and owns its named dialog role. The card now supplies the modal attribute.
+Naive still handles Tab, Escape and focus return. The ordinary result
+navigation path continues to hand focus to the destination.
+[AcceptedResultsBrowser.vue](../../src/renderer/components/AcceptedResultsBrowser.vue)
+
+The [native fixture](../../scripts/fixtures/packaged-saved-results-keyboard.mjs)
+uses `IMAGEGEN_SAVED_RESULTS_KEYBOARD=1` with the existing Saved generations
+FUSE scenario. Both lifetimes use native KDE Wayland input at 900×620,
+software compositing, 120% CPU, 4 GiB RAM and zero swap. It checks both
+directions of the focus wrap, Tab to the first result, Escape, Enter on Close,
+the returned focus ring, and the visible footer below the scrolling list.
+It reads the modal property from Chromium's accessibility tree.
+The existing requirement to navigate to the exact saved Raster and inactive
+Smart Patch variant still runs, followed by normal close and closed-index
+checks.
+
+R2 stopped in the private keyboard launcher before opening the application.
+R3 observed the missing modal marker and normal focus in the first lifetime.
+Its second lifetime did not open the dialog after an automated click.
+With native resize and keyboard validation in both lifetimes, the stock R4
+AppImage passed the interaction and history assertions. The final strict
+verdict failed on the DOM and accessibility modal assertions in both lifetimes.
+
+R5 passed the same assertions with `aria-modal="true"` and one named dialog
+with `modal: true` on each launch. Both R4 and R5 recorded 34 trusted keys
+in the same sequences. The open and focus screenshots show the full footer
+and a scrollable list. Escape and Close restored visible focus to Saved
+generations in both lifetimes.
+
+Solid text and background pixels from both 900×620 candidate lifetimes
+gave contrast ratios of 11.54:1 for the title, 5.02:1 for the description,
+model label and saved count, and 9.03:1 for focused Close. The sampled labels
+meet the 4.5:1 text threshold.
+
+Independent readback verified the AppImages and both mounted ASAR bodies
+per run, the exact two Project archives and 34 accepted rows in each
+closed SQLite, normal close, and exit of 18 recorded process identities
+per run. The R5 AppImage SHA-256 is
+`1f048dd0f9012715eacd94d98ddbb80c6fb2eba08621631744d4bd4ff30b09a6`.
+The mounted ASAR SHA-256 is
+`a633f8376f4c2e4af2e13c9be032c09c9280f0b4415050f3b0ee3b6943f7b718`.
+The native R5 scope peaked at 1,323,253,760 bytes. The receipts, screenshots,
+closed indexes and readbacks are under
+`runs/packaged-saved-results/20261126-r2` through `20261126-r5`.
+
+The full prototype run passed all 371 tests with two workers. Typecheck,
+scoped lint, the desktop build and AppImage packaging passed. Cleanup
+reclaimed 433,516,544 allocated bytes from generated profiles, fixtures
+and unpacked build output. The exact R5 AppImage, closed database evidence
+and screenshot samples remain available.

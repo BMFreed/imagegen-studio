@@ -324,6 +324,7 @@ export async function runPackagedSavedResults({
   launch,
   closeNormally,
   identity,
+  keyboard = false,
 }) {
   const proof = JSON.parse(
     await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
@@ -345,10 +346,18 @@ export async function runPackagedSavedResults({
   const expected = expectedHistory(projects)
   assert.equal(expected.length, 34)
   const lifetimes = []
+  const keyboardResults = {}
   for (const phase of ['first', 'reopened']) {
     const state = await launch(phase)
     let visited
     try {
+      if (keyboard) {
+        const { qualifySavedResultsKeyboard } =
+          await import('./packaged-saved-results-keyboard.mjs')
+        const evidence = path.join(root, phase + '-keyboard')
+        await mkdir(evidence, { mode: 0o700 })
+        keyboardResults[phase] = await qualifySavedResultsKeyboard(state, evidence, expected.length)
+      }
       visited = await runNavigation(state.page, root, phase, projects, expected)
     } finally {
       await closeNormally(state)
@@ -361,6 +370,7 @@ export async function runPackagedSavedResults({
     projects.map(({ bytes }) => path.basename(bytes.path)).sort(),
   )
   const result = {
+    ...(keyboard && { keyboard: keyboardResults }),
     lifetimes,
     projects: projects.map(({ bytes, document, id, original }) => ({
       bytes,
@@ -376,5 +386,11 @@ export async function runPackagedSavedResults({
     JSON.stringify(result, null, 2) + '\n',
     { flag: 'wx', mode: 0o600 },
   )
+  if (keyboard)
+    assert.deepEqual(
+      Object.values(keyboardResults).flatMap((result) => result.issues),
+      [],
+      'Saved generations keyboard findings',
+    )
   return result
 }

@@ -101,6 +101,7 @@ function imageFailed(url: string) {
   <NModal v-model:show="show" :maskClosable="false" @afterLeave="emit('closed')">
     <NCard
       aria-label="Saved generations"
+      aria-modal="true"
       class="history-modal"
       contentClass="history-card-body"
       role="dialog"

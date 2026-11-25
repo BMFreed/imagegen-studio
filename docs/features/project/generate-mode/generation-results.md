@@ -879,7 +879,9 @@ Validation of the new history slice is tracked in its research note.
 ## App-level saved accepted-result history
 
 The app chrome `Saved generations` action opens one separate modal from both Home
-and Project. It lists saved generated Raster results and accepted Smart Patch
+and Project. Tab and Shift+Tab stay inside the modal. Escape and Close return
+visible keyboard focus to the app chrome action.
+It lists saved generated Raster results and accepted Smart Patch
 variants across ready, non-trashed indexed Projects, newest first, with per-result
 preview, Raster/variant and Project names,
 copied model/version, actual seed and original generated size. Copies at different

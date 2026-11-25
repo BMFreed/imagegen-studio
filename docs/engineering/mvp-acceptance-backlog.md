@@ -56,6 +56,14 @@ environment and remaining limits, and update the current stage and next run.
         corrected modal semantics and the four sampled labels meet 4.5:1
         text contrast at 900×620.
         [Native Updates result](./phase-5-application-updates-keyboard-research.md#packaged-verification)
+  - [x] Saved generations exposes a modal dialog in Chromium and retains
+        visible keyboard focus through Tab, Shift+Tab, Escape and Close.
+        Both stock AppImage FUSE lifetimes also preserved the exact
+        34 saved history records and navigated to the expected layers.
+        [Native Saved generations result](./phase-5-stock-appimage-fuse-research.md#saved-generations-keyboard-and-modal-semantics)
+  - [ ] Check visible keyboard focus after canceling the native folder chooser
+        from Add Workspace and after dismissing the form.
+        [Existing folder chooser scenario](./phase-5-packaged-workspace-chooser-research.md#executed-result)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
         normal close.

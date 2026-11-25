@@ -86,16 +86,20 @@ assert.ok(
   runtimeInstallationWarmRecheck === undefined ||
     (runtimeInstallationWarmRecheck === '1' && runtimeInstallationRecovery),
 )
+const savedResults = offlineProject === 'saved-results'
+const savedResultsKeyboardMode = process.env.IMAGEGEN_SAVED_RESULTS_KEYBOARD
+const savedResultsKeyboard = savedResultsKeyboardMode === '1'
+assert.ok(savedResultsKeyboardMode === undefined || (savedResultsKeyboard && savedResults))
 const softwareRenderer =
   homeScaleSoftware ||
   workspaceTrashRestore ||
   runtimeInstallationWarmRecheck === '1' ||
-  updatesKeyboard
+  updatesKeyboard ||
+  savedResultsKeyboard
 assert.ok(
   !softwareRenderer || (kdeChooser && process.env.LIBGL_ALWAYS_SOFTWARE === '1'),
   'Use a private KDE session and software Mesa.',
 )
-const savedResults = offlineProject === 'saved-results'
 const projectLaunch = offlineProject === 'project-launch'
 const fuseMode = process.env.IMAGEGEN_LINUX_PACKAGE_FUSE
 const appImageFuse = fuseMode === '1'
@@ -120,6 +124,7 @@ const nativeWaylandKeyboard =
     workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
     updatesKeyboard ||
+    savedResultsKeyboard ||
     homeScale)
 assert.ok(
   !kdeChooser ||
@@ -920,6 +925,14 @@ if (savedResults)
       'src/preload/index.ts',
       'src/renderer/App.vue',
       'src/renderer/components/AcceptedResultsBrowser.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (savedResultsKeyboard)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-saved-results-keyboard.mjs',
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
+      'src/renderer/components/AppChrome.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (projectLaunch)
@@ -2059,7 +2072,12 @@ async function runOwnedProjectProfile() {
       return { offlineProjectResult: await fixture.runPackagedRuntimeInstallationRecovery(args) }
     }
     if (savedResults) {
-      return { offlineProjectResult: await fixture.runPackagedSavedResults(args) }
+      return {
+        offlineProjectResult: await fixture.runPackagedSavedResults({
+          ...args,
+          keyboard: savedResultsKeyboard,
+        }),
+      }
     }
     if (projectLaunch) {
       return {
