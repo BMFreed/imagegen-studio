@@ -174,6 +174,15 @@ entries record the state at their checkpoint.
    passed, and the swapped touching-mask case lost the recognizable apple.
    Compiled prompts and token-grid permissions agreed across the measured paths.
    [Current Invoke comparison](./phase-4-anima-countertop-gap-closed-research.md#matched-current-invokeai-source-comparison)
+   A frozen Smart Inpaint follow-up completed three installed CUDA requests.
+   Exact compositing preserved all 179,368 zero-contribution pixels in each
+   result. Both blind readers passed the ordinary control. The assigned mug
+   crossed the protected center and lost part of its silhouette. The swapped
+   pair occupied the intended areas and had visible joins along the table.
+   Both defects were present in the decoded processing outputs. The next
+   diagnostic is a matched original Invoke inpaint run with the same source,
+   KEEP and regional conditioning.
+   [Smart Inpaint tabletop insertion](./phase-4-anima-smart-regional-public-research.md#installed-tabletop-insertion-with-a-frozen-smart-mask)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

@@ -215,3 +215,85 @@ Source-only review, retained-data audit, ROOT execution and physical release
 remain distinct evidence. Installed progress, exact RGB influence and replay do
 not establish general visual quality. No other Smart family/mode, enabled
 LoRA/TI/references, soft-mask strength or PP-001/005/007/008 readiness is promoted.
+
+## Installed tabletop insertion with a frozen Smart mask
+
+Studio base `7722a5babbecfcd80f6c654fb84594b4108b01ab`. The experiment uses an
+opaque 512×512 empty tabletop from the prior ordinary TXT control and asks
+whether regional prompts can place two separate objects inside a fixed Smart
+edit. The source PNG SHA-256 is
+`f855ad07ad7bc5d04dc662c70384310300da4da9aa40084aac75e8cf2e41228c`.
+[Prior tabletop control](./phase-4-anima-countertop-gap-closed-research.md).
+
+The fresh InvokeAI trace pinned revision
+`4875d96531ca6712b288f6e660fcbb34143408c1` and the callers listed above.
+`app/invocations/mask.py` and
+`app/invocations/sd/create_gradient_mask.py` own the source mask and gradient
+mask. The canvas graph grafts the inpaint inputs before attaching the signed
+regional conditioning to the same denoiser. Original Anima blends protected
+latents after each Euler step. Positive regional support is separate from the
+image-wide negative. InvokeAI treats any positive mask alpha as coverage and
+Studio thresholds alpha above 127. The chosen binary regional masks give both
+rules the same support. The trace uses exact Git blobs because a separate
+rebase began in the local InvokeAI checkout. It covers source behavior. All
+three installed images in this comparison come from Studio.
+
+All cases use the same source and Smart edit mask, seed 123, 512×512 processing,
+Euler 20 requested steps, CFG 4, denoise 0.8, Auto VAE and the inherited
+`(blur)0.75, noise` negative. The two edit rectangles span x=[64,208) and
+x=[304,448), both at y=[256,464), across the boundary between wall and table.
+Their union has an 8-pixel blur and zero padding with Gaussian Blur coherence
+edge size zero. The no-region ordinary control asks for both items in its
+global prompt and has no side requirement. Both regional cases use the same
+global scene-only text and two independently owned binary regional masks with
+the same rectangular bounds. Only the two local positive prompts swap sides.
+The experiment excludes LoRA, local negatives, TI and reference images.
+
+The runner saved and reopened three Projects, used the real private Main Smart
+capture and CPU preparation, and executed each composition through the installed
+signed Anima worker. It observed 17 Euler progress callbacks per request. The
+source, processing input, modeled RGB, latent KEEP and frozen world alpha
+matched across the three requests. The independent pixel oracle composited each
+world layer over the pinned source and verified exact frozen alpha, the three
+predeclared protected landmarks and all 179,368 zero-contribution pixels per
+image. Both edit cores were opaque and had changed RGB in every case. All
+three saved Project packages kept their original bytes, and queue, receipt
+and acceptance counts were zero. This tests private execution and composition.
+The prior public checkpoint records Generate, Retry and Add.
+
+| Case                  | Blind visual result                                                                                                           |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary control      | Both readers passed. A recognizable red apple and a blue handled mug sit on the table.                                        |
+| Apple left, mug right | Both readers failed. The apple sits at left. The mug spans the center and the gap interrupts its silhouette and base.         |
+| Mug left, apple right | Both readers failed. Both objects appear in the intended areas. Thin pale steps interrupt the rear tabletop edge behind them. |
+
+The preregistered visual criterion remains open on this seed. Inspection after
+the blind scoring found the interrupted mug and the rear-edge steps in the
+decoded processing PNGs, before world composition. This locates both defects
+upstream of the world compositor. A comparison with InvokeAI's original inpaint
+denoiser on the same source, KEEP and regional conditioning would test whether
+the same failure occurs there. Human acceptance is pending and the promise
+statuses remain **«Пока не обещать»**.
+
+The first attempt stopped before submitting any inference because the packed
+edit mask held a transparent border beyond its declared tight bounds. The
+rerun encoded the same world coverage at tight bounds and preserved the
+preregistered prompts, settings and rubric. It completed in 142.4 seconds
+within 12 GiB aggregate memory, zero swap and zero OOM events. Maximum sampled
+worker VRAM was 6,944 MiB on the RTX 4080.
+
+An independent live-byte audit verified the pinned source and install, including
+77 signed runtime files, 17 configs, seven installed worker owners and the
+three original model files. It reconstructed the mask planes and source-over
+result, checked the saved packages and closed SQLite database, and confirmed
+physical exit for all six workers and the controller. This was a read-only
+audit of the completed native runs.
+
+The retained local evidence is under
+`runs/anima-smart-inpaint-tabletop/20261125-r2`. The setup rejection stays in
+`20261125-r1`. The experiment contract, native report, pixel report, three
+full-resolution composites, blind observations and visual comparison describe
+the exact tested boundary. A verified nine-entry archive contains the closed
+Project packages and SQLite fixture. Cleanup reclaimed 9,330,688 allocated bytes
+of owned scratch, payloads and blind duplicates after verification and physical
+exit. The existing signed runtime and model dependencies remain reusable.

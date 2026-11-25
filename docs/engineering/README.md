@@ -70,6 +70,12 @@ The [matched original Invoke source comparison](./phase-4-anima-countertop-gap-c
 repeated the seed-123 outcome. A gap preserved the two subjects on their
 assigned sides. Touching masks left a centered mug without a recognizable apple.
 
+The [Smart Inpaint tabletop trial](./phase-4-anima-smart-regional-public-research.md#installed-tabletop-insertion-with-a-frozen-smart-mask)
+preserved all 179,368 pixels outside the edit contribution in each of three
+installed images. The ordinary control passed both blind reviews. The regional
+assignments left either an interrupted mug or visible steps along the rear
+table edge. Both defects already appear in the processing PNGs.
+
 ## Startup recovery of committed Project deletion
 
 [Packaged Trash recovery](./phase-5-packaged-project-trash-recovery-research.md)
