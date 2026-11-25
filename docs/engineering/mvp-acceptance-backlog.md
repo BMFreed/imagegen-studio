@@ -568,6 +568,12 @@ entries record the state at their checkpoint.
    including confirmed bulk Clear with an unaccepted candidate, and
    verified the saved Project, draft and last seed after cleanup.
    [Generation-action smoke recovery](./phase-5-generation-queue-delete-focus-research.md#generation-action-smoke-recovery)
+   Trusted keyboard input now dismisses only the Clear history menu on
+   the first Escape. At 900×620, all 32 checks passed for the All terminal
+   flow, including cancellation, exact cleanup and cold Project reopen.
+   The controlled-worker smoke now includes this dismissal regression
+   and passes all 37 checks.
+   [Clear history keyboard dismissal](./phase-5-generation-queue-delete-focus-research.md#clear-history-keyboard-dismissal)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

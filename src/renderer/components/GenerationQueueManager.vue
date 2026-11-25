@@ -91,6 +91,7 @@ const actionError = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const busy = ref<{ action: QueueAction; id: string | null } | null>(null)
 const confirmation = ref<Confirmation | null>(null)
+const historyMenuOpen = ref(false)
 const closeButton = ref<InstanceType<typeof NButton> | null>(null)
 const failedThumbnails = ref(new Set<string>())
 let pageRequest = 0
@@ -624,6 +625,7 @@ watch(
       notice.value = null
       void refresh()
     } else {
+      historyMenuOpen.value = false
       deletedRowForFocus = null
       pageRequest += 1
       loading.value = false
@@ -657,7 +659,7 @@ onBeforeUnmount(() => {
 
 <template>
   <NModal
-    :closeOnEsc="!busy && !confirmation"
+    :closeOnEsc="!busy && !confirmation && !historyMenuOpen"
     :maskClosable="false"
     :show
     @update:show="!$event && close()"
@@ -684,7 +686,12 @@ onBeforeUnmount(() => {
           >
             Refresh
           </NButton>
-          <NDropdown :options="historyOptions" trigger="click" @select="requestPrune">
+          <NDropdown
+            v-model:show="historyMenuOpen"
+            :options="historyOptions"
+            trigger="click"
+            @select="requestPrune"
+          >
             <NButton
               aria-label="Clear queue history"
               :disabled="controlsBusy || !counts || Boolean(readError)"

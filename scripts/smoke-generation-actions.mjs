@@ -1942,10 +1942,23 @@ try {
   )
 
   const clearConfirmation = window.getByRole('dialog', { name: 'Clear queue history', exact: true })
+  const clearTrigger = manager.getByRole('button', { name: 'Clear queue history', exact: true })
+  const allTerminalOption = window.getByText('All terminal jobs', { exact: true })
   const beforePruneRows = await rows(projectId)
+  await clearTrigger.focus()
+  await window.keyboard.press('Enter')
+  await expect(allTerminalOption).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(allTerminalOption).toBeHidden()
+  await expect(manager).toBeVisible()
+  await expect(clearTrigger).toBeFocused()
+  assert.deepEqual(await rows(projectId), beforePruneRows)
+  await assertQueueActionsPreserveProject()
+  checked('Escape dismisses only the open history menu and keeps its trigger focused')
+
   async function reviewPrune() {
-    await manager.getByRole('button', { name: 'Clear queue history', exact: true }).click()
-    await window.getByText('All terminal jobs', { exact: true }).click()
+    await clearTrigger.click()
+    await allTerminalOption.click()
     await clearConfirmation.waitFor()
   }
   for (const keep of ['Escape', 'Keep history']) {

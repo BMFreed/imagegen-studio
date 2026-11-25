@@ -99,3 +99,51 @@ keyboard runs above supply the normal-close evidence. The retained smoke
 reports and screenshots are under `runs/generation-actions-restored`.
 Three exact idle scratch directories totaling 7,102,464 allocated bytes
 were released after their scopes exited.
+
+## Clear history keyboard dismissal
+
+At 900×620 on private KDE Wayland, trusted Escape from the open
+Clear history menu also closed Queue Manager and returned focus to the
+app launcher. The first investigation recorded the interaction and both
+normal closes. Its prelaunch SQLite comparison was incomplete because
+the first startup created the default workspace. The retained baseline
+reruns through one normal app open and close before taking the before
+snapshot. The baseline failed exactly the two menu Escape checks.
+Confirmation, cancellation, history removal and cold reopen passed.
+
+The installed Naive UI dropdown and outer modal both handle Escape.
+Queue Manager now reads the dropdown's open state through its
+`v-model:show` and guards outer Escape while the menu is open.
+The existing confirmation modal retains its own keyboard handling.
+
+The rebuilt app passed 32 checks with the exact same keyboard harness.
+Escape closed the menu and kept focus on its Clear history trigger.
+Escape and Keep history in the confirmation kept all three canceled
+queue rows and frozen inputs. Confirming All terminal removed those
+three rows and their private input files. A normal close and cold reopen
+restored the originally accepted Project with exact saved bytes and
+provenance. Typecheck, focused ESLint and the application build passed.
+The trusted-key scope covers the All terminal option and the disabled
+Completed option for this fixture.
+
+The baseline and fixed runs are `runs/generation-queue-clear-keyboard/20261125-r2`
+and `20261125-r3`. Independent rechecks matched all 32 observation labels,
+149 trusted keydowns, six closed SQLite snapshots, exact accepted Project
+and frozen input identities, and six normal Electron closes. The cold
+queue count was zero in both runs after confirmed Clear. Archived
+screenshots, Projects and database snapshots remain available. Cleanup
+reclaimed 20,471,808 allocated bytes from closed profiles and idle scratch.
+
+The wide smoke also opens the menu by keyboard and verifies that Escape
+preserves the outer dialog, trigger focus, exact queue rows and Project
+state. Its earlier replay on the fixed app wrote 36 passing native checks
+before the wrapper was interrupted. The scope and input hashes were
+checked after exit. No original wrapper exit receipt was recorded for
+that intermediate run.
+
+The final smoke `runs/generation-actions-restored/20261125-r5` passed
+37 checks, including all 36 previous checks in order. The wrapper
+recorded exit 0. The report has zero page errors and 27 wire requests.
+All 75 controlled peer PIDs had a matching successful exit. The source
+and live build hashes matched the recorded pins. The final two idle
+scratch directories released another 4,734,976 allocated bytes.
