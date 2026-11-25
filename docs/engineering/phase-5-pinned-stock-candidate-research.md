@@ -125,6 +125,102 @@ triplet, closed archives and audit reports are retained.
 
 This checkpoint covers real EPS and V execution, crash recovery,
 explicit saves, DB29 backup and migration, and incompatible worker
-refusal on one local candidate build. The installed slot was reused.
-Setup, actual Repair and model relink still have separate candidate
-qualification work in the [MVP checklist](./mvp-acceptance-backlog.md).
+refusal on one local candidate build. These cases reused the installed
+slot.
+
+## Candidate Setup and Repair on ext4
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`docs/src/content/docs/start-here/installation.mdx` points desktop users
+to the launcher. `invokeai/app/run_app.py` calls the CUDA and cuDNN
+checks in `invokeai/app/util/startup_utils.py`. In clean Invoke Launcher
+`c267bdb439519216b277a7a8c6ad408b9d79efce`, the explicit Install and
+Repair actions in `src/renderer/features/InstallFlow/state.ts` call the
+install IPC in `src/main/install-manager.ts`. Repair recreates the
+managed virtual environment before syncing. The existing Studio
+transaction prepares and verifies a separate slot before publishing it.
+
+The [existing Setup qualifier](../../scripts/prepare-packaged-runtime-setup.mjs)
+rebuilt from `f1279f9da1207715c3b496c970b6c4ea71a41618`. Its AppImage
+SHA-256 is `3d6e20431ff55952663a99481a02720758f5b07034cf79579eb69bedece22a12`.
+The 42 production dist members match the stock candidate. The
+qualification entrypoint uses the private loopback publisher and the
+original pinned signed envelopes, runtime ZIP and LaMa body.
+
+| Explicit action | Received bytes | Free bytes at consent | Free bytes after publication |
+| --------------- | -------------: | --------------------: | ---------------------------: |
+| Setup           |  3,424,284,558 |        55,891,980,288 |               34,040,832,000 |
+| Repair          |    205,669,692 |        34,040,393,728 |               15,593,050,112 |
+
+Setup verified all 4,607 signed archive members, activated the new
+slot and reached Ready again on cold launch. The fixture then parked
+the installed LaMa file. The ready runtime reported Outpainting
+needs repair. Explicit Repair reused the cached ZIP, fetched LaMa
+again and verified all 4,607 members. The completed journal committed
+a new runtime ID and preserved the previous pointer bytes. The
+previous slot's two directory identities and four selected file
+receipts matched after Repair. The reopened app selected the new
+ready slot with the restored LaMa resource.
+
+The four AppImage lifetimes closed normally in 329.084 s on the local
+RTX 4080 with driver `615.71.09`. Their launcher and application
+groups had an aggregate 8 GiB ceiling, zero swap and zero OOM events. Full typecheck,
+the desktop build and packaging passed. The exact package and
+operation receipts are under
+`runs/packaged-runtime-setup/20261125-r1`.
+
+An independent readback matched the native SQLite and wallet assets
+across the two AppImages, verified both Ed25519 envelopes, rehashed
+146 worker member bodies and checked the journal and slot receipts.
+It verified the closed SQLite and all 30 migrations, and confirmed
+37 process identities had exited. The AppImage, closed database,
+pointer, final journal, both slot provenance records and logs
+are retained. Removing the isolated installed slots, caches and
+unpacked build released 40,888,991,744 allocated bytes.
+
+The measurement qualifies Setup and Repair on this ext4 host with
+the qualification publisher. Installed-worker generation is covered
+by the stock runs above and this Setup run covers readiness and
+reopen. Setup and Repair through the stock package require the
+production publisher in the [MVP checklist](./mvp-acceptance-backlog.md).
+
+## Exact model relink on the stock candidate
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+The metadata caller in
+`invokeai/frontend/webv1/src/features/metadata/parsing.tsx` resolves
+model identity by key and hash using
+`invokeai/frontend/webv1/src/services/api/endpoints/models.ts`. The
+hash endpoint in `invokeai/app/api/routers/model_manager.py` calls
+`invokeai/app/services/model_records/model_records_sql.py` and the
+query in `invokeai/app/services/shared/database/queries/models.py`.
+Studio's existing portable resolver checks the exact provider tuple,
+family and digest. It changes the local identifiers in the draft when
+the user links the installed model.
+
+The candidate mode stages a pinned closed DB30 copy and redirects its
+default workspace to the run's isolated AppData. The AppImage verifies
+the original three installed checkpoint bodies in place. The stock
+package proof pins all 43 build members. The harness rechecks the
+AppImage before each of the four launches and after the final close.
+
+The Model Manager set Cyberfalafel v1.1 as Default and kept the old
+selection in the already saved Project. The portable Project resolved
+v1.2 `1147756/2679856/2566634` with its user-set V-prediction
+override. Link changed only the two draft local IDs and marked the
+Project dirty. Its on-disk archive still matched the input until
+explicit Save. The saved Project kept the accepted Raster and its
+frozen provenance. Both exact selection and Default reopened as
+expected. The model bodies and historical input archive kept their
+observed identities.
+
+All four lifetimes closed normally in 62.459 s. The final reports
+are under `runs/packaged-noobai-install/20261125-r3`. R1 stopped
+before launch when an old fixture required a separate AppData tree.
+R2 passed on the exact AppImage. R3 adds the per-launch and final
+package assertions. An independent readback matched the accepted
+layer, the linked identities and the closed catalog. It confirmed
+exit for all 40 recorded process identities. The 114 focused model
+and Project package tests passed with no failures or skips. The
+scenario qualifies linking, persistence and reopen on the previously
+generated Project.

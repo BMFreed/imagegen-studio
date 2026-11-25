@@ -192,9 +192,13 @@ async function assertPortableBytes(filename) {
 }
 
 /** Stage one ordinary Project where the stock workspace scanner will discover it. */
-export async function stageNoobaiPortableInput({ root, appData }) {
-  assert.notEqual(root, appData)
-  assert.ok(!inside(root, appData) && !inside(appData, root))
+export async function stageNoobaiPortableInput({ root, appData, candidateProfile = false }) {
+  if (candidateProfile) {
+    assert.equal(appData, path.join(root, 'data/imagegen-studio'))
+  } else {
+    assert.notEqual(root, appData)
+    assert.ok(!inside(root, appData) && !inside(appData, root))
+  }
   const files = portablePaths(root, appData)
   for (const directory of [root, appData, path.dirname(files.workspace)]) {
     assert.ok(inside(runs, directory))

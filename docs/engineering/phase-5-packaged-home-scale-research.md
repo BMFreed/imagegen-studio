@@ -727,3 +727,27 @@ two SQLite snapshots, 30 migrations and the external-change evidence.
 After exit, cleanup rechecked 30 retained files and released
 520,179,712 allocated bytes. The application build and the new
 Invoke test controller's Ruff and Python syntax checks passed.
+
+## External changes on the pinned candidate
+
+The [pinned stock AppImage](./phase-5-pinned-stock-candidate-research.md)
+ran the existing 32-project external-change control on a private KWin
+session with software compositing. The clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7` project library in
+`invokeai/frontend/webv2/src/workbench/projects/library.ts` calls
+`invokeai/app/api/routers/projects.py` for indexed summaries. Studio's
+existing fixture exercises external archive discovery through the real
+Home Refresh action.
+
+After an indexed restart, the driver replaced one archive, added one
+and moved one outside the workspace. The UI matched the replacement's
+new title, discovered the addition and disabled Open on the missing
+row. The closed SQLite index held 33 project identities with one
+missing row and 30 unchanged neighbors. Both AppImage lifetimes closed
+normally. The final Refresh took 341 ms in this one small-fixture
+sample. The 120% CPU, 4 GiB, zero-swap scope peaked at 1,586,032,640
+bytes with zero OOM events. The native receipt and final index are
+under `runs/packaged-home-scale/20261125-r55`.
+
+This run verifies freshness on the current package. The 256-project
+layered measurements above still govern the open response-time work.

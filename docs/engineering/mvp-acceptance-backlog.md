@@ -3,11 +3,13 @@
 ## MVP acceptance checklist
 
 **We are qualifying the local candidate.** One pinned stock AppImage
-passed installed-worker EPS/V, frozen Retry and historical-worker refusal
-in step 4. Continue with candidate Setup/Repair and exact model relink.
+passed installed-worker EPS/V, frozen Retry, historical-worker refusal
+and exact model relink in step 4. The same source passed Setup and
+Repair on ext4 with the qualification publisher. The stock Setup path
+requires the production publisher in step 5.
 The two-plinth reference swap failed the same visual gate in Studio and
 installed InvokeAI. Continue keyboard, contrast and explicit Refresh
-performance checks in step 2. Public delivery is blocked at step 5.
+performance checks in step 2 and interrupted update recovery in step 3.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -52,6 +54,10 @@ environment and remaining limits, and update the current stage and next run.
         removal and Trash restoration. Explicit Refresh still needs a
         response-time pass.
         [Home navigation result](./phase-5-packaged-home-scale-research.md#browse-folders-from-a-completed-home-catalog)
+  - [x] Explicit Refresh on the pinned AppImage discovered a replacement,
+        addition and move on a 32-project corpus after restart. The larger
+        layered catalog remains the response-time workload.
+        [Pinned Refresh control](./phase-5-packaged-home-scale-research.md#external-changes-on-the-pinned-candidate)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -77,6 +83,14 @@ environment and remaining limits, and update the current stage and next run.
         Generate and Retry with a protocol-2 worker, and preserved the
         historical Project and queued inputs across Save and reopen.
         [Historical refusal and migration](./phase-5-pinned-stock-candidate-research.md#historical-db29-and-incompatible-worker-refusal)
+  - [x] The pinned candidate source passed explicit Setup, fresh-slot
+        Repair and two cold readiness checks on ext4 with the signed
+        qualification publisher.
+        [Setup and Repair result](./phase-5-pinned-stock-candidate-research.md#candidate-setup-and-repair-on-ext4)
+  - [x] The stock AppImage linked the exact Cyberfalafel v1.2 file with
+        v1.1 as Default and preserved the accepted Raster and provenance
+        through explicit Save and cold reopen.
+        [Exact model relink](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-on-the-stock-candidate)
 
 ### Public release
 

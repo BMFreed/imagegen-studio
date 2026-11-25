@@ -1,5 +1,9 @@
 /** Observe the live Model Manager and Project pickers with all three official files installed. */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import path from 'node:path'
 
 import { expect } from '@playwright/test'
@@ -33,6 +37,104 @@ const checkpointPins = [
   },
 ]
 const projectTitle = 'Packaged NoobAI Default qualification'
+const installRuns = path.join(
+  homedir(),
+  '.codex/artifacts/imagegen-studio/runs/packaged-noobai-install',
+)
+const originalInstall = path.join(installRuns, '20261119/install')
+const originalAppData = path.join(originalInstall, 'data/imagegen-studio')
+const baseline = {
+  path: path.join(installRuns, '20261119-r7/three-files-before-default.sqlite'),
+  sizeBytes: 393_216,
+  sha256: '2c401cd5e10dac9ce4bf45476bf28955a5969cd4dc42dbb4462047b9fbf52524',
+}
+const installationReceipt = {
+  path: path.join(originalInstall, 'report.json'),
+  sizeBytes: 19_806,
+  sha256: '6ae3eca8e9e9085c3518a8994065991fc2d7324f640a7e04402c4865ceeebfc6',
+}
+
+function modelPath(appData, pin) {
+  return path.join(appData, 'models', pin.sha256.slice(0, 2), `${pin.sha256}.safetensors`)
+}
+
+async function exactFileIdentity(file, sizeBytes) {
+  assert.equal(await realpath(file), file)
+  const info = await lstat(file, { bigint: true })
+  assert.ok(info.isFile() && info.uid === BigInt(process.getuid()))
+  assert.equal(info.size, BigInt(sizeBytes))
+  return {
+    path: file,
+    sizeBytes,
+    device: String(info.dev),
+    inode: String(info.ino),
+    mtimeNs: String(info.mtimeNs),
+    ctimeNs: String(info.ctimeNs),
+  }
+}
+
+async function pinnedInput(pin) {
+  const info = await exactFileIdentity(pin.path, pin.sizeBytes)
+  assert.equal(
+    createHash('sha256')
+      .update(await readFile(pin.path))
+      .digest('hex'),
+    pin.sha256,
+  )
+  assert.deepEqual(await exactFileIdentity(pin.path, pin.sizeBytes), info)
+  return { ...info, sha256: pin.sha256 }
+}
+
+async function retainedCatalogInputs() {
+  const files = []
+  for (const pin of checkpointPins) {
+    const identity = await exactFileIdentity(modelPath(originalAppData, pin), pin.sizeBytes)
+    files.push({ ...pin, ...identity })
+  }
+  return {
+    baseline: await pinnedInput(baseline),
+    installationReceipt: await pinnedInput(installationReceipt),
+    files,
+  }
+}
+
+/** Copy closed SQLite only. The AppImage resolves and verifies the retained checkpoint bodies. */
+export async function stageNoobaiCandidateCatalog({ root, appData }) {
+  assert.equal(path.dirname(path.dirname(root)), installRuns)
+  assert.equal(appData, path.join(root, 'data/imagegen-studio'))
+  assert.equal(await realpath(path.dirname(appData)), path.dirname(appData))
+  const retained = await retainedCatalogInputs()
+  const database = path.join(appData, 'database/app.sqlite')
+  const defaultWorkspace = path.join(appData, 'workspaces/Uncategorized')
+  await mkdir(appData, { mode: 0o700 })
+  await mkdir(path.dirname(database), { mode: 0o700 })
+  await mkdir(defaultWorkspace, { recursive: true, mode: 0o700 })
+  await copyFile(baseline.path, database, constants.COPYFILE_EXCL)
+  await pinnedInput({ ...baseline, path: database })
+  const db = new Database(database, { fileMustExist: true })
+  try {
+    assert.equal(db.pragma('integrity_check', { simple: true }), 'ok')
+    assert.equal(db.prepare('SELECT COUNT(*) FROM project_index').pluck().get(), 0)
+    assert.equal(db.prepare('SELECT COUNT(*) FROM project_workspace').pluck().get(), 1)
+    const moved = db
+      .prepare(
+        `
+      UPDATE project_workspace SET directory_path = ?
+      WHERE id = 'uncategorized' AND is_default = 1 AND directory_path = ?
+      `,
+      )
+      .run(defaultWorkspace, path.join(originalAppData, 'workspaces/Uncategorized'))
+    assert.equal(moved.changes, 1)
+    assert.deepEqual(db.pragma('foreign_key_check'), [])
+  } finally {
+    db.close()
+  }
+  return { database, defaultWorkspace, modelDataRoot: originalAppData, retained }
+}
+
+export async function verifyNoobaiCandidateCatalog({ retained }) {
+  assert.deepEqual(await retainedCatalogInputs(), retained)
+}
 
 async function call(page, scope, method, ...args) {
   const result = await page.evaluate(
@@ -70,7 +172,7 @@ function modelRows(appData) {
   }
 }
 
-async function observeCatalog(page, appData, cyberDefault) {
+async function observeCatalog(page, appData, cyberDefault, modelDataRoot) {
   const catalog = await call(page, 'models', 'getCatalog')
   const rows = modelRows(appData)
   assert.equal(catalog.length, 2)
@@ -115,12 +217,7 @@ async function observeCatalog(page, appData, cyberDefault) {
       family: 'illustrious',
       expectedSha256: pin.sha256,
       localFileId: row.localFileId,
-      managedPath: path.join(
-        appData,
-        'models',
-        pin.sha256.slice(0, 2),
-        `${pin.sha256}.safetensors`,
-      ),
+      managedPath: modelPath(modelDataRoot, pin),
       status: 'ready',
     })
   }
@@ -210,9 +307,9 @@ async function closeManager(manager) {
   await expect(manager).toBeHidden()
 }
 
-export async function runNoobaiDefault({ root, appData, state }) {
+export async function runNoobaiDefault({ root, appData, state, modelDataRoot = appData }) {
   const { page } = state
-  const before = await observeCatalog(page, appData, previousDefault)
+  const before = await observeCatalog(page, appData, previousDefault, modelDataRoot)
   const projectId = await createOwnedProject(page)
   const oldSelection = await selectModel(page, projectId, before.cyber, previousDefault)
   await page.getByRole('button', { name: 'Save Project', exact: true }).click()
@@ -235,7 +332,7 @@ export async function runNoobaiDefault({ root, appData, state }) {
   await page.screenshot({ path: screenshot })
   await closeManager(manager)
 
-  const after = await observeCatalog(page, appData, newDefault)
+  const after = await observeCatalog(page, appData, newDefault, modelDataRoot)
   assert.deepEqual(
     after.rows,
     before.rows.map((row) =>
@@ -266,9 +363,14 @@ export async function runNoobaiDefault({ root, appData, state }) {
   }
 }
 
-export async function verifyNoobaiDefaultReopen({ appData, state, selection }) {
+export async function verifyNoobaiDefaultReopen({
+  appData,
+  state,
+  selection,
+  modelDataRoot = appData,
+}) {
   const { page } = state
-  const reopened = await observeCatalog(page, appData, newDefault)
+  const reopened = await observeCatalog(page, appData, newDefault, modelDataRoot)
   assert.deepEqual(reopened.rows, selection.afterRows)
   const manager = await openCyberManager(page, reopened.cyber)
   await expect(

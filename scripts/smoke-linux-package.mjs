@@ -49,6 +49,7 @@ const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
 const noobaiComponentModes = ['lora', 'embedding', 'vae']
 const noobaiComponentInstall = noobaiComponentModes.includes(noobaiInstall)
 const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
+const noobaiCandidateMatrix = noobaiMatrix === 'candidate'
 const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const portableImport = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_IMPORT
@@ -295,10 +296,10 @@ assert.ok(
 assert.ok(
   noobaiInstall === undefined || ['1', 'v', 'v11', ...noobaiComponentModes].includes(noobaiInstall),
 )
-assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1')
+assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1' || noobaiCandidateMatrix)
 assert.equal(
   noobaiCatalog !== undefined,
-  Boolean(noobaiMatrix || ['v', 'v11'].includes(noobaiInstall)),
+  noobaiMatrix === '1' || ['v', 'v11'].includes(noobaiInstall),
 )
 assert.ok(
   (noobaiPreviewMode === undefined || ['live', 'controlled'].includes(noobaiPreviewMode)) &&
@@ -1822,7 +1823,13 @@ async function verifyNoobaiStockPackage(output) {
   assert.equal(path.dirname(run), path.join(ownedRunRoot, 'packaged-noobai-install'))
   assert.match(path.basename(run), /^\d{8}(?:-r[1-9]\d*)?$/)
   assert.equal(path.basename(root), output)
-  const proof = JSON.parse(await readFile(path.join(run, 'package-live.json'), 'utf8'))
+  const proofPath = path.join(run, 'package-live.json')
+  const proofBytes = await readFile(proofPath)
+  const proofSha256 = createHash('sha256').update(proofBytes).digest('hex')
+  if (noobaiCandidateMatrix) {
+    assert.equal(proofSha256, '12ae28b84d87ba0b7e177dcb14140b7ff5433e6ce704ab02aa784555f6b6e131')
+  }
+  const proof = JSON.parse(proofBytes.toString('utf8'))
   assert.equal(proof.mode, 'live')
   assert.equal(proof.entrypoint, 'dist/main/main.cjs')
   assert.equal(proof.variant, null)
@@ -1833,6 +1840,7 @@ async function verifyNoobaiStockPackage(output) {
     assert.ok(file.startsWith('dist/') && path.normalize(file) === file)
     assert.equal((await identity(path.join(repo, file))).sha256, expected, file)
   }
+  return { path: proofPath, sizeBytes: proofBytes.length, sha256: proofSha256 }
 }
 
 async function runNoobaiInstallQualification() {
@@ -1857,36 +1865,64 @@ async function runNoobaiInstallQualification() {
 }
 
 async function runNoobaiMatrixQualification() {
-  await verifyNoobaiStockPackage('matrix')
-  const { runNoobaiDefault, verifyNoobaiDefaultReopen } =
-    await import('./fixtures/packaged-noobai-default-ui.mjs')
+  const packageProof = await verifyNoobaiStockPackage('matrix')
+  const {
+    runNoobaiDefault,
+    stageNoobaiCandidateCatalog,
+    verifyNoobaiCandidateCatalog,
+    verifyNoobaiDefaultReopen,
+  } = await import('./fixtures/packaged-noobai-default-ui.mjs')
   const { stageNoobaiPortableInput, runNoobaiPortableRelink, verifyNoobaiPortableReopen } =
     await import('./fixtures/packaged-noobai-portable-relink.mjs')
-  const portableInput = await stageNoobaiPortableInput({ root, appData })
-  const defaults = await launch('noobai-default')
-  const selection = await runNoobaiDefault({ root, appData, state: defaults })
+  const candidateCatalog = noobaiCandidateMatrix
+    ? await stageNoobaiCandidateCatalog({ root, appData })
+    : undefined
+  const modelDataRoot = candidateCatalog?.modelDataRoot
+  const portableInput = await stageNoobaiPortableInput({
+    root,
+    appData,
+    candidateProfile: candidateCatalog !== undefined,
+  })
+  const launchMatrix = async (name) => {
+    if (candidateCatalog) assert.deepEqual(await identity(appImage), packageBefore)
+    return launch(name)
+  }
+  const defaults = await launchMatrix('noobai-default')
+  const selection = await runNoobaiDefault({ root, appData, state: defaults, modelDataRoot })
   await writeJson('default-checkpoint.json', selection)
   await closeNormally(defaults)
-  const portable = await launch('noobai-portable-relink')
+  const portable = await launchMatrix('noobai-portable-relink')
   const relink = await runNoobaiPortableRelink({ root, appData, state: portable, portableInput })
   await writeJson('portable-relink-checkpoint.json', relink)
   await closeNormally(portable)
-  const defaultsReopen = await launch('noobai-default-reopened')
+  const defaultsReopen = await launchMatrix('noobai-default-reopened')
   const defaultReopened = await verifyNoobaiDefaultReopen({
     appData,
     state: defaultsReopen,
     selection,
+    modelDataRoot,
   })
   await closeNormally(defaultsReopen)
-  const portableReopen = await launch('noobai-portable-relink-reopened')
+  const portableReopen = await launchMatrix('noobai-portable-relink-reopened')
   const relinkReopened = await verifyNoobaiPortableReopen({
     appData,
     state: portableReopen,
     relink,
   })
   await closeNormally(portableReopen)
+  assert.equal(lifetimes.length, 4)
   assert.ok(lifetimes.every((instance) => instance.normalPhysicalExit && !instance.forcedCleanup))
-  return { selection, relink, defaultReopened, relinkReopened }
+  if (candidateCatalog) {
+    await verifyNoobaiCandidateCatalog(candidateCatalog)
+    assert.deepEqual(await identity(packageProof.path), packageProof)
+  }
+  return {
+    selection,
+    relink,
+    defaultReopened,
+    relinkReopened,
+    ...(candidateCatalog ? { packageProof, candidateCatalog } : {}),
+  }
 }
 
 async function runNoobaiPreviewQualification() {
@@ -2518,6 +2554,8 @@ try {
     await applicationUpdateSmoke.stop()
     applicationUpdateResult = applicationUpdateSmoke.finalize()
   }
+  const packageAfter = await identity(appImage)
+  if (noobaiCandidateMatrix) assert.deepEqual(packageAfter, packageBefore)
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
@@ -2564,7 +2602,7 @@ try {
         : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     ...(appImageFuse && { appImageLaunchMode: 'fuse' }),
     packageBefore,
-    packageAfter: await identity(appImage),
+    packageAfter,
     sourceBefore,
     sourceAfter,
     cwd,
