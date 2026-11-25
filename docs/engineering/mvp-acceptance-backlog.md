@@ -51,6 +51,11 @@ environment and remaining limits, and update the current stage and next run.
         focus to the workspace action, confirmation focused Home search and
         the search placeholder passed the sampled text contrast threshold.
         [Workspace focus and search contrast](./phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
+  - [x] The stock Updates dialog opens from Help by keyboard, contains focus,
+        and returns it to Help on Escape or Close. Chromium exposes the
+        corrected modal semantics and the four sampled labels meet 4.5:1
+        text contrast at 900×620.
+        [Native Updates result](./phase-5-application-updates-keyboard-research.md#packaged-verification)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
         normal close.

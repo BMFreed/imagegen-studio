@@ -61,6 +61,7 @@ const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPA
 const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const homeScale = offlineProject === 'home-scale'
+const updatesKeyboard = offlineProject === 'application-updates-keyboard'
 const largeLayeredHomeScale =
   homeScale &&
   process.env.IMAGEGEN_HOME_SCALE_FIXTURE === 'linked-layered' &&
@@ -86,7 +87,10 @@ assert.ok(
     (runtimeInstallationWarmRecheck === '1' && runtimeInstallationRecovery),
 )
 const softwareRenderer =
-  homeScaleSoftware || workspaceTrashRestore || runtimeInstallationWarmRecheck === '1'
+  homeScaleSoftware ||
+  workspaceTrashRestore ||
+  runtimeInstallationWarmRecheck === '1' ||
+  updatesKeyboard
 assert.ok(
   !softwareRenderer || (kdeChooser && process.env.LIBGL_ALWAYS_SOFTWARE === '1'),
   'Use a private KDE session and software Mesa.',
@@ -115,6 +119,7 @@ const nativeWaylandKeyboard =
     offlineProject === 'trash' ||
     workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
+    updatesKeyboard ||
     homeScale)
 assert.ok(
   !kdeChooser ||
@@ -260,6 +265,7 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
         'sqlite-manual-recovery',
         'result-preset',
         'home-recovery-keyboard',
+        'application-updates-keyboard',
         'home-scale',
         'workspace-chooser',
         'workspace-trash-restore',
@@ -576,6 +582,7 @@ const offlineProjectFixture = {
   'sqlite-manual-recovery': 'packaged-sqlite-manual-recovery',
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
+  'application-updates-keyboard': 'packaged-application-updates-keyboard',
   'home-scale': 'packaged-home-scale',
   'workspace-chooser': 'packaged-workspace-chooser',
   'workspace-trash-restore': 'packaged-workspace-chooser',
@@ -599,6 +606,8 @@ const offlineProjectScope = {
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
   'home-recovery-keyboard':
     'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
+  'application-updates-keyboard':
+    'Stock AppImage exercises the application Updates dialog with native keyboard input on its unavailable publisher path.',
   'home-scale':
     'Stock AppImage measures rendering and Home interactions over an owned indexed Project catalog.',
   'workspace-chooser':
@@ -1009,6 +1018,16 @@ if (homeScale)
   )
 if (nativeWaylandKeyboard)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-wayland-keyboard.c'))
+if (updatesKeyboard)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-application-updates-keyboard.mjs',
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
+      'src/renderer/App.vue',
+      'src/renderer/components/AppChrome.vue',
+      'src/renderer/components/ApplicationUpdatesModal.vue',
+    ].map((file) => path.join(repo, file)),
+  )
 if (modelInstallHistory)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-home-recovery-keyboard.mjs'))
 if (offlineProject === 'queue-startup-recovery')
@@ -2024,6 +2043,9 @@ async function runOwnedProjectProfile() {
     if (offlineProject === 'home-recovery-keyboard') {
       return await fixture.runPackagedHomeRecoveryKeyboard(args)
     }
+    if (updatesKeyboard) {
+      return { offlineProjectResult: await fixture.runPackagedApplicationUpdatesKeyboard(args) }
+    }
     if (homeScale) {
       return { offlineProjectResult: await fixture.runPackagedHomeScale(args) }
     }
@@ -2521,6 +2543,8 @@ try {
         lifetimes.map(({ name }) => name),
         ['workspace-unregistered', 'trash-restored'],
       )
+    } else if (updatesKeyboard) {
+      assert.equal(lifetimes.length, 1)
     } else {
       assert.equal(
         lifetimes.length,

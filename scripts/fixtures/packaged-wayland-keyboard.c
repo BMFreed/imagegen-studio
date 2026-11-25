@@ -163,7 +163,7 @@ static void send_key(struct wl_proxy *input, uint32_t key, uint32_t state)
 
 int main(int argc, char **argv)
 {
-    require(argc == 2, "use --probe, --hold, Tab, shift+Tab, Return or Escape");
+    require(argc == 2, "use --probe, --hold, Tab, shift+Tab, Return, Down or Escape");
     const char *action = argv[1];
     bool probe = !strcmp(action, "--probe");
     bool hold = !strcmp(action, "--hold");
@@ -173,6 +173,8 @@ int main(int argc, char **argv)
         key = KEY_TAB;
     } else if (!strcmp(action, "Return")) {
         key = KEY_ENTER;
+    } else if (!strcmp(action, "Down")) {
+        key = KEY_DOWN;
     } else if (!strcmp(action, "Escape")) {
         key = KEY_ESC;
     }

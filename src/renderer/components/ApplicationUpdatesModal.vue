@@ -178,6 +178,7 @@ function close() {
   >
     <NCard
       aria-label="Application Updates"
+      aria-modal="true"
       class="application-updates-modal"
       contentScrollable
       role="dialog"

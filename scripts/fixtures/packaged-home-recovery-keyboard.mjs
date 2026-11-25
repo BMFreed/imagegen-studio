@@ -200,8 +200,9 @@ export async function connectNativeInput(state, record, root) {
       assert.equal(await page.evaluate(() => document.hasFocus()), true)
       const before = await activeFocus(page)
       await input.key(key)
+      const nativeKey = key.split('+').at(-1)
       const expected = {
-        key: key === 'Return' ? 'Enter' : key.split('+').at(-1),
+        key: { Down: 'ArrowDown', Return: 'Enter' }[nativeKey] ?? nativeKey,
         shiftKey: key.startsWith('shift+'),
         trusted: true,
       }
