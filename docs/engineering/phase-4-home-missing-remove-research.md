@@ -48,6 +48,24 @@ Typecheck, app build and lint of both changed source files passed. Cleanup
 after physical exit kept the reports, screenshots, two sample archives and
 closed index and reclaimed 5,541,888 allocated bytes.
 
+### Complete browser coverage after the deadline
+
+The follow-up at `4edf900ee56d37bb4d7655e4720841e4b67d0a0f` matched the 194
+recorded passes to the current 368-test inventory by file, source position
+and full nested title. Playwright's `--test-list` selected the other 174
+tests in seven disjoint batches of 23, 34, 29 and four groups of 22. A
+fresh discovery result and the completed JSON report matched every planned
+test in each batch. Each batch exited zero with one pass per selected test.
+The verified union is **368 unique passes with zero failures or skips**.
+
+Each batch used two workers, a 150% CPU quota, 4 GiB RAM and zero swap.
+All seven scopes exited, the test port was released and the memory-limit
+and OOM counters were zero. An independent read-only audit reconstructed
+the same test union and verified the source hashes and scope exits. The full
+command's earlier deadline remains recorded in its original receipt. The
+inventory, selection lists, raw reports and coverage audit are under
+`runs/prototype-browser-completion/20261125-r1`.
+
 Base `d38ef8fc383f1a94a8fa051fb4a356569ac422d5`, clean master/origin at start.
 PP-001 Home and PP-007 ownership contracts: a genuinely missing file can be
 forgotten from the derived Home index without deleting its file or recovery.

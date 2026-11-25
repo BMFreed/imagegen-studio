@@ -62,6 +62,9 @@ entries record the state at their checkpoint.
    exact fixture opt-ins bring coverage to 8,469 PASS, one inapplicable platform
    SKIP and zero failures. [Qualification evidence](./anima-qualification-oracles-research.md),
    [test command](../../package.json).
+   At `4edf900e` the browser suite reached 368 unique passes by matching
+   194 completed cases from the bounded run and executing the 174 remaining
+   cases in seven disjoint batches. [Browser coverage](./phase-4-home-missing-remove-research.md#complete-browser-coverage-after-the-deadline)
 2. **Bounded packaged trained generation passed.** One actual 256×256 TXT job
    for each family reaches public Generate, explicit Add, Save and reopen with
    exact resource identities, frozen provenance and retained result bytes. The
