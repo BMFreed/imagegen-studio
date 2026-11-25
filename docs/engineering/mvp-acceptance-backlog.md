@@ -502,6 +502,9 @@ entries record the state at their checkpoint.
    with large multi-layer Projects and the supported host matrix.
    [Home catalog performance](./phase-5-packaged-home-scale-research.md#packaged-comparison)
    [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
+   The combined Home request now updates the sidebar count when a retry
+   discovers a Project in a folder that has just returned.
+   [Workspace retry regression](./phase-5-packaged-home-scale-research.md#sidebar-count-after-a-workspace-returns)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

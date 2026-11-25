@@ -267,3 +267,43 @@ full Raster with Pillow and confirmed exit for all 60 final process identities.
 Cleanup reclaimed 976,658,432 allocated bytes from the private profiles,
 synthetic packages, development build and scratch. The measurements, checksums,
 closed SQLite indexes and sample packages remain.
+
+## Sidebar count after a workspace returns
+
+The combined Home request could return one ready Project card and a zero
+count for its folder. The first scan reported the folder unavailable and
+the sidebar read the cached count. The card read retried after the folder
+returned and indexed the Project.
+
+The current InvokeAI checkout was clean at
+`4875d96531ca6712b288f6e660fcbb34143408c1`. The source check followed
+`invokeai/frontend/webv2/src/features/workflow/ui/library/WorkflowLibraryDialog.tsx`
+to `features/workflow/data/libraryBrowseStore.ts` and
+`platform/state/singleFlight.ts` under the same frontend root. It also followed
+`invokeai/app/api/routers/workflows.py` to
+`invokeai/app/services/workflow_records/workflow_records_default.py`
+and `invokeai/app/services/shared/database/queries/workflows.py`.
+InvokeAI reads the list and its total together from the index. Studio applies
+that ordering to its existing workspace scanner and reads the sidebar after
+the card path has completed any applicable retry.
+
+Healthy workspaces still complete one scan per combined request. A scoped
+request can retry its selected folder. An aggregate request can retry each
+unavailable folder. Cached counts still include unavailable Projects and
+pending moves use their source workspace. External filesystem changes are
+observed on a best-effort basis.
+
+The regression moves a registered workspace away during the first scan and
+restores it before the card read. With the original service it reaches the
+ready card, then fails on `0 !== 1`. The corrected service returns the same
+card and count one after two scan attempts. The saved `.igs` bytes match.
+The aggregate control covers persistently missing folders and a healthy
+neighbor. The final Node run passed all 162 focused tests across Project
+Service, workspaces, index, Trash and relocation. Full typecheck, desktop
+build and lint of the two TypeScript files passed. A separate source review
+checked the scan order, retry scope, pending counts and IPC lock. The receipts
+are under `runs/home-catalog-transient-retry/20261125`. This was a Main integration
+check on SQLite and the real Project packages. The earlier AppImage
+measurements remain the native baseline.
+[Project service](../../src/main/projects/project-service.ts),
+[workspace tests](../../src/main/projects/project-workspaces.test.ts).

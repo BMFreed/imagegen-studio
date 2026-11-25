@@ -465,7 +465,10 @@ test('missing and inaccessible folders retain cached rows and do not block healt
     assert.equal(summaries.find((workspace) => workspace.id === first.id)!.availability, 'missing')
     assert.equal(summaries[0].availability, 'missing')
     assert.equal(summaries.find((workspace) => workspace.id === first.id)!.projectCount, 1)
-    assert.equal((await fixture.service.list()).length, 3)
+    const catalog = await fixture.service.listHomeCatalog()
+    assert.deepEqual(catalog.workspaces, summaries)
+    assert.equal(catalog.projects.length, 3)
+    assert.equal(catalog.projects.find(({ id }) => id === healthy.id)?.recoveryStatus, 'none')
     const missingSummary = (await fixture.service.list(first.id))[0]
     assert.equal(missingSummary.id, missing.id)
     assert.equal(
@@ -584,7 +587,7 @@ test('Home shares one scan per workspace and each request sees external Project 
   })
 })
 
-test('Home retries a transiently unavailable workspace before reading its Project cards', async () => {
+test('Home projects recovered workspace counts and cards from the same refresh', async () => {
   await withWorkspaceFixture(async (fixture) => {
     const added = await fixture.service.addWorkspace(
       { color: 'green', displayName: 'Transient folder' },
@@ -620,6 +623,9 @@ test('Home retries a transiently unavailable workspace before reading its Projec
       catalog.projects.map(({ health, recoveryStatus, title }) => [health, recoveryStatus, title]),
       [['ready', 'none', 'Project in the returned workspace']],
     )
+    const workspace = catalog.workspaces.find(({ id }) => id === added.id)
+    assert.equal(workspace?.availability, 'available')
+    assert.equal(workspace?.projectCount, 1)
     assert.deepEqual(await readFile(external.filePath), before)
   })
 })

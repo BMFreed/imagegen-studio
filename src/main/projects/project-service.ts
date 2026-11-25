@@ -2299,9 +2299,10 @@ export class ProjectService {
         scanned.add(id)
       }
     }
-    const workspaces = await this.readWorkspaceSummaries(scan)
+    const workspaceRecords = await this.scanRegisteredWorkspaces(scan)
     const projects = await this.readProjectSummaries(workspaceId, scan)
-    return { projects, workspaces }
+    // A successful retry while reading the cards can change the sidebar counts.
+    return { projects, workspaces: await this.readWorkspaceSummaries(workspaceRecords) }
   }
 
   async listTrash(): Promise<ProjectTrashSummary[]> {
@@ -2363,7 +2364,10 @@ export class ProjectService {
   }
 
   async listWorkspaces(): Promise<ProjectWorkspaceSummary[]> {
-    return await this.readWorkspaceSummaries((id) => this.scanWorkspaceIfAvailable(id))
+    const workspaces = await this.scanRegisteredWorkspaces((id) =>
+      this.scanWorkspaceIfAvailable(id),
+    )
+    return await this.readWorkspaceSummaries(workspaces)
   }
 
   /** Explicit OS selection reconnects a closed missing Project without importing or saving it. */
@@ -5089,14 +5093,11 @@ export class ProjectService {
   }
 
   private async readWorkspaceSummaries(
-    scan: (id: string) => Promise<unknown>,
+    workspaces: readonly ProjectWorkspaceRecord[],
   ): Promise<ProjectWorkspaceSummary[]> {
-    await this.initialize()
-    const workspaces = await this.options.repository.listWorkspaces()
     const pendingMoves = await this.options.repository.relocations.list()
     const summaries: ProjectWorkspaceSummary[] = []
     for (const workspace of workspaces) {
-      await scan(workspace.id)
       const summary = await this.toWorkspaceSummary(workspace)
       summary.projectCount += pendingMoves.filter(
         (move) => move.sourceWorkspaceId === workspace.id,
@@ -5316,6 +5317,17 @@ export class ProjectService {
         : {}),
       ...(indexWarning ? { indexWarning } : {}),
     }
+  }
+
+  private async scanRegisteredWorkspaces(
+    scan: (id: string) => Promise<unknown>,
+  ): Promise<ProjectWorkspaceRecord[]> {
+    await this.initialize()
+    const workspaces = await this.options.repository.listWorkspaces()
+    for (const workspace of workspaces) {
+      await scan(workspace.id)
+    }
+    return workspaces
   }
 
   private async scanWorkspaceIfAvailable(workspaceId: string): Promise<boolean> {
