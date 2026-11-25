@@ -152,3 +152,34 @@ durability, native relaunch and stage retirement are separate checks.
 The transcripts are retained under
 `runs/application-update-publication-cut/20261121` in the artifact root.
 The normal test teardown removes the owned stage fixtures.
+
+## A subsequent release on the used recovery path
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/model_install/model_install_default.py` restores
+pending installs through `invokeai/app/services/model_install/install_staging_ledger.py`
+and preserves recovery-marked directories. Clean Launcher
+`c267bdb439519216b277a7a8c6ad408b9d79efce` calls
+`src/main/updater.ts` from `src/main/main-process-manager.ts` and
+hands installation to `quitAndInstall`. Its single-instance lock
+is profile-scoped. Ownership of a legacy process's executable path
+remains unresolved in both donors. Studio preserves the old stage
+and backup.
+
+The existing SIGKILL fixture now continues through signed D after
+activating C on the independently initialized B path. Offline
+inspection authenticates C at that path and reports its runtime
+unverified. A fresh C source and a previously clear startup
+observation still refuse D in both Review and preflight. The real
+retained-stage admission runs before impact, close or scheduling.
+The old stage and the stage on the used recovery path keep their
+exact members, inode and byte identities. The latter still holds the
+B backup, and D remains downloaded. The same D passes Review and
+preflight on a fresh path containing the same C bytes.
+
+The integration file passed 44 tests with zero failures or skips.
+This transaction control uses the real signed service and staging
+owners with a controlled scheduler. The separate
+[native A–B–C result](./phase-5-public-appimage-recovery-research.md#native-result)
+covers Project Save and restart. A lifecycle for safe retirement
+of the used paths is still open.

@@ -884,7 +884,7 @@ for (const cut of [
   'after-publication',
 ] as const) {
   test(
-    `SIGKILL ${cut} preserves the update and refuses signed C before close`,
+    `SIGKILL ${cut} preserves the update and refuses signed C before close${cut === 'after-publication' ? ', then refuses D on the used recovery path' : ''}`,
     {
       skip: process.platform !== 'linux' || process.arch !== 'x64',
     },
@@ -1139,6 +1139,96 @@ for (const cut of [
           JSON.parse(await fs.readFile(path.join(nextStage, 'journal.json'), 'utf8')).state,
           'relaunching',
         )
+
+        if (finalized) {
+          const recoveredInspection = await inspectRetainedApplicationUpdate({
+            currentAppImage: c.currentAppImage,
+            currentVersion: '0.3.0',
+            readTrust: async () => c.trust,
+          })
+          assert.deepEqual(recoveredInspection, {
+            runtimeAuthentication: 'unverified',
+            status: 'retained',
+            targetAuthentication: 'verified',
+          })
+          const snapshotUsedRecoveryPath = async () => {
+            assert.deepEqual(
+              (await fs.readdir(c.parent)).sort(),
+              ['Current.AppImage', stageName, `${stageName}.lock`].sort(),
+            )
+            assert.deepEqual((await fs.readdir(nextStage)).sort(), files)
+            return await Promise.all(
+              [
+                c.currentAppImage,
+                `${nextStage}.lock`,
+                ...files.map((file) => path.join(nextStage, file)),
+              ].map(identity),
+            )
+          }
+          const recoveredStage = await snapshotUsedRecoveryPath()
+          const d = await fixture(t, true, true, close, impact, schedule, true, {
+            current: '0.3.0',
+            from: c.body,
+            next: '0.4.0',
+            to: image(17),
+          })
+          const recoveredSource = await c.captureCurrentSource()
+          const restarted = new ApplicationUpdateService(
+            '0.3.0',
+            true,
+            () => createElectronUpdateChecker(d.updater),
+            c.currentAppImage,
+            close,
+            impact,
+            schedule,
+            // A prior clear observation still goes through current admission.
+            { status: 'none' },
+            recoveredSource,
+          )
+          assert.deepEqual(restarted.getRecoveryStatus(), { status: 'clear' })
+          await restarted.check()
+          assert.equal((await restarted.download('0.4.0')).status, 'downloaded')
+          const downloadedD = await restarted.prepareVerifiedArtifact('0.4.0')
+          const exactD = await identity(downloadedD.path)
+          assert.equal(exactD.sha512, sha(d.body))
+          const impactsBeforeD = impactReads
+          const closesBeforeD = closeChecks
+          await assert.rejects(
+            restarted.reviewInstallation('0.4.0'),
+            ApplicationUpdateRecoveryRequiredError,
+          )
+          await assert.rejects(
+            restarted.prepareInstallation('0.4.0'),
+            ApplicationUpdateRecoveryRequiredError,
+          )
+          assert.equal(impactReads, impactsBeforeD)
+          assert.equal(closeChecks, closesBeforeD)
+          assert.deepEqual(schedules, [c.currentAppImage])
+          assert.equal(restarted.getStatus().status, 'downloaded')
+          assert.deepEqual(await identity(downloadedD.path), exactD)
+          assert.deepEqual(await snapshotUsedRecoveryPath(), recoveredStage)
+          assert.deepEqual(await snapshot(), retained)
+
+          // The same downloaded D is eligible on an independently initialized path with exact C bytes.
+          assert.equal(
+            await fs.readFile(d.currentAppImage).then(sha),
+            artifact.manifest.artifact.sha512,
+          )
+          await d.service.check()
+          assert.equal((await d.service.download('0.4.0')).status, 'downloaded')
+          assert.equal((await d.service.reviewInstallation('0.4.0')).installationAvailable, true)
+          const freshD = await d.service.prepareInstallation('0.4.0')
+          assert.equal(freshD.manifest.artifact.sha512, exactD.sha512)
+          assert.deepEqual(freshD.authority, downloadedD.authority)
+          assert.deepEqual(await fs.readdir(d.parent), ['Current.AppImage'])
+          assert.equal(impactReads, impactsBeforeD + 1)
+          assert.equal(closeChecks, closesBeforeD)
+          assert.deepEqual(schedules, [c.currentAppImage])
+          assert.deepEqual(await snapshotUsedRecoveryPath(), recoveredStage)
+          t.diagnostic(
+            'Signed D refused at the used recovery path and passed preflight on the fresh C path.',
+          )
+        }
       }
       assert.deepEqual(await snapshot(), retained)
       assert.deepEqual(await identity(b.path), cached)
