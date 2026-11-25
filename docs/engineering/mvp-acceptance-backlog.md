@@ -558,6 +558,12 @@ entries record the state at their checkpoint.
    On confirmed removal, focus moves to catalog search. Built Electron
    passed both paths on private KWin with real removal and catalog reopen.
    [Model Manager removal keyboard focus](./phase-4-model-removal-usage-research.md#keyboard-focus-after-local-resource-removal)
+   Queue Manager now restores visible focus after confirming a single
+   history-row deletion. At 900×620, trusted KDE Wayland input passed ten
+   checks, including Escape, deletion with neighbors and the last row.
+   The accepted Project and remaining frozen inputs stayed exact, and
+   the final empty queue persisted on restart.
+   [Queue Manager Delete focus](./phase-5-generation-queue-delete-focus-research.md)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

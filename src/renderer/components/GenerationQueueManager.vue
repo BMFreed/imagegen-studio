@@ -34,7 +34,7 @@ import {
   NTag,
   NTooltip,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   queueResultCandidate,
@@ -91,11 +91,13 @@ const actionError = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const busy = ref<{ action: QueueAction; id: string | null } | null>(null)
 const confirmation = ref<Confirmation | null>(null)
+const closeButton = ref<InstanceType<typeof NButton> | null>(null)
 const failedThumbnails = ref(new Set<string>())
 let pageRequest = 0
 let actionRequest = 0
 let pageDepth = 1
 let disposed = false
+let deletedRowForFocus: string | null = null
 
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
 const selectedResult = computed(() => (selected.value ? resultCandidate(selected.value) : null))
@@ -464,7 +466,9 @@ async function perform(action: QueueAction, id: string | null, operation: () => 
     if (disposed || request !== actionRequest) {
       return
     }
-    confirmation.value = null
+    if (action !== 'delete') {
+      confirmation.value = null
+    }
     notice.value =
       action === 'prune'
         ? `Removed ${result} jobs from queue history.`
@@ -475,6 +479,10 @@ async function perform(action: QueueAction, id: string | null, operation: () => 
             : 'Cancellation requested.'
     emit('changed')
     await refresh()
+    if (action === 'delete' && !disposed && show.value && request === actionRequest) {
+      deletedRowForFocus = id
+      confirmation.value = null
+    }
   } catch (cause) {
     if (!disposed && request === actionRequest) {
       actionError.value = message(cause)
@@ -564,6 +572,39 @@ function confirmCleanup() {
   )
 }
 
+async function cleanupAfterLeave() {
+  const deletedRowId = deletedRowForFocus
+  if (!deletedRowId) {
+    return
+  }
+  deletedRowForFocus = null
+  // The inner focus trap may return to the old Delete button while a queue refresh is pending.
+  await nextTick()
+  const button = closeButton.value?.$el
+  if (
+    !show.value ||
+    confirmation.value ||
+    !(button instanceof HTMLButtonElement) ||
+    !button.isConnected ||
+    button.disabled ||
+    button.closest('[inert]') ||
+    !document.hasFocus()
+  ) {
+    return
+  }
+  const active = document.activeElement
+  const oldDeleteFocused =
+    active?.getAttribute('aria-label') === 'Delete job' &&
+    active.closest<HTMLElement>('[data-job-id]')?.dataset.jobId === deletedRowId
+  if (
+    active === document.body ||
+    active === button.closest('[role="dialog"]') ||
+    oldDeleteFocused
+  ) {
+    button.focus({ preventScroll: true })
+  }
+}
+
 function close() {
   if (!busy.value && !confirmation.value) {
     show.value = false
@@ -583,6 +624,7 @@ watch(
       notice.value = null
       void refresh()
     } else {
+      deletedRowForFocus = null
       pageRequest += 1
       loading.value = false
       loadingOlder.value = false
@@ -653,6 +695,7 @@ onBeforeUnmount(() => {
             </NButton>
           </NDropdown>
           <NButton
+            ref="closeButton"
             aria-label="Close Queue Manager"
             circle
             :disabled="Boolean(busy) || Boolean(confirmation)"
@@ -1049,6 +1092,7 @@ onBeforeUnmount(() => {
     :closeOnEsc="!busy"
     :maskClosable="false"
     :show="confirmation !== null"
+    @afterLeave="cleanupAfterLeave"
     @update:show="!$event && !busy && (confirmation = null)"
   >
     <NCard
