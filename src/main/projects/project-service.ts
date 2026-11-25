@@ -2292,15 +2292,23 @@ export class ProjectService {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
     const scanned = new Set<string>()
+    const validated = new Map<string, ProjectIndexRecord>()
     const scan = async (id: string) => {
       // This witness belongs to the current catalog request. An unavailable folder may recover
       // before the second consumer, so only a completed scan can be shared.
-      if (!scanned.has(id) && (await this.scanWorkspaceIfAvailable(id))) {
+      if (scanned.has(id)) {
+        return
+      }
+      const completed: ProjectIndexRecord[] = []
+      if (await this.scanWorkspaceIfAvailable(id, (project) => completed.push(project))) {
+        for (const project of completed) {
+          validated.set(project.localProjectKey, project)
+        }
         scanned.add(id)
       }
     }
     const workspaceRecords = await this.scanRegisteredWorkspaces(scan)
-    const projects = await this.readProjectSummaries(workspaceId, scan)
+    const projects = await this.readProjectSummaries(workspaceId, scan, validated)
     // A successful retry while reading the cards can change the sidebar counts.
     return { projects, workspaces: await this.readWorkspaceSummaries(workspaceRecords) }
   }
@@ -5021,6 +5029,7 @@ export class ProjectService {
   private async readProjectSummaries(
     workspaceId: string | undefined,
     scan: (id: string) => Promise<unknown>,
+    validated?: ReadonlyMap<string, ProjectIndexRecord>,
   ): Promise<ProjectSummary[]> {
     await this.initialize()
     if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
@@ -5049,6 +5058,7 @@ export class ProjectService {
             record,
             readableWorkspaces.has(record.workspaceId),
             modifiedTimes.get(record.localProjectKey) ?? null,
+            validated?.get(record.localProjectKey),
           ),
       ),
     )
@@ -5330,9 +5340,12 @@ export class ProjectService {
     return workspaces
   }
 
-  private async scanWorkspaceIfAvailable(workspaceId: string): Promise<boolean> {
+  private async scanWorkspaceIfAvailable(
+    workspaceId: string,
+    onValidated?: (project: ProjectIndexRecord) => void,
+  ): Promise<boolean> {
     try {
-      await this.options.repository.scanWorkspace(workspaceId)
+      await this.options.repository.scanWorkspace(workspaceId, onValidated)
       return true
     } catch (error) {
       if (!(error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE')) {
@@ -5346,6 +5359,7 @@ export class ProjectService {
     record: ProjectIndexRecord,
     workspaceReadable: boolean,
     modifiedAt: string | null,
+    validated?: ProjectIndexRecord,
   ): Promise<ProjectSummary> {
     let recoveryStatus: ProjectSummary['recoveryStatus'] = 'none'
     let recoveryReason: string | undefined
@@ -5355,9 +5369,16 @@ export class ProjectService {
         'The workspace folder is unavailable. Restore access before inspecting Project recovery.'
     } else if (record.fileHealth === 'ready' && !this.openTabs.has(record.localProjectKey)) {
       try {
+        const sameRequestValidation =
+          validated?.canonicalPath === record.canonicalPath &&
+          validated.workspaceId === record.workspaceId &&
+          validated.fileFingerprint === record.fileFingerprint
+            ? () => this.options.repository.matchesSavedFile(record)
+            : undefined
         const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
           record.canonicalPath,
           this.options.shadow,
+          sameRequestValidation,
         )
         const temporary = await this.inspectTemporaryRecovery(record.localProjectKey)
         if (inspection.status !== 'absent' && inspection.status !== 'clean') {

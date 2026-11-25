@@ -304,7 +304,15 @@ export class ProjectAutosaveCoordinator {
   static async inspectRecovery(
     projectPath: string,
     shadow: ProjectShadowStore,
+    sameRequestValidation?: () => Promise<boolean>,
   ): Promise<ProjectShadowInspection> {
+    if (sameRequestValidation && (await sameRequestValidation())) {
+      const inspection = await shadow.inspectWithoutSavedPackage(projectPath)
+      // The catalog proof can expire while the shadow is inspected.
+      if (inspection && (await sameRequestValidation())) {
+        return inspection
+      }
+    }
     const savedPackage = await readIgsPackage(projectPath)
     return await shadow.inspect({ projectPath, savedPackage })
   }

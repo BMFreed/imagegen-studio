@@ -472,6 +472,18 @@ export class ProjectIndexRepository {
       .execute()
   }
 
+  async matchesSavedFile(record: ProjectIndexRecord): Promise<boolean> {
+    try {
+      return (
+        (await canonicalProjectPath(record.canonicalPath)) === record.canonicalPath &&
+        (await fileIdentity(record.canonicalPath)).fingerprint === record.fileFingerprint
+      )
+    } catch {
+      // Fall back to the regular reader to diagnose an unavailable or changed package.
+      return false
+    }
+  }
+
   /** Forget a proven missing file's derived Home row; recovery/location owners are untouched. */
   async removeMissingProject(
     expected: ProjectIndexRecord,
@@ -592,7 +604,10 @@ export class ProjectIndexRepository {
   }
 
   /** Rescan can reconstruct a lost index without the old database or preview cache. */
-  async scanWorkspace(workspaceId: string): Promise<ProjectIndexRecord[]> {
+  async scanWorkspace(
+    workspaceId: string,
+    onValidated?: (project: ProjectIndexRecord) => void,
+  ): Promise<ProjectIndexRecord[]> {
     const workspace = await this.workspaceById(workspaceId)
     await assertWorkspaceDirectory(workspace.directoryPath)
     const indexedAtStart = await this.listProjects(workspaceId)
@@ -629,7 +644,8 @@ export class ProjectIndexRepository {
         continue
       }
       try {
-        await this.indexSaved(filePath, workspaceId)
+        const project = await this.indexSaved(filePath, workspaceId)
+        onValidated?.(project)
       } catch (error) {
         if (error instanceof IgsSchemaError) {
           await this.indexUnhealthy(filePath, workspaceId, error.code)

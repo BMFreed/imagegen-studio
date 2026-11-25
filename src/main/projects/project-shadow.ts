@@ -216,36 +216,9 @@ export class ProjectShadowStore {
     }
     const directory = path.join(this.root, key)
     return await withKeyLock(key, async () => {
-      let manifest: ShadowManifest | null
-      try {
-        await requireDirectory(this.root)
-        await requireDirectory(directory)
-        manifest = await readManifest(directory)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return { status: 'absent' }
-        }
-        if (error instanceof ProjectShadowError) {
-          return {
-            reason:
-              error.code === 'SHADOW_VERSION_UNSUPPORTED'
-                ? 'SHADOW_VERSION_UNSUPPORTED'
-                : error.code === 'SHADOW_PATH_UNSAFE'
-                  ? 'SHADOW_PATH_UNSAFE'
-                  : 'MANIFEST_INVALID',
-            status: 'invalid',
-          }
-        }
-        return { reason: 'SHADOW_IO_ERROR', status: 'invalid' }
-      }
-      if (!manifest) {
-        return { status: 'absent' }
-      }
-      if (manifest.localProjectKey !== key) {
-        return { reason: 'SHADOW_PATH_UNSAFE', status: 'invalid' }
-      }
-      if (manifest.state === 'clean') {
-        return { status: 'clean' }
+      const manifest = await this.inspectManifest(directory, key)
+      if ('status' in manifest) {
+        return manifest
       }
       const saved = input.savedPackage.project
       const savedHash = sha256(documentBytes(saved))
@@ -396,6 +369,15 @@ export class ProjectShadowStore {
         documentRevision: document.documentRevision,
         status: 'recoverable',
       }
+    })
+  }
+
+  /** Home has validated the saved package. A dirty shadow still needs its saved document. */
+  async inspectWithoutSavedPackage(projectPath: string): Promise<ProjectShadowInspection | null> {
+    const { directory, key } = await this.identify(projectPath)
+    return await withKeyLock(key, async () => {
+      const result = await this.inspectManifest(directory, key)
+      return 'status' in result ? result : null
     })
   }
 
@@ -642,6 +624,44 @@ export class ProjectShadowStore {
     }
     const key = localProjectRecoveryKey(canonical)
     return { directory: path.join(this.root, key), key }
+  }
+
+  private async inspectManifest(
+    directory: string,
+    key: string,
+  ): Promise<DirtyManifest | ProjectShadowInspection> {
+    let manifest: ShadowManifest | null
+    try {
+      await requireDirectory(this.root)
+      await requireDirectory(directory)
+      manifest = await readManifest(directory)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { status: 'absent' }
+      }
+      if (error instanceof ProjectShadowError) {
+        return {
+          reason:
+            error.code === 'SHADOW_VERSION_UNSUPPORTED'
+              ? 'SHADOW_VERSION_UNSUPPORTED'
+              : error.code === 'SHADOW_PATH_UNSAFE'
+                ? 'SHADOW_PATH_UNSAFE'
+                : 'MANIFEST_INVALID',
+          status: 'invalid',
+        }
+      }
+      return { reason: 'SHADOW_IO_ERROR', status: 'invalid' }
+    }
+    if (!manifest) {
+      return { status: 'absent' }
+    }
+    if (manifest.localProjectKey !== key) {
+      return { reason: 'SHADOW_PATH_UNSAFE', status: 'invalid' }
+    }
+    if (manifest.state === 'clean') {
+      return { status: 'clean' }
+    }
+    return manifest
   }
 }
 

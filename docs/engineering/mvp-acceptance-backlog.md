@@ -520,6 +520,13 @@ entries record the state at their checkpoint.
    [Linked-workspace measurements](./phase-5-packaged-home-scale-research.md#linked-workspace-measurements)
    [Four Raster layers in Main](./phase-5-packaged-home-scale-research.md#four-raster-layers-per-project-in-main)
    [Layered AppImage measurements](./phase-5-packaged-home-scale-research.md#multi-layer-home-in-the-appimage-renderer)
+   Home now reuses the current scan's archive validation for terminal
+   shadow checks. The matched four-Raster Main Refresh improved from
+   7.90 s to 4.50 s. Dirty shadows and files replaced during the
+   request go through the full reader. The current AppImage passed both
+   four-Raster lifetimes on private KDE Wayland and reached all 128 cards
+   on indexed restart in 11.96 s.
+   [Per-request archive validation](./phase-5-packaged-home-scale-research.md#reuse-archive-validation-within-one-home-request)
    The combined Home request now updates the sidebar count when a retry
    discovers a Project in a folder that has just returned.
    [Workspace retry regression](./phase-5-packaged-home-scale-research.md#sidebar-count-after-a-workspace-returns)

@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -46,13 +56,16 @@ class WorkspaceFixture {
     return directory
   }
 
-  makeService(repository = this.repository): ProjectService {
+  makeService(
+    repository = this.repository,
+    shadow = new ProjectShadowStore(path.join(this.dataRoot, 'autosave')),
+  ): ProjectService {
     const service = new ProjectService({
       autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
       dataRoot: this.dataRoot,
       repository,
       roots: this.roots,
-      shadow: new ProjectShadowStore(path.join(this.dataRoot, 'autosave')),
+      shadow,
     })
     this.services.push(service)
     return service
@@ -264,6 +277,10 @@ test('non-default recovery and Save use the registered workspace index', async (
     await fixture.service.flushAutosave(created.id)
     const restarted = fixture.makeService()
     assert.equal((await restarted.list(added.id))[0].recoveryStatus, 'recoverable')
+    assert.equal(
+      (await restarted.listHomeCatalog(added.id)).projects[0].recoveryStatus,
+      'recoverable',
+    )
     assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
     const recovered = await restarted.resolveRecovery(created.id, 'recover')
     assert.equal(recovered.primaryBbox.x, 91)
@@ -524,9 +541,10 @@ test('Home shares one scan per workspace and each request sees external Project 
     class ObservedIndex extends ProjectIndexRepository {
       readonly scans: string[] = []
 
-      override async scanWorkspace(workspaceId: string) {
+      override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+        const [workspaceId] = args
         this.scans.push(workspaceId)
-        return await super.scanWorkspace(workspaceId)
+        return await super.scanWorkspace(...args)
       }
     }
     const repository = new ObservedIndex(fixture.database.db)
@@ -603,13 +621,14 @@ test('Home projects recovered workspace counts and cards from the same refresh',
     class TransientIndex extends ProjectIndexRepository {
       attempts = 0
 
-      override async scanWorkspace(workspaceId: string) {
+      override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+        const [workspaceId] = args
         if (workspaceId !== added.id || ++this.attempts !== 1) {
-          return await super.scanWorkspace(workspaceId)
+          return await super.scanWorkspace(...args)
         }
         await rename(added.directoryPath, moved)
         try {
-          return await super.scanWorkspace(workspaceId)
+          return await super.scanWorkspace(...args)
         } finally {
           await rename(moved, added.directoryPath)
         }
@@ -629,6 +648,69 @@ test('Home projects recovered workspace counts and cards from the same refresh',
     assert.deepEqual(await readFile(external.filePath), before)
   })
 })
+
+for (const replacementPoint of ['after scan', 'during shadow inspection'] as const) {
+  test(`Home rechecks a package replaced ${replacementPoint}`, async () => {
+    await withWorkspaceFixture(async (fixture) => {
+      const workspace = await fixture.service.addWorkspace(
+        { color: 'green', displayName: 'Observed workspace' },
+        await fixture.folder('observed'),
+      )
+      const session = await ProjectSession.create(
+        path.join(workspace.directoryPath, 'observed.igs'),
+        'Observed Project',
+        fixture.roots,
+      )
+      const replacementBytes = Buffer.from('corrupt replacement')
+      const replacement = path.join(workspace.directoryPath, 'replacement.tmp')
+      await writeFile(replacement, replacementBytes)
+      let replacementPending = true
+      const replace = async () => {
+        if (replacementPending) {
+          replacementPending = false
+          await rename(replacement, session.filePath)
+        }
+      }
+      class ObservedIndex extends ProjectIndexRepository {
+        override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+          const records = await super.scanWorkspace(...args)
+          if (args[0] === workspace.id && replacementPoint === 'after scan') {
+            await replace()
+          }
+          return records
+        }
+      }
+      class ObservedShadow extends ProjectShadowStore {
+        override async inspectWithoutSavedPackage(projectPath: string) {
+          const inspection = await super.inspectWithoutSavedPackage(projectPath)
+          if (projectPath === session.filePath && replacementPoint === 'during shadow inspection') {
+            await replace()
+          }
+          return inspection
+        }
+      }
+      const service = fixture.makeService(
+        new ObservedIndex(fixture.database.db),
+        new ObservedShadow(path.join(fixture.dataRoot, 'autosave')),
+      )
+      const first = await service.listHomeCatalog(workspace.id)
+      assert.deepEqual(
+        first.projects.map(({ health, recoveryReason, recoveryStatus }) => [
+          health,
+          recoveryStatus,
+          recoveryReason,
+        ]),
+        [['ready', 'invalid', 'The local recovery state could not be inspected.']],
+      )
+      const refreshed = await service.listHomeCatalog(workspace.id)
+      assert.deepEqual(
+        refreshed.projects.map(({ health, recoveryStatus }) => [health, recoveryStatus]),
+        [['corrupt', 'none']],
+      )
+      assert.deepEqual(await readFile(session.filePath), replacementBytes)
+    })
+  })
+}
 
 test('cross-workspace refresh isolates availability errors and propagates real repository failures', async () => {
   await withWorkspaceFixture(async (fixture) => {

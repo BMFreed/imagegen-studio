@@ -435,3 +435,94 @@ The build receipts, matched profiles and 32-project regression are under
 physical exit and retention checks reclaimed 1,252,777,984 allocated bytes.
 The reports, screenshots, source hashes, closed SQLite indexes and sample
 archives remain.
+
+## Reuse archive validation within one Home request
+
+The clean InvokeAI source was `4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/frontend/webv2/src/workbench/launchpad/home/RecentProjectsRow.tsx`
+consumes the project library in `workbench/projects/library.ts` under the
+same frontend source root. The library refresh shares an active request
+through `platform/state/singleFlight.ts`. The project list in
+`invokeai/app/api/routers/projects.py` calls
+`invokeai/app/services/project_records/project_records_default.py`, which
+projects lightweight SQLite summaries in
+`invokeai/app/services/shared/database/queries/projects.py`.
+The workbench boot in `workbench/projects/durableSyncedPersistence.ts`
+selects and hydrates documents separately. Invoke's database summaries
+have no external archive or separate filesystem recovery manifest to
+validate. Studio keeps its package validation and adapts the lightweight
+summary path to the already successful scan within one Home request.
+
+Main records the exact ready package returned by the scanner. It shares
+observations from completed workspace scans only. Before and after reading
+the shadow manifest, Home matches the row's workspace and canonical path
+and rechecks the file fingerprint, including device, inode, size,
+modification time and change time. A terminal manifest status can use
+that validation. A dirty shadow, missing scan observation or file change
+uses the full archive reader and the ordinary shadow inspection. Opening
+and resolving Recovery still use their own package checks. The ephemeral
+scan observation is consumed within the same Home request.
+
+The two regression cases replace the path with a corrupt file after the
+workspace scan or after the preliminary shadow check. Both report an
+invalid recovery check on the indexed card. The next Refresh marks it
+corrupt, and the replacement bytes remain intact. The dirty shadow case
+remains recoverable through Home and can still be opened and saved. An
+isolated mutation removing the second fingerprint check fails the late
+replacement test and passes its early-replacement neighbor. Restoring the
+same source passes both.
+
+The matched CPU runner used 128 projects in three folders with the same
+128 four-Raster packages, 120% CPU quota, 4 GiB RAM and zero swap. These
+are Main timings after initialization, with one sample per operation in
+each run and the ordinary OS cache.
+
+| Four-Raster Home operation in Main | Baseline | Shared validation |
+| ---------------------------------- | -------: | ----------------: |
+| First catalog on indexed restart   |   8.30 s |            4.69 s |
+| Refresh, same files                |   7.90 s |            4.50 s |
+| Refresh, changed files             |   7.66 s |            4.67 s |
+| Scoped Refresh                     |   5.69 s |            4.71 s |
+
+Both runs discovered the external replacement and added Project, marked
+the moved archive missing, verified saved preview resources and preserved
+the 126 unchanged neighbors. An independent audit verified 1,028 rows in
+eight closed SQLite snapshots and rehashed 24 live and retained sample
+archives. The final annotation adjustment emits identical JavaScript.
+Code-order checks also match the measured and final method bodies and
+preserve the order of other class members.
+
+A separate `strace` run covered two calls to actual
+`ProjectService.listHomeCatalog` after initialization, using the same
+three packages. The control suppressed the scan observation. A ready
+package with absent or clean shadow went from four successful read opens
+to two. A dirty recoverable shadow still required four opens. The
+catalog responses, package bytes and shadow states matched. The first
+trace attempt stopped before measurement because normal Close retired
+the clean fixture shadow. R2 created the clean manifest with Save and
+`markClean` and verified all 24 trace files after their processes exited.
+
+Local receipts and closed indexes are under
+`runs/home-catalog-layered-main/20261125-repeat-read-a` and
+`20261125-repeat-read-c`. Run B measured an intermediate implementation.
+Its typecheck exposed saved-member access on a lazy loader. The final
+implementation limits the preliminary check to the manifest and sends
+dirty shadows down the existing reader.
+
+The final source passed 198 focused tests, full typecheck and app build,
+with scoped formatting and lint checks. The same source built an AppImage
+that opened the 128 four-Raster Projects on private software-rendered KDE
+Wayland at 900×620. The two lifetimes checked Grid and List, search, folder
+counts and six saved Inspector previews. Both closed normally and
+verified all 128 archive identities and the real index. First launch
+reached all cards in 12.96 s and Refresh took 8.13 s. The indexed restart
+reached all cards in 11.96 s and Refresh took 8.58 s. These are two
+separate one-sample lifetimes with the existing 120% CPU quota. Peak group
+memory was 2,377,981,952 bytes with zero swap and OOM.
+
+Two earlier harness attempts stopped before launching Electron. One
+lacked the package proof sidecar, and the other used a run name outside
+the harness's accepted pattern. The successful attempt reused the
+same AppImage bytes. Its reports, screenshots, closed index and sample
+archive are under `runs/packaged-home-scale/20261125-r51`. The syscall
+evidence is under `runs/home-catalog-repeat-read-trace/20261125-r2`.
