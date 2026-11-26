@@ -66,6 +66,11 @@ environment and remaining limits, and update the current stage and next run.
         focus to Home. The name and color survived cancellation and were used
         by the subsequent successful registration.
         [Native Add Workspace result](./phase-5-packaged-workspace-chooser-research.md#keyboard-focus-after-canceling-add-workspace-folder-selection)
+  - [x] Canceling Locate Folder from the Home warning returns focus to the
+        action with the cached workspace intact. Workspace Settings opens from
+        the sidebar as a modal, keeps Tab inside, and returns focus after Escape.
+        Four sampled labels meet 4.5:1 at 900×620.
+        [Native Locate and Settings result](./phase-5-packaged-workspace-chooser-research.md#locate-folder-cancellation-and-workspace-settings)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
         normal close.
@@ -85,6 +90,11 @@ environment and remaining limits, and update the current stage and next run.
         22.23–22.93 s on the candidate. Complete-catalog response time
         remains open.
         [Cold Home startup comparison](./phase-5-packaged-home-scale-research.md#discover-projects-after-the-home-window-opens)
+  - [x] Profiled the first complete 256-Project Main catalog with both a fresh
+        and an existing SQLite index. PNG member reads and validation took
+        7.56–7.69 s. The diagnostic points to byte-verified projection reuse
+        across restart as the next performance check.
+        [Cold Main timings](./phase-5-packaged-home-scale-research.md#time-spent-on-the-first-256-project-catalog)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old

@@ -78,6 +78,7 @@ function save() {
   >
     <NCard
       aria-label="Workspace Settings"
+      aria-modal="true"
       class="workspace-settings-modal"
       contentScrollable
       role="dialog"

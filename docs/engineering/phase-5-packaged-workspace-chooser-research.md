@@ -233,3 +233,47 @@ The 29 focused Home browser tests, full typecheck, scoped lint, app build and
 AppImage packaging passed. Cleanup reclaimed 423,292,928 allocated bytes
 from the private profiles, scratch directories and unpacked build.
 The exact candidate AppImage, synthetic archives and compact evidence remain.
+
+## Locate Folder cancellation and Workspace Settings
+
+The linked workspace was unavailable after its folder moved externally.
+In stock R3 at `060023e2`, trusted Tab and Enter opened Locate Folder from the
+Home warning. KDE canceled the native request, and focus landed on `body`
+even after the application regained window focus. The cached registration
+survived. Workspace Settings opened from the workspace actions menu and kept
+Tab and Shift+Tab inside its dialog. Escape focused the original menu button.
+The named card appeared as `modal: false` in Chromium.
+
+The Home renderer now keeps the focused action and restores it after the
+pending Locate UI has cleared, while the same Home context and action
+remain available. A successful Locate refreshes the changed folder.
+The existing Settings card supplies `aria-modal="true"` on its dialog
+role. Naive continues to handle Tab and Escape.
+[Home renderer](../../src/renderer/App.vue)
+· [Workspace Settings](../../src/renderer/components/WorkspaceSettingsModal.vue)
+
+The existing opt-in FUSE scenario at 900×620 exercises both additional
+keyboard paths. The native Locate Cancel uses the real chooser while
+its six portal outcomes, wrong-folder refusal, exact repoint, reopen
+and three normal closes all run before the keyboard verdict.
+The original Add Workspace keyboard path is an adjacent control.
+
+R3 failed only the Locate focus and two Settings modal assertions.
+R4 passed all three. Locate regained keyboard focus and its text changed
+to the focused color. Chromium exposed one modal Workspace Settings
+dialog. Tab and Shift+Tab stayed inside it, and Escape returned visible
+focus to the workspace action. On the 900×620 screenshots, the sampled
+text contrasts were 7.41:1 for focused Locate Folder, 11.54:1 for the
+Settings title, 9.84:1 for Cancel and 12.76:1 for Save.
+
+Independent readback matched 72 trusted key events, six portal
+exchanges, three closed SQLite snapshots, five archives with 15 listed
+members, three FUSE unmounts and 27 exited process identities per run.
+Of the 13 source pins only the Home renderer and Settings card changed.
+Candidate AppImage SHA-256 is
+`edc5a05909d39500b0b675b127fecad36ae766f39e35eaa4a691af2ab36b3511`.
+The 29 focused Home browser tests, full typecheck, scoped lint, app build
+and packaging passed. Native results are under
+`runs/packaged-workspace-chooser/20261126-r3` and `20261126-r4`.
+Cleanup reclaimed 423,313,408 allocated bytes. The exact AppImage,
+closed indexes, archive samples, screenshots and records remain.

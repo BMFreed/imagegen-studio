@@ -340,6 +340,10 @@ After confirmed removal, **Search projects** in Uncategorized takes focus
 when the previously focused control has gone. An existing focus target keeps
 focus. [Packaged keyboard and contrast check](../engineering/phase-5-packaged-workspace-chooser-research.md#workspace-removal-focus-and-search-contrast)
 
+Canceling **Locate Folder** returns keyboard focus to its surviving action
+on the same Home view. **Workspace Settings** opens as a named modal.
+On Escape, focus returns to the action that opened it.
+
 ## Cross-Workspace View
 
 The sidebar exposes one cross-workspace browse view above the concrete workspace list:

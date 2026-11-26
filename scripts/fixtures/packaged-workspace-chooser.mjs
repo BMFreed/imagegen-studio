@@ -23,6 +23,7 @@ import { ProjectSession } from '../../src/main/projects/project-session.ts'
 import {
   keyboardWorkspaceColor,
   qualifyAddWorkspaceKeyboard,
+  qualifyWorkspaceRelocationKeyboard,
 } from './packaged-add-workspace-keyboard.mjs'
 import { connectNativeInput } from './packaged-home-recovery-keyboard.mjs'
 import { driveKdeDirectoryChooser } from './packaged-kde-chooser.mjs'
@@ -305,7 +306,19 @@ export async function runPackagedWorkspaceChooser({
     windowTitle: 'Locate Workspace Folder',
     trigger: homeOf(second).getByRole('button', { exact: true, name: 'Locate Folder' }),
   }
-  chooser.push(await driveKdeDirectoryChooser(locate))
+  let relocationKeyboardResult
+  if (keyboard) {
+    const checked = await qualifyWorkspaceRelocationKeyboard({
+      root,
+      state: second,
+      displayName,
+      locate,
+    })
+    relocationKeyboardResult = checked.result
+    chooser.push(checked.choice)
+  } else {
+    chooser.push(await driveKdeDirectoryChooser(locate))
+  }
   await expect(locate.trigger).toBeEnabled()
   assert.deepEqual(snapshot(database), beforeLocate)
   chooser.push(await driveKdeDirectoryChooser({ ...locate, source: wrong }))
@@ -348,6 +361,7 @@ export async function runPackagedWorkspaceChooser({
   const result = {
     chooser,
     ...(keyboardResult && { keyboard: keyboardResult }),
+    ...(relocationKeyboardResult && { relocationKeyboard: relocationKeyboardResult }),
     registeredIndex,
     locatedIndex,
     reopenedIndex,
@@ -363,7 +377,13 @@ export async function runPackagedWorkspaceChooser({
       mode: 0o600,
     },
   )
-  if (keyboardResult) assert.deepEqual(keyboardResult.issues, [], 'Add Workspace keyboard findings')
+  if (keyboard) {
+    assert.deepEqual(
+      [...keyboardResult.issues, ...relocationKeyboardResult.issues],
+      [],
+      'Workspace keyboard findings',
+    )
+  }
   return result
 }
 

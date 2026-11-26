@@ -4447,11 +4447,16 @@ async function locateWorkspace(workspaceId: string) {
   ) {
     return
   }
+  const homeIntent = captureHomePresentationIntent()
+  const scope = browseWorkspaceId.value
+  const focused = document.activeElement
+  const trigger = focused instanceof HTMLElement && focused.closest('.home-view') ? focused : null
+  let located = false
   queueResultNavigator.cancelProjectOpen()
   pendingProjectAction.value = { kind: 'workspace-locate' }
   homeError.value = null
   try {
-    const located = await apiValue(() => projectApi().locateWorkspace(workspaceId))
+    located = await apiValue(() => projectApi().locateWorkspace(workspaceId))
     if (located) {
       await refreshProjects()
     }
@@ -4459,6 +4464,21 @@ async function locateWorkspace(workspaceId: string) {
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+    if (!located && homeIntent && trigger) {
+      // While the chooser is open, Home disables the action that had focus.
+      void nextTick(() => {
+        if (
+          homeOpenIntentCurrent(homeIntent) &&
+          browseWorkspaceId.value === scope &&
+          !pendingProjectAction.value &&
+          document.activeElement === document.body &&
+          trigger.isConnected &&
+          !trigger.matches(':disabled, [aria-disabled="true"]')
+        ) {
+          trigger.focus({ preventScroll: true })
+        }
+      })
+    }
   }
 }
 

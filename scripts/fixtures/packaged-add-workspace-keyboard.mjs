@@ -11,12 +11,15 @@ const name = 'Add Workspace'
 const colorLabel = 'Violet'
 export const keyboardWorkspaceColor = 'violet'
 
-async function accessibleDialogs(page) {
+async function accessibleDialogs(page, dialogName) {
   const session = await page.context().newCDPSession(page)
   try {
     const { nodes } = await session.send('Accessibility.getFullAXTree')
     return nodes
-      .filter((node) => !node.ignored && node.role?.value === 'dialog' && node.name?.value === name)
+      .filter(
+        (node) =>
+          !node.ignored && node.role?.value === 'dialog' && node.name?.value === dialogName,
+      )
       .map((node) => ({
         name: node.name.value,
         modal: node.properties?.find((property) => property.name === 'modal')?.value.value ?? null,
@@ -37,6 +40,26 @@ async function focusOf(locator) {
       activeLabel: active?.getAttribute('aria-label') ?? null,
     }
   })
+}
+
+async function reach(input, locator, phase) {
+  await expect(locator).toBeVisible()
+  for (let count = 0; count < 48 && !(await focusOf(locator)).active; count++) {
+    await input.press('Tab', phase)
+  }
+  await expect(locator).toBeFocused()
+}
+
+async function observeReturn(locator, phase, record, issues) {
+  await expect(locator)
+    .toBeFocused({ timeout: 2000 })
+    .catch(() => {})
+  const focus = await focusOf(locator)
+  await record({ phase, focus })
+  if (!focus.active || !focus.visible || !focus.windowFocused) {
+    issues.push(phase + ': visible focus did not return')
+  }
+  return focus
 }
 
 export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) {
@@ -63,27 +86,8 @@ export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) 
   const check = (condition, message) => {
     if (!condition) issues.push(message)
   }
-  async function reach(locator, phase) {
-    await expect(locator).toBeVisible()
-    for (let count = 0; count < 48 && !(await focusOf(locator)).active; count++) {
-      await input.press('Tab', phase)
-    }
-    await expect(locator).toBeFocused()
-  }
-  async function observeReturn(locator, phase) {
-    await expect(locator)
-      .toBeFocused({ timeout: 2000 })
-      .catch(() => {})
-    const focus = await focusOf(locator)
-    await record({ phase, focus })
-    check(
-      focus.active && focus.visible && focus.windowFocused,
-      phase + ': visible focus did not return',
-    )
-    return focus
-  }
   async function openAndPrepare() {
-    await reach(opener, 'reach-add-workspace')
+    await reach(input, opener, 'reach-add-workspace')
     await input.press('Return', 'open-add-workspace')
     await expect(dialog).toBeVisible()
     await draft.fill(displayName)
@@ -93,7 +97,7 @@ export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) 
     await expect(submit).toBeEnabled()
   }
   async function cancelPicker(origin, target) {
-    await reach(target, 'reach-picker-' + origin)
+    await reach(input, target, 'reach-picker-' + origin)
     const choice = await driveKdeDirectoryChooser({
       state,
       windowTitle: name,
@@ -102,14 +106,14 @@ export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) 
     await expect(submit).toBeEnabled()
     await expect(draft).toHaveValue(displayName)
     await expect(color).toContainText(colorLabel)
-    const focus = await observeReturn(target, 'return-' + origin)
+    const focus = await observeReturn(target, 'return-' + origin, record, issues)
     await screenshot('return-' + origin)
     return { choice, focus }
   }
 
   await openAndPrepare()
   const ariaModal = await dialog.getAttribute('aria-modal')
-  const accessibility = await accessibleDialogs(page)
+  const accessibility = await accessibleDialogs(page, name)
   check(ariaModal === 'true', 'Add Workspace lacks aria-modal=true')
   check(
     accessibility.length === 1 && accessibility[0].modal === true,
@@ -122,7 +126,7 @@ export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) 
   await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
   await input.press('Escape', 'escape-add-workspace')
   await expect(dialog).toBeHidden()
-  const openerFocus = await observeReturn(opener, 'return-to-home-opener')
+  const openerFocus = await observeReturn(opener, 'return-to-home-opener', record, issues)
   await screenshot('escaped')
 
   await openAndPrepare()
@@ -143,4 +147,79 @@ export async function qualifyAddWorkspaceKeyboard({ root, state, displayName }) 
     },
   )
   return { result, chooser: [fromName.choice, fromSubmit.choice] }
+}
+
+export async function qualifyWorkspaceRelocationKeyboard({ root, state, displayName, locate }) {
+  const { page } = state
+  const home = page.getByRole('region', { exact: true, name: 'Home' })
+  const settings = 'Workspace Settings'
+  const opener = home.getByRole('button', {
+    exact: true,
+    name: `${displayName} workspace actions`,
+  })
+  const dialog = page.getByRole('dialog', { exact: true, name: settings })
+  const menuOption = page.getByText(settings, { exact: true })
+  const trace = path.join(root, 'workspace-relocation-keyboard.ndjson')
+  await writeFile(trace, '', { flag: 'wx', mode: 0o600 })
+  const record = (entry) => appendFile(trace, JSON.stringify(entry) + '\n')
+  const screenshot = (phase) =>
+    page.screenshot({
+      path: path.join(root, `workspace-relocation-keyboard-${phase}.png`),
+      animations: 'disabled',
+    })
+  const issues = []
+  const input = await connectNativeInput(state, record, root)
+  await input.resize(900, 620)
+
+  await reach(input, locate.trigger, 'reach-locate-folder')
+  const choice = await driveKdeDirectoryChooser({
+    ...locate,
+    activate: () => input.press('Return', 'open-locate-folder'),
+  })
+  await expect(locate.trigger).toBeEnabled()
+  const locateFocus = await observeReturn(locate.trigger, 'return-locate-folder', record, issues)
+  await screenshot('locate-canceled')
+
+  await reach(input, opener, 'reach-workspace-actions')
+  await input.press('Return', 'open-workspace-actions')
+  await expect(menuOption).toBeVisible()
+  await input.press('Down', 'select-workspace-settings')
+  await input.press('Return', 'open-workspace-settings')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('textbox', { exact: true, name: 'Workspace name' })).toHaveValue(
+    displayName,
+  )
+  const ariaModal = await dialog.getAttribute('aria-modal')
+  const accessibility = await accessibleDialogs(page, settings)
+  if (ariaModal !== 'true') issues.push('Workspace Settings lacks aria-modal=true')
+  if (accessibility.length !== 1 || accessibility[0].modal !== true) {
+    issues.push('Chromium does not expose one modal Workspace Settings dialog')
+  }
+  await record({ phase: 'settings-modal-semantics', ariaModal, accessibility })
+  await screenshot('settings-open')
+
+  const tabFocus = []
+  for (const key of ['Tab', 'shift+Tab']) {
+    await input.press(key, 'settings-keep-focus')
+    const withinDialog = await dialog.evaluate((card) => card.contains(document.activeElement))
+    tabFocus.push({ key, withinDialog })
+    if (!withinDialog) issues.push(`Workspace Settings focus escaped on ${key}`)
+  }
+  await record({ phase: 'settings-tab-focus', tabFocus })
+  await input.press('Escape', 'escape-workspace-settings')
+  await expect(dialog).toBeHidden()
+  const settingsFocus = await observeReturn(opener, 'return-workspace-actions', record, issues)
+  await screenshot('settings-escaped')
+
+  const result = {
+    issues,
+    locateFocus,
+    settings: { ariaModal, accessibility, tabFocus, focus: settingsFocus },
+  }
+  await writeFile(
+    path.join(root, 'workspace-relocation-keyboard.json'),
+    JSON.stringify(result, null, 2) + '\n',
+    { flag: 'wx', mode: 0o600 },
+  )
+  return { result, choice }
 }
