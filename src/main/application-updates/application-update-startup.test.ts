@@ -357,12 +357,14 @@ async function preserves(
   overrides: Partial<Parameters<typeof inspectRetainedApplicationUpdate>[0]> = {},
 ) {
   const before = await inventory(f.root)
-  assert.deepEqual(await inspect(f, overrides), expected)
+  const observation = await inspect(f, overrides)
+  assert.deepEqual(observation, expected)
   assert.deepEqual(
     await inventory(f.root),
     before,
     'Inspection preserves all owned fixture bytes and identities.',
   )
+  return observation
 }
 
 test('offline activated and relaunching targets reauthenticate after native cache loss without writes', async (t) => {
@@ -379,26 +381,36 @@ test('offline activated and relaunching targets reauthenticate after native cach
   }
 })
 
-test('an unleased writer replaces an authenticated target while cooperating update admission stays held', async (t) => {
-  const f = await fixture(t)
-  const replacement = path.join(f.applications, 'owned-unleased-replacement')
-  const replacementBytes = image(97)
-  await fs.writeFile(replacement, replacementBytes, { flag: 'wx', mode: 0o755 })
-  const replacementIdentity = await snapshot(replacement)
-  const targetBefore = await snapshot(f.currentAppImage)
-  const retainedBefore = await inventory(f.stage)
-  assert.deepEqual(await fs.readFile(f.currentAppImage), f.newBytes)
-  assert.notEqual(replacementIdentity.identity.ino, targetBefore.identity.ino)
-  assert.notEqual(replacementIdentity.sha512, targetBefore.sha512)
+for (const schemaVersion of [1, 2] as const) {
+  const testName =
+    schemaVersion === 1
+      ? 'an unleased writer replaces an authenticated target while cooperating update admission stays held'
+      : 'an unleased writer replaces a v2 target despite matching publisher runtime files and held admission'
+  test(testName, async (t) => {
+    const f = await fixture(t, undefined, false, schemaVersion)
+    const runtime = schemaVersion === 2 ? await loadedRuntimeSource(t, f) : null
+    const runtimeDirectory = runtime ? path.dirname(runtime.archivePath) : null
+    const runtimeBefore = runtimeDirectory ? await inventory(runtimeDirectory) : null
+    const overrides = runtime ? { currentSource: runtime.source } : {}
+    const expected = runtime ? runtimeVerified : verified
+    const replacement = path.join(f.applications, 'owned-unleased-replacement')
+    const replacementBytes = image(97)
+    await fs.writeFile(replacement, replacementBytes, { flag: 'wx', mode: 0o755 })
+    const replacementIdentity = await snapshot(replacement)
+    const targetBefore = await snapshot(f.currentAppImage)
+    const retainedBefore = await inventory(f.stage)
+    assert.deepEqual(await fs.readFile(f.currentAppImage), f.newBytes)
+    assert.notEqual(replacementIdentity.identity.ino, targetBefore.identity.ino)
+    assert.notEqual(replacementIdentity.sha512, targetBefore.sha512)
 
-  // A separate process can publish its own file without taking the cooperating lock.
-  // This controlled writer never loads or executes either synthetic image.
-  const writer = spawn(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      `import assert from 'node:assert/strict';
+    // A separate process can publish its own file without taking the cooperating lock.
+    // This controlled writer never loads or executes either synthetic image.
+    const writer = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import assert from 'node:assert/strict';
        import { renameSync } from 'node:fs';
        process.once('message', (request) => {
          assert.equal(request, 'publish');
@@ -406,49 +418,57 @@ test('an unleased writer replaces an authenticated target while cooperating upda
          process.disconnect();
        });
        process.send('waiting');`,
-      replacement,
-      f.currentAppImage,
-    ],
-    {
-      cwd: f.applications,
-      env: { LANG: 'C', LC_ALL: 'C' },
-      killSignal: 'SIGKILL',
-      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-      timeout: 10_000,
-    },
-  )
-  const closed = once(writer, 'close')
-  let admission: ReturnType<typeof acquireApplicationUpdateAdmission> | undefined
-  try {
-    const [message] = await Promise.race([once(writer, 'message'), closed])
-    assert.equal(
-      message,
-      'waiting',
-      'The unleased writer is live and waiting before admission and inspection.',
+        replacement,
+        f.currentAppImage,
+      ],
+      {
+        cwd: f.applications,
+        env: { LANG: 'C', LC_ALL: 'C' },
+        killSignal: 'SIGKILL',
+        stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+        timeout: 10_000,
+      },
     )
-    admission = acquireApplicationUpdateAdmission(f.currentAppImage)
-    admission.assertHeld()
-    await preserves(f, verified)
+    const closed = once(writer, 'close')
+    let admission: ReturnType<typeof acquireApplicationUpdateAdmission> | undefined
+    try {
+      const [message] = await Promise.race([once(writer, 'message'), closed])
+      assert.equal(
+        message,
+        'waiting',
+        'The unleased writer is live and waiting before admission and inspection.',
+      )
+      admission = acquireApplicationUpdateAdmission(f.currentAppImage)
+      admission.assertHeld()
+      const beforePublication = await preserves(f, expected, overrides)
 
-    writer.send('publish')
-    assert.deepEqual(await closed, [0, null])
-    admission.assertHeld()
-    assert.throws(() => acquireApplicationUpdateAdmission(f.currentAppImage).release(), {
-      code: 'APPLICATION_UPDATE_BUSY',
-    })
-    await assert.rejects(fs.lstat(replacement), { code: 'ENOENT' })
-    assert.equal((await snapshot(f.currentAppImage)).identity.ino, replacementIdentity.identity.ino)
-    assert.deepEqual(await fs.readFile(f.currentAppImage), replacementBytes)
-    await preserves(f, unverified)
-    assert.deepEqual(await inventory(f.stage), retainedBefore)
-  } finally {
-    admission?.release()
-    if (writer.exitCode === null && writer.signalCode === null) {
-      writer.kill('SIGKILL')
+      writer.send('publish')
+      assert.deepEqual(await closed, [0, null])
+      admission.assertHeld()
+      assert.throws(() => acquireApplicationUpdateAdmission(f.currentAppImage).release(), {
+        code: 'APPLICATION_UPDATE_BUSY',
+      })
+      await assert.rejects(fs.lstat(replacement), { code: 'ENOENT' })
+      assert.equal(
+        (await snapshot(f.currentAppImage)).identity.ino,
+        replacementIdentity.identity.ino,
+      )
+      assert.deepEqual(await fs.readFile(f.currentAppImage), replacementBytes)
+      await preserves(f, unverified, overrides)
+      assert.deepEqual(beforePublication, expected)
+      assert.deepEqual(await inventory(f.stage), retainedBefore)
+      if (runtimeDirectory) {
+        assert.deepEqual(await inventory(runtimeDirectory), runtimeBefore)
+      }
+    } finally {
+      admission?.release()
+      if (writer.exitCode === null && writer.signalCode === null) {
+        writer.kill('SIGKILL')
+      }
+      await closed
     }
-    await closed
-  }
-})
+  })
+}
 
 test('safe absent stage returns none without reading the current body or requesting trust', async (t) => {
   const f = await fixture(t)

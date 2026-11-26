@@ -121,6 +121,14 @@ environment and remaining limits, and update the current stage and next run.
         C kept the dirty draft until explicit Project Save. D reported
         recovery clear and opened that exact revision.
         [Repeated native recovery](./phase-5-packaged-recovery-kde-next-update-research.md#a-subsequent-signed-recovery-on-a-fresh-path)
+  - [x] A live unleased writer replaced the target while signed target and
+        runtime verification had matched and the cooperating lock was held.
+        A fresh inspection demoted both matches and preserved recovery data.
+        [Signed runtime ownership control](./phase-5-application-update-interruption-research.md#a-signed-runtime-match-and-an-unleased-writer)
+  - [x] Review and Install now give a save-and-restart path when a stage
+        appears during the session. The renderer checks preserved the
+        download and exercised manual dismissal without a Project close.
+        [Late recovery guidance](./phase-5-application-update-interruption-research.md#guidance-after-a-stage-appears-during-the-session)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery

@@ -18,12 +18,13 @@ interface PreviewPlan {
 interface PreviewFixtureOptions {
   installs?: InstallPlan[]
   plans?: PreviewPlan[]
+  recovery?: ApplicationUpdateRecoverySnapshot
   snapshot?: ApplicationUpdateSnapshot
 }
 
 interface InstallPlan {
   hold?: boolean
-  kind?: 'error' | 'mismatch' | 'source' | 'throw'
+  kind?: 'error' | 'mismatch' | 'recovery' | 'source' | 'throw'
 }
 
 interface PreviewFixture {
@@ -48,6 +49,8 @@ const version = '0.2.0'
 const publicFailure = 'Preview unavailable. Try again.'
 const installFailure =
   'The application could not start installation. Review the update and try again.'
+const recoveryMessage =
+  'Application update recovery is required. Save your work, restart ImageGen Studio, then open Application Updates again.'
 
 const downloaded: ApplicationUpdateSnapshot = {
   availableVersion: version,
@@ -148,6 +151,14 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
         state.mutationCalls.push(name)
         return { ok: true, value: undefined }
       }
+      const recoveryRefused = {
+        error: {
+          code: 'APPLICATION_UPDATE_RECOVERY_REQUIRED',
+          message:
+            'Application update recovery is required before installation. Your Projects remain open.',
+        },
+        ok: false as const,
+      }
       const api = {
         applicationUpdates: {
           check: async () => {
@@ -157,7 +168,7 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
           download: async () => mutate('app-download'),
           getRecoveryStatus: async (): Promise<ApiResult<ApplicationUpdateRecoverySnapshot>> => ({
             ok: true,
-            value: { status: 'not-checked' },
+            value: initial.recovery ?? { status: 'not-checked' },
           }),
           getStatus: async () => {
             state.statusCalls++
@@ -176,6 +187,9 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             state.returnedInstalls++
             if (plan.kind === 'throw') {
               throw new Error('Unexpected native detail at /private/fixture/install-preflight.')
+            }
+            if (plan.kind === 'recovery') {
+              return recoveryRefused
             }
             if (plan.kind === 'error' || plan.kind === 'source') {
               return {
@@ -213,26 +227,26 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             if (plan.kind === 'throw') {
               throw new Error('Unexpected native detail at /private/fixture/install-preview.')
             }
-            return plan.kind === 'error' || plan.kind === 'recovery' || plan.kind === 'source'
+            if (plan.kind === 'recovery') {
+              return recoveryRefused
+            }
+            return plan.kind === 'error' || plan.kind === 'source'
               ? {
                   error: {
                     code:
-                      plan.kind === 'recovery'
-                        ? 'APPLICATION_UPDATE_RECOVERY_REQUIRED'
-                        : plan.kind === 'source'
-                          ? 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE'
-                          : 'APPLICATION_UPDATE_PREVIEW_FAILED',
+                      plan.kind === 'source'
+                        ? 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE'
+                        : 'APPLICATION_UPDATE_PREVIEW_FAILED',
                     message:
-                      plan.kind === 'recovery'
-                        ? 'Application update recovery is required before installation. Your Projects remain open.'
-                        : plan.kind === 'source'
-                          ? 'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.'
-                          : 'Preview unavailable. Try again.',
+                      plan.kind === 'source'
+                        ? 'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.'
+                        : 'Preview unavailable. Try again.',
                   },
                   ok: false,
                 }
               : { ok: true, value: structuredClone(plan.preview ?? defaultPreview) }
           },
+          saveRecovery: async () => mutate('app-save-recovery'),
         },
         models: {
           checkUpdates: async () => mutate('model-update'),
@@ -758,11 +772,12 @@ for (const viewport of [
     await mountPreviewApp(page, { plans: [{ kind: 'recovery' }] })
     await openUpdates(page)
     await review(page).click()
-    const message =
-      'Application update recovery is required before installation. Your Projects remain open.'
-    await expect(impact(page)).toContainText(message)
+    await expect(impact(page).getByText(recoveryMessage, { exact: true })).toBeVisible()
     await expect(impact(page)).not.toContainText('Installation is not available in this build.')
     await expect(install(page)).toHaveCount(0)
+    await expect(dialog(page).getByRole('button', { name: 'Save recovery AppImage' })).toHaveCount(
+      0,
+    )
     await expect(later(page)).toBeInViewport()
     await expect(refresh(page)).toBeEnabled()
     await expect(refresh(page).locator('.n-base-loading')).toHaveCount(0)
@@ -782,6 +797,51 @@ for (const viewport of [
     expect(await calls(page)).toMatchObject({ closeCalls: 0, mutationCalls: [] })
   })
 }
+
+test('retained update recovery refuses Install preflight and keeps the signed download available', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  await mountPreviewApp(page, {
+    installs: [{ kind: 'recovery' }],
+    plans: [{ preview: eligiblePreview }],
+    recovery: { status: 'clear' },
+  })
+  await openUpdates(page)
+  await review(page).click()
+  await expect(install(page)).toBeEnabled()
+  await install(page).click()
+  await expect(impact(page).getByText(recoveryMessage, { exact: true })).toBeVisible()
+  await expect(install(page)).toHaveCount(0)
+  await expect(dialog(page).getByRole('button', { name: 'Save recovery AppImage' })).toHaveCount(0)
+  await expect(later(page)).toBeInViewport()
+  await page.screenshot({
+    path: testInfo.outputPath('installation-preflight-recovery-900x620.png'),
+  })
+  await later(page).click()
+  await expect(dialog(page)).toHaveCount(0)
+  await expect(page.getByRole('region', { exact: true, name: 'Home' })).toBeVisible()
+
+  await openUpdates(page)
+  await expect(dialog(page).getByText('Download completed', { exact: true })).toBeVisible()
+  await expect(
+    dialog(page).getByText('Publisher signature verified.', { exact: true }),
+  ).toBeVisible()
+  await expect(dialog(page).getByText(version, { exact: true })).toBeVisible()
+  await expect(dialog(page).getByRole('region', { name: 'Release notes' })).toHaveText(
+    downloaded.releaseNotes!,
+  )
+  await expect(review(page)).toBeEnabled()
+  await expect(dialog(page).getByRole('button', { name: 'Save recovery AppImage' })).toHaveCount(0)
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 0,
+    closeCalls: 0,
+    closeReleases: 0,
+    installVersions: [version],
+    mutationCalls: ['app-install'],
+    previewVersions: [version],
+  })
+})
 
 for (const viewport of [
   { height: 800, width: 1280 },

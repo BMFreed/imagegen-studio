@@ -5868,6 +5868,12 @@ function pollApplicationUpdates(epoch: number) {
   }, 1000)
 }
 
+function applicationUpdateFailureMessage(error: ApiError): string {
+  return error.code === 'APPLICATION_UPDATE_RECOVERY_REQUIRED'
+    ? 'Application update recovery is required. Save your work, restart ImageGen Studio, then open Application Updates again.'
+    : error.message
+}
+
 function clearApplicationUpdatePreview() {
   applicationUpdateInstallPreview.value = null
   applicationUpdatePreviewPending.value = false
@@ -5914,7 +5920,7 @@ async function reviewApplicationUpdateInstallation(availableVersion: string) {
     } else {
       applicationUpdatePreviewError.value = result.ok
         ? 'Could not review installation impact. Please try again.'
-        : result.error.message
+        : applicationUpdateFailureMessage(result.error)
     }
   } catch {
     if (currentApplicationUpdatesRequest(epoch)) {
@@ -6032,7 +6038,7 @@ async function installApplicationUpdate(availableVersion: string) {
       failed(
         result.ok
           ? 'The application could not start installation. Review the update and try again.'
-          : result.error.message,
+          : applicationUpdateFailureMessage(result.error),
       )
     }
     // close-requested is not an installation/startup acknowledgement. Keep preflight controls

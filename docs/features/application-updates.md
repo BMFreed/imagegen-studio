@@ -514,6 +514,13 @@ are exposed. Current target/runtime matches do not establish healthy startup or
 image-engine readiness. Recovery/reinstall, global runtime ownership, stage
 finalization/retirement and shipping acceptance remain open.
 
+If a stage appears during the session and Review or Install returns a
+recovery refusal, Updates asks the user to save their work, restart
+ImageGen Studio and open Application Updates again. The refusal leaves
+Projects open and the signed download available. The next launch reads
+the on-disk state. Save recovery is offered when startup reports recovery
+required and a signed download is available.
+
 [Transaction-owner interruption](../engineering/phase-5-application-update-interruption-research.md)
 exercises process death before replacement, after replacement with an
 `activating` journal, and after `activated`. In the middle case B is present

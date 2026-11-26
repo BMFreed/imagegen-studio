@@ -44,10 +44,10 @@ start ticks, confirms a participating attempt gets `BUSY`, then sends the
 owned child `SIGKILL` and confirms physical exit and the ability to reacquire
 the same lock. The phase is written by the actual stage owner.
 
-| Cut | Durable state and fresh inspection |
-| --- | --- |
-| Immediately before the synchronous replacement | Journal is `activating`. The original A, executable candidate B and private backup A all remain. The stage is retained and target remains unverified. |
-| After activation returns, before any relaunch | Journal is `activated`. The target is exact signed B, the candidate pathname is consumed and backup A remains private. Fresh offline inspection verifies B's target bytes and retains the stage. Runtime authentication is unverified. |
+| Cut                                            | Durable state and fresh inspection                                                                                                                                                                                                     |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Immediately before the synchronous replacement | Journal is `activating`. The original A, executable candidate B and private backup A all remain. The stage is retained and target remains unverified.                                                                                  |
+| After activation returns, before any relaunch  | Journal is `activated`. The target is exact signed B, the candidate pathname is consumed and backup A remains private. Fresh offline inspection verifies B's target bytes and retains the stage. Runtime authentication is unverified. |
 
 For both cuts, the real service sees separately signed C from its native
 checker and cache parser. Review and preflight refuse before impact, close or
@@ -183,3 +183,74 @@ owners with a controlled scheduler. The separate
 [native A–B–C result](./phase-5-public-appimage-recovery-research.md#native-result)
 covers Project Save and restart. A lifecycle for safe retirement
 of the used paths is still open.
+
+## A signed runtime match and an unleased writer
+
+Base `7ba156b4`. Clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7` uses the claim and revalidation
+rules in `invokeai/app/services/model_install/install_staging_ledger.py`.
+Its startup caller is `model_install_default.py::start`. The explicit
+orphan-removal route in `invokeai/app/api/routers/model_manager.py` also
+requires ownership through `invokeai/app/services/orphaned_models/orphaned_models_service.py`.
+The existing claims cover participating owners and preserve active and
+recovery-marked staging. Clean Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce`
+uses a profile-scoped instance lock in `src/main/index.ts` and delegates
+installation through `src/main/main-process-manager.ts` and
+`src/main/updater.ts`. Its pinned `electron-updater` 6.6.2 can replace
+`APPIMAGE` without Studio's advisory lock. These donors do not supply
+exclusion of already shipped AppImage writers.
+
+The startup test now runs the owned replacement process with both the v1
+and v2 release fixtures. In the v2 case, the signed target and declared
+ASAR and executable files match while the real cooperating lock is held
+and the separate Node process is waiting. That process replaces the
+target inode. Another cooperating writer still gets `BUSY` and a fresh
+inspection reports both target and runtime unverified. The earlier
+observation, runtime fixture files, stage and backup remain intact.
+The fixtures exercise actual signatures, file descriptors and flock.
+The synthetic AppImage and runtime files are never executed.
+
+Retirement still requires exclusion of all supported writers for the
+duration of the operation. A matching startup snapshot and a held or
+reacquirable update lock establish different facts. The current path
+retains the stage and backup when writer participation is unknown.
+
+## Guidance after a stage appears during the session
+
+The existing Main stage-veto control proves that a new retained stage
+refuses Review and Install preflight before close even after a clear
+startup observation. The live Vue renderer previously showed the generic
+recovery error with Refresh preview as the available follow-up. Reopening
+the dialog reads the same immutable startup snapshot. That action cannot
+recheck disk or expose Save recovery during this session.
+
+For a typed `APPLICATION_UPDATE_RECOVERY_REQUIRED` reply, the existing
+Review and Install alerts now ask the user to save their work, restart
+Studio and reopen Application Updates. The change maps the message in
+the renderer. The Main veto, startup snapshot and recovery save admission
+retain their original owners. Other errors keep their supplied text.
+
+The before/after browser checks use the actual renderer with controlled
+Main responses. Review was checked at 1280×800 and 900×620 with a
+not-checked startup result. Install was checked at 900×620 with clear
+startup and an earlier successful Review. The new guidance and dismissal
+action fit at both sizes. After the refusal, manual dismissal and reopening
+leave the same signed download available, with no close or secondary
+mutation calls. The neighboring source-change controls keep their own
+error text. The first focused rerun stopped at a duplicate type import.
+Removing that import let all six reach their actual renderer assertions.
+
+The application-update matrix passed 640 tests with one existing platform
+skip. Typecheck, scoped lint and the application build passed. The first
+full Chromium run reached 323 passing tests at its 600-second limit. A
+second run used Playwright's test list to select exactly the 49 remaining
+tests. A title and source-location comparison against the original list
+confirmed 372 passing cases without overlap across the two receipts.
+
+The test and screenshot receipts are retained under
+`runs/application-update-late-recovery/20261126-r1`. After physical exit,
+cleanup reclaimed 1,148,301,312 allocated bytes and rechecked 51 retained
+files, including the before/after screenshots. The new text is qualified
+in Chromium against the renderer port. The signed AppImage recovery
+action has a separate
+[native A–D qualification](./phase-5-packaged-recovery-kde-next-update-research.md#a-subsequent-signed-recovery-on-a-fresh-path).
