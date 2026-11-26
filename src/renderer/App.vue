@@ -371,6 +371,7 @@ const generationResultFocusByTab = ref<Record<string, GenerationResultFocusReque
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const homeProjectSummaries = ref<ProjectSummary[]>([])
 let hasCompleteHomeCatalog = false
+let initialHomeWorkspaceId: string | null = null
 // Home is remounted on Project navigation; browse controls belong to the app session.
 const homeProjectSearch = ref('')
 const homeView = ref<InstanceType<typeof HomeView> | null>(null)
@@ -3805,27 +3806,52 @@ async function refreshProjects() {
   const request = ++projectListRequest
   const workspaceId = selectedWorkspaceId.value
   const trashView = selectedTrashView.value
+  let acceptInitial =
+    request === 1 && !trashView && workspaceId === null && homeProjectSummaries.value.length === 0
   hasCompleteHomeCatalog = false
+  initialHomeWorkspaceId = null
   projectsLoading.value = true
   homeError.value = null
+  const current = () =>
+    !rendererDisposed &&
+    request === projectListRequest &&
+    (selectedWorkspaceId.value === workspaceId || initialHomeWorkspaceId !== null) &&
+    selectedTrashView.value === trashView
+  const publishInitial = (catalog: ProjectHomeCatalog) => {
+    // The combined request and sidebar read acquire their epochs in the same turn.
+    queueMicrotask(() => {
+      if (
+        !acceptInitial ||
+        !current() ||
+        workspaceRequest !== workspacesRequest ||
+        !homeOpen.value ||
+        activeDocument.value !== 'home' ||
+        windowClosePending.value
+      ) {
+        return
+      }
+      acceptInitial = false
+      initialHomeWorkspaceId = catalog.workspaces[0].id
+      workspaces.value = catalog.workspaces
+      homeProjectSummaries.value = catalog.projects
+    })
+  }
   // Active Home reads share discovery in Main. On failure the existing independent
   // requests recover whichever lists are still available to the current view.
   const combined = trashView
     ? undefined
-    : apiValue(() => projectApi().listHomeCatalog()).catch(() => null)
+    : apiValue(() =>
+        projectApi().listHomeCatalog(undefined, acceptInitial ? publishInitial : undefined),
+      ).catch(() => null)
   const catalogRefresh = refreshWorkspaces(combined)
   const workspaceRequest = workspacesRequest
   const trashRefresh = refreshTrash()
-  const current = () =>
-    !rendererDisposed &&
-    request === projectListRequest &&
-    selectedWorkspaceId.value === workspaceId &&
-    selectedTrashView.value === trashView
   try {
     if (trashView) {
       await trashRefresh
     } else {
       const catalog = await combined
+      acceptInitial = false
       if (!current()) {
         return
       }
@@ -3843,6 +3869,7 @@ async function refreshProjects() {
     }
   } finally {
     if (current()) {
+      initialHomeWorkspaceId = null
       projectsLoading.value = false
     }
     await Promise.all([catalogRefresh, trashRefresh])
@@ -3907,7 +3934,9 @@ async function selectWorkspace(id: string | null, forceRefresh = false) {
   }
   selectedTrashView.value = false
   selectedWorkspaceId.value = id
-  if (hasCompleteHomeCatalog && !forceRefresh) {
+  const withinInitialCatalog =
+    initialHomeWorkspaceId !== null && (id === null || id === initialHomeWorkspaceId)
+  if ((hasCompleteHomeCatalog || withinInitialCatalog) && !forceRefresh) {
     homeError.value = null
     return
   }
@@ -6995,7 +7024,9 @@ onBeforeUnmount(() => {
           :workspacesError
           :workspacesLoading
           @addWorkspace="beginAddWorkspace"
-          @browseProjects="selectWorkspace(null, !hasCompleteHomeCatalog)"
+          @browseProjects="
+            selectWorkspace(null, !hasCompleteHomeCatalog && initialHomeWorkspaceId === null)
+          "
           @browseTrash="selectTrash"
           @createProject="beginNewProject"
           @deleteProject="beginDeleteProject"

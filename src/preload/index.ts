@@ -958,6 +958,37 @@ function isProjectWorkspaceSummary(value: unknown): value is ProjectWorkspaceSum
   )
 }
 
+function isProjectHomeCatalog(value: unknown): value is ProjectHomeCatalog {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    Array.isArray(value.projects) &&
+    value.projects.every(isProjectSummary) &&
+    Array.isArray(value.workspaces) &&
+    value.workspaces.every(isProjectWorkspaceSummary)
+  )
+}
+
+function isInitialProjectHomeCatalog(value: unknown): value is ProjectHomeCatalog {
+  if (!isProjectHomeCatalog(value) || value.workspaces.length !== 1) {
+    return false
+  }
+  const [workspace] = value.workspaces
+  return (
+    workspace.availability === 'available' &&
+    value.projects.length > 0 &&
+    value.projects.length <= workspace.projectCount &&
+    new Set(value.projects.map(({ id }) => id)).size === value.projects.length &&
+    value.projects.every(
+      (project) =>
+        project.workspaceId === workspace.id &&
+        project.health === 'ready' &&
+        !project.pendingMove &&
+        !project.pendingRename,
+    )
+  )
+}
+
 function isProjectTrashSummary(value: unknown): value is ProjectTrashSummary {
   return (
     isProjectSummary(value) &&
@@ -1089,6 +1120,35 @@ async function invokeProject<T>(
       },
       ok: false,
     }
+  }
+}
+
+async function invokeHomeCatalog(
+  workspaceId?: string,
+  onInitial?: (catalog: ProjectHomeCatalog) => void,
+): Promise<ApiResult<ProjectHomeCatalog>> {
+  const channel = ipcChannels.projects.listHomeCatalog
+  if (workspaceId !== undefined || typeof onInitial !== 'function') {
+    return await invokeProject(
+      channel,
+      workspaceId === undefined ? [] : [workspaceId],
+      isProjectHomeCatalog,
+    )
+  }
+
+  const requestId = globalThis.crypto.randomUUID()
+  const notification = ipcChannels.projects.homeCatalogInitial
+  const handler = (_event: Electron.IpcRendererEvent, id: unknown, catalog: unknown) => {
+    if (id === requestId && isInitialProjectHomeCatalog(catalog)) {
+      ipcRenderer.removeListener(notification, handler)
+      onInitial(catalog)
+    }
+  }
+  ipcRenderer.on(notification, handler)
+  try {
+    return await invokeProject(channel, [undefined, requestId], isProjectHomeCatalog)
+  } finally {
+    ipcRenderer.removeListener(notification, handler)
   }
 }
 
@@ -1766,18 +1826,7 @@ const api: StudioApi = {
         [tabId],
         isProjectGenerationResultsSnapshot,
       ),
-    listHomeCatalog: (workspaceId) =>
-      invokeProject(
-        ipcChannels.projects.listHomeCatalog,
-        workspaceId === undefined ? [] : [workspaceId],
-        (value): value is ProjectHomeCatalog =>
-          isRecord(value) &&
-          Object.keys(value).length === 2 &&
-          Array.isArray(value.projects) &&
-          value.projects.every(isProjectSummary) &&
-          Array.isArray(value.workspaces) &&
-          value.workspaces.every(isProjectWorkspaceSummary),
-      ),
+    listHomeCatalog: invokeHomeCatalog,
     listSmartPatchGenerationResults: (tabId) =>
       invokeProject(
         ipcChannels.projects.listSmartPatchGenerationResults,

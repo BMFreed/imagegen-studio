@@ -234,6 +234,7 @@ export const ipcChannels = {
     getSmartPatchVariants: 'projects:get-smart-patch-variants',
     getSmartResultComparisonData: 'projects:get-smart-result-comparison-data',
     getSmartResultPresetData: 'projects:get-smart-result-preset-data',
+    homeCatalogInitial: 'projects:home-catalog-initial',
     importRasterImage: 'projects:import-raster-image',
     importRegionalGuidanceReferenceImage: 'projects:import-regional-guidance-reference-image',
     launchImportAvailable: 'projects:launch-import-available',
@@ -770,7 +771,10 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab | null>>
   list: (workspaceId?: string) => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
-  listHomeCatalog: (workspaceId?: string) => Promise<ApiResult<ProjectHomeCatalog>>
+  listHomeCatalog: (
+    workspaceId?: string,
+    onInitial?: (catalog: ProjectHomeCatalog) => void,
+  ) => Promise<ApiResult<ProjectHomeCatalog>>
   listSmartPatchGenerationResults: (
     tabId: string,
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>

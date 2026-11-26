@@ -2029,7 +2029,7 @@ if (!gotInstanceLock) {
       function registerProjectHandler<T>(
         channel: string,
         validate: (args: unknown[]) => boolean,
-        handler: (...args: unknown[]) => Promise<T>,
+        handler: (this: Electron.IpcMainInvokeEvent, ...args: unknown[]) => Promise<T>,
       ): void {
         ipcMain.handle(channel, async (event, ...args: unknown[]): Promise<ApiResult<T>> => {
           if (
@@ -2042,7 +2042,8 @@ if (!gotInstanceLock) {
               ok: false,
             }
           }
-          if (appDataSealed || (resolvingClose && workspaceCatalogChannels.has(channel))) {
+          const catalogOperation = workspaceCatalogChannels.has(channel)
+          if (appDataSealed || (resolvingClose && catalogOperation)) {
             return {
               error: {
                 code: 'PROJECT_NOT_READY',
@@ -2052,7 +2053,12 @@ if (!gotInstanceLock) {
             }
           }
           try {
-            const value = workspaceCatalogChannels.has(channel)
+            // An empty launch take does no catalog work. Before the direct handler takes the
+            // path there is no yield in Main, so any later arrival will notify the renderer.
+            const needsCatalogLock =
+              catalogOperation &&
+              (channel !== ipcChannels.projects.takeLaunchImport || launchPaths.hasPending)
+            const value = needsCatalogLock
               ? await withProjectPathLock(paths.dataRoot, async () => {
                   // A request may have queued before native close began. It cannot attach a new
                   // tab after the close snapshot merely because its initial IPC guard passed.
@@ -2062,9 +2068,9 @@ if (!gotInstanceLock) {
                       'The application is closing. Try again if closing is canceled.',
                     )
                   }
-                  return await handler(...args)
+                  return await handler.call(event, ...args)
                 })
-              : await handler(...args)
+              : await handler.call(event, ...args)
             return { ok: true, value }
           } catch (error) {
             if (
@@ -2162,8 +2168,37 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(
         ipcChannels.projects.listHomeCatalog,
-        (args) => args.length === 0 || (args.length === 1 && isProjectWorkspaceId(args[0])),
-        (workspaceId) => projectService.listHomeCatalog(workspaceId as string | undefined),
+        (args) =>
+          args.length === 0 ||
+          (args.length === 1 && isProjectWorkspaceId(args[0])) ||
+          (args.length === 2 && args[0] === undefined && isProjectDocumentId(args[1])),
+        function (workspaceId, requestId) {
+          return projectService.listHomeCatalog(
+            workspaceId as string | undefined,
+            requestId === undefined
+              ? undefined
+              : (catalog) => {
+                  const frame = this.senderFrame
+                  if (
+                    resolvingClose ||
+                    appDataSealed ||
+                    !frame ||
+                    frame.isDestroyed() ||
+                    this.sender.isDestroyed() ||
+                    frame !== this.sender.mainFrame
+                  ) {
+                    return
+                  }
+                  // Initial cards are advisory. A closing renderer can lose this notification
+                  // without interrupting the locked scan or its final reply.
+                  try {
+                    frame.send(ipcChannels.projects.homeCatalogInitial, requestId, catalog)
+                  } catch {
+                    // The frame can exit concurrently.
+                  }
+                },
+          )
+        },
       )
       registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
         projectService.listWorkspaces(),

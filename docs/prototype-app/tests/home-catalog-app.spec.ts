@@ -4,12 +4,18 @@ import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
 
 type CatalogScenario =
-  'fallback' | 'late-error' | 'missing-removal' | 'trash-project' | 'workspace-navigation'
+  | 'early-results'
+  | 'fallback'
+  | 'late-error'
+  | 'missing-removal'
+  | 'trash-project'
+  | 'workspace-navigation'
 
 interface HomeCatalogFixture {
   catalogScopes: (string | null)[]
   finishPendingCatalog: () => Promise<void>
   observeExternalFileChange: () => void
+  publishInitialCatalog: () => Promise<boolean>
   requests: { catalog: number; projects: number; workspaces: number }
   trashRequests: number
 }
@@ -73,6 +79,18 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         id: '93ec4b82-7a6b-4ff2-8e0b-58b1591749f5',
         isDefault: false,
       }
+      const initialProject: ProjectSummary = {
+        ...project('First sketch'),
+        previewStatus: 'rendered',
+        previewUrl: `data:image/svg+xml,${encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>',
+        )}`,
+      }
+      const linkedProject: ProjectSummary = {
+        ...project('Linked sketch'),
+        id: `project-v1-${'c'.repeat(64)}`,
+        workspaceId: secondWorkspace.id,
+      }
       let removed = false
       let externalFileChanged = false
       const batchError = {
@@ -81,6 +99,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
       } as const
       const requests = { catalog: 0, projects: 0, workspaces: 0 }
       let resolvePending!: (result: ApiResult<ProjectHomeCatalog>) => void
+      let initialListener: ((catalog: ProjectHomeCatalog) => void) | undefined
       const pending = new Promise<ApiResult<ProjectHomeCatalog>>((resolve) => {
         resolvePending = resolve
       })
@@ -88,11 +107,26 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         catalogScopes: [],
         async finishPendingCatalog() {
           // Wait a renderer frame after settling the response so the old continuations can run.
-          resolvePending(batchError)
+          resolvePending(
+            scenario === 'early-results'
+              ? {
+                  ok: true,
+                  value: {
+                    projects: [initialProject, linkedProject],
+                    workspaces: [...workspaces, secondWorkspace],
+                  },
+                }
+              : batchError,
+          )
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
         },
         observeExternalFileChange() {
           externalFileChanged = true
+        },
+        async publishInitialCatalog() {
+          initialListener?.({ projects: [initialProject], workspaces })
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          return Boolean(initialListener)
         },
         requests,
         trashRequests: 0,
@@ -116,7 +150,10 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               value: [project(scenario === 'fallback' ? 'Readable sketch' : 'Stale sketch')],
             }
           },
-          listHomeCatalog: async (workspaceId?: string): Promise<ApiResult<ProjectHomeCatalog>> => {
+          listHomeCatalog: async (
+            workspaceId?: string,
+            onInitial?: (catalog: ProjectHomeCatalog) => void,
+          ): Promise<ApiResult<ProjectHomeCatalog>> => {
             requests.catalog++
             fixture.catalogScopes.push(workspaceId ?? null)
             if (scenario === 'workspace-navigation') {
@@ -152,6 +189,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               }
             }
             if (requests.catalog === 1) {
+              initialListener = onInitial
               return await pending
             }
             return {
@@ -228,6 +266,14 @@ test('production Home skips fallbacks when a superseded combined read fails', as
   const workspace = home.getByRole('button', { name: /Current workspace\s*1/ })
   await expect(current).toBeVisible()
   await expect(workspace).toBeVisible()
+  expect(
+    await page.evaluate(() =>
+      (globalThis as HomeCatalogGlobal).homeCatalogFixture.publishInitialCatalog(),
+    ),
+  ).toBe(true)
+  await expect(home.getByRole('button', { exact: true, name: 'Select First sketch' })).toHaveCount(
+    0,
+  )
   await page.evaluate(
     async () => await (globalThis as HomeCatalogGlobal).homeCatalogFixture.finishPendingCatalog(),
   )
@@ -239,6 +285,56 @@ test('production Home skips fallbacks when a superseded combined read fails', as
     0,
   )
   await expect(home.getByText('Workspace list unavailable', { exact: true })).toHaveCount(0)
+})
+
+test('production Home shows the first checked workspace while the complete catalog is pending', async ({
+  page,
+}) => {
+  const home = await mountHome(page, 'early-results')
+  await expect.poll(() => requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+  expect(
+    await page.evaluate(() =>
+      (globalThis as HomeCatalogGlobal).homeCatalogFixture.publishInitialCatalog(),
+    ),
+  ).toBe(true)
+
+  const first = home.getByRole('button', { exact: true, name: 'Select First sketch' })
+  const linked = home.getByRole('button', { exact: true, name: 'Select Linked sketch' })
+  const workspace = home.getByRole('button', { name: /^Current workspace\s*1$/ })
+  const refresh = home.getByRole('button', { exact: true, name: 'Refresh projects' })
+  const inspector = home.getByRole('complementary', { name: 'Project inspector' })
+  await expect(refresh).toHaveAttribute('aria-busy', 'true')
+  await expect(linked).toHaveCount(0)
+  await first.click()
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+  await expect(inspector.getByRole('img', { name: 'Project preview canvas' })).toHaveAttribute(
+    'data-preview-state',
+    'ready',
+  )
+  await expect(inspector.getByRole('button', { exact: true, name: 'Open Project' })).toBeEnabled()
+
+  await workspace.click()
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  await expect(first).toBeVisible()
+  const aggregate = home.getByRole('button', { exact: true, name: 'Projects' })
+  await aggregate.click()
+  await expect(aggregate).toHaveAttribute('aria-pressed', 'true')
+  await expect(first).toBeVisible()
+  expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+
+  await home.getByRole('textbox', { exact: true, name: 'Search projects' }).fill('Linked sketch')
+  await expect(home.getByRole('status', { name: 'Loading projects' })).toBeVisible()
+  await expect(home.getByText('No projects match this search or filter')).toHaveCount(0)
+  await workspace.click()
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  await page.evaluate(() =>
+    (globalThis as HomeCatalogGlobal).homeCatalogFixture.finishPendingCatalog(),
+  )
+  await expect(refresh).not.toHaveAttribute('aria-busy', 'true')
+  await expect(linked).toHaveCount(0)
+  await aggregate.click()
+  await expect(linked).toBeVisible()
+  expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
 })
 
 test('production Home restores keyboard focus after removing a missing project from its workspace', async ({

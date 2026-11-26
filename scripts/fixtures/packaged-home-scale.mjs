@@ -36,6 +36,7 @@ const thumbnail = Buffer.from(
 const thumbnailSha256 = createHash('sha256').update(thumbnail).digest('hex')
 const largeRasterSize = 1024
 const distinctRasterSeed = 'ImageGen Studio distinct initial Home raster v1'
+const gridSelectionButtons = '[role="list"][aria-label="Project grid"] button.row-select'
 
 function rasterFixture(size, bytes) {
   return {
@@ -418,7 +419,59 @@ async function verifyExternalRefresh(page, root, workspace, files, identity) {
   }
 }
 
-async function measureHome(state, root, files, launchStart, canvas, measureFirstCard) {
+async function measureEarlyPreview(card, preview, file, total, spawnAt) {
+  const start = performance.now()
+  await card.click()
+  await expect(card).toHaveAttribute('aria-pressed', 'true')
+  await expect(preview).toBeVisible()
+  await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+  const observed = await preview.evaluate((element, selector) => {
+    const buttons = document.querySelectorAll(selector)
+    const selected = Array.from(buttons).find(
+      (button) => button.getAttribute('aria-pressed') === 'true',
+    )
+    return {
+      cardCount: buttons.length,
+      height: Number(element.getAttribute('data-image-height')),
+      image: element.querySelector('image')?.getAttribute('href'),
+      projectId: selected?.closest('[data-project-id]')?.getAttribute('data-project-id'),
+      source: element.getAttribute('data-preview-url'),
+      state: element.getAttribute('data-preview-state'),
+      width: Number(element.getAttribute('data-image-width')),
+    }
+  }, gridSelectionButtons)
+  const readyAt = performance.now()
+  assert.ok(
+    observed.cardCount > 0 && observed.cardCount < total,
+    'Expected a partial grid at preview readiness.',
+  )
+  assert.equal(observed.state, 'ready')
+  assert.equal(observed.projectId, file.id)
+  assert.equal(observed.width, largeRasterSize)
+  assert.equal(observed.height, largeRasterSize)
+  assert.ok(observed.source?.startsWith(`igs-preview://merged/${file.id}/${thumbnailSha256}/`))
+  assert.equal(observed.image, observed.source)
+  return {
+    cardCount: observed.cardCount,
+    height: observed.height,
+    ms: readyAt - start,
+    projectId: file.id,
+    readySinceSpawnMs: readyAt - spawnAt,
+    source: observed.source,
+    title: file.title,
+    width: observed.width,
+  }
+}
+
+async function measureHome(
+  state,
+  root,
+  files,
+  launchStart,
+  canvas,
+  measureFirstCard,
+  earlyPreview,
+) {
   const { page } = state
   const visibleAt = state.homeVisibleAt ?? performance.now()
   const spawnAt = state.spawnedAt ?? launchStart
@@ -427,24 +480,52 @@ async function measureHome(state, root, files, launchStart, canvas, measureFirst
   const list = home.getByRole('list', { exact: true, name: 'Project list' })
   const cards = grid.getByRole('button', { name: /^Select / })
   const select = (title) => grid.getByRole('button', { exact: true, name: `Select ${title}` })
+  const inspector = home.getByRole('complementary', { exact: true, name: 'Project inspector' })
+  const preview = inspector.getByRole('img', { exact: true, name: 'Project preview canvas' })
   const count = files.length
 
-  const [cardsReadyAt, firstCard] = await Promise.all([
-    (async () => {
-      await assertCards(cards, files, 60_000)
-      await expect(grid).toBeVisible()
-      await framePair(page)
-      return performance.now()
-    })(),
-    measureFirstCard &&
-      cards
+  const cardsReady = (async () => {
+    await assertCards(cards, files, 60_000)
+    await expect(grid).toBeVisible()
+    await framePair(page)
+    return performance.now()
+  })()
+  const firstCardObserved = measureFirstCard
+    ? cards
         .and(grid.locator('button:enabled:visible'))
         .first()
-        .evaluate((element) => element.getAttribute('aria-label'), undefined, { timeout: 60_000 })
-        .then((name) => ({ name, readyAt: performance.now() })),
+        .evaluate(
+          (element, selector) => ({
+            cardCount: document.querySelectorAll(selector).length,
+            name: element.getAttribute('aria-label'),
+          }),
+          gridSelectionButtons,
+          { timeout: 60_000 },
+        )
+        .then((observation) => ({ ...observation, readyAt: performance.now() }))
+    : Promise.resolve(null)
+  const earlyPreviewObserved = earlyPreview
+    ? firstCardObserved.then((first) => {
+        assert.ok(
+          first && first.cardCount > 0 && first.cardCount < count,
+          'Expected an early card.',
+        )
+        const file = files.find(({ title }) => first.name === `Select ${title}`)
+        assert.ok(file)
+        return measureEarlyPreview(select(file.title), preview, file, count, spawnAt)
+      })
+    : null
+  const [cardsReadyAt, firstCard, earlyPreviewResult] = await Promise.all([
+    cardsReady,
+    firstCardObserved,
+    earlyPreviewObserved,
   ])
   if (firstCard) {
     assert.ok(files.some(({ title }) => firstCard.name === `Select ${title}`))
+  }
+  if (earlyPreviewResult) {
+    await expect(select(earlyPreviewResult.title)).toHaveAttribute('aria-pressed', 'true')
+    await expect(preview).toHaveAttribute('data-preview-url', earlyPreviewResult.source)
   }
   const viewportBeforeResize = await page.evaluate(() => ({
     dpr: devicePixelRatio,
@@ -469,6 +550,11 @@ async function measureHome(state, root, files, launchStart, canvas, measureFirst
     state.name,
   )
   const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
+  if (earlyPreviewResult) {
+    // Clear the early selection before running the ordinary search and preview controls.
+    await search.fill('No matching scale fixture')
+    await expect(cards).toHaveCount(0)
+  }
   const searchSamples = []
   for (const index of [0, count / 4, count / 2, (count * 3) / 4, count - 1]) {
     const { title } = files[index]
@@ -504,8 +590,6 @@ async function measureHome(state, root, files, launchStart, canvas, measureFirst
     }
   }
 
-  const inspector = home.getByRole('complementary', { exact: true, name: 'Project inspector' })
-  const preview = inspector.getByRole('img', { exact: true, name: 'Project preview canvas' })
   const previewSamples = []
   for (const index of [0, count / 2, count - 1]) {
     const { id, title } = files[index]
@@ -552,6 +636,7 @@ async function measureHome(state, root, files, launchStart, canvas, measureFirst
     native,
     settledMemory,
     timings: {
+      ...(earlyPreviewResult && { earlyPreview: earlyPreviewResult }),
       layouts: layoutSamples,
       previews: previewSamples,
       refresh,
@@ -560,6 +645,7 @@ async function measureHome(state, root, files, launchStart, canvas, measureFirst
         allExpectedCardsMs: cardsReadyAt - spawnAt,
         ...(firstCard && {
           firstSelectableCard: firstCard.name,
+          firstSelectableCardCount: firstCard.cardCount,
           firstSelectableCardMs: firstCard.readyAt - spawnAt,
           shellToFirstSelectableCardMs: firstCard.readyAt - visibleAt,
         }),
@@ -686,6 +772,7 @@ export async function runPackagedHomeScale({
   ].includes(profile)
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
   const layered256 = (distinct || profile === 'linked-layered') && countArgument === '256'
+  const earlyPreview = process.env.IMAGEGEN_HOME_SCALE_EARLY_PREVIEW
   assert.ok(
     linked
       ? (!distinct && countArgument === '128') || layered256
@@ -695,6 +782,10 @@ export async function runPackagedHomeScale({
   assert.ok(
     !layered256 || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
     'The 256-project layered profiles require software compositing.',
+  )
+  assert.ok(
+    earlyPreview === undefined || (earlyPreview === '1' && distinct && layered256),
+    'Use IMAGEGEN_HOME_SCALE_EARLY_PREVIEW=1 only with the 256-project distinct layered profile.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -772,7 +863,15 @@ export async function runPackagedHomeScale({
     const state = await launch(name)
     let measured
     try {
-      measured = await measureHome(state, root, files, launchStart, canvas, layered256)
+      measured = await measureHome(
+        state,
+        root,
+        files,
+        launchStart,
+        canvas,
+        layered256,
+        earlyPreview === '1' && name === 'first-index',
+      )
       if (linked) {
         measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)
       }
@@ -811,7 +910,11 @@ export async function runPackagedHomeScale({
     measurement: {
       ...(layered256 && {
         firstSelectableCard:
-          'First observed visible, enabled Project selection button before native resize, sampled independently of initialList',
+          'First observed visible, enabled Project selection button and grid count in one browser read before native resize, sampled independently of initialList',
+      }),
+      ...(earlyPreview === '1' && {
+        earlyPreview:
+          'Opt-in first-index interaction. The sampled first card is selected and displays its merged preview while the grid still has fewer than all Projects. This interaction can affect the all-card timing.',
       }),
       initialList:
         'Exact rendered card names followed by two renderer frames, before native resize',

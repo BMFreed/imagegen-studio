@@ -381,6 +381,11 @@ The filter control is labeled `Status` in the prototype, even though the underly
 Switching between `Projects` and a workspace filters the last complete
 Home catalog. Startup recovers pending Project file operations before
 opening Home. The initial catalog request discovers the registered Projects.
+While it runs, Home can show checked projects from the first available
+workspace that completes. Users can select these projects, inspect their
+saved previews and switch between that workspace and `Projects`. A search
+with zero matches shows loading until the catalog settles. Open and other
+catalog operations can wait for the scan to release its lock.
 Refresh and Rescan discover external file changes and rebuild the catalog
 from the saved files. Home can reuse prior validation after checking the
 archive's full SHA-256 against the current validator, including after an

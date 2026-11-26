@@ -1178,3 +1178,98 @@ screenshots, full input manifests, independent audit receipts, the final
 SQLite and one sample `.igs`. Cleanup removed the shared package build,
 private profiles and scratch after both readers and application lifetimes
 exited, reclaiming 2,577,670,144 allocated bytes.
+
+## Show the first verified workspace during initial discovery
+
+The source check used clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+Its `HomePage.tsx` calls `workbench/projects/library.ts` and `api.ts`, which
+reach `api/routers/projects.py`, `project_records_default.py` and
+`shared/database/queries/projects.py` for already registered summaries.
+The Gallery's `useGalleryData.ts` and `data/backend.ts` carry partial
+availability and active query scope through `api/routers/gallery.py`,
+`gallery_default.py` and bounded SQL pages in `queries/gallery.py`.
+The external font scanner in `fonts_default.py`, reached through
+`api/routers/fonts.py`, commits the discovered set after scanning it.
+InvokeAI has no equivalent to publishing verified portable Projects midway
+through discovery across mounted folders. Studio adapts the Gallery's
+scoped partial presentation and keeps the existing archive validation and
+serialized catalog operations.
+
+The first empty aggregate Home request can receive one projection. Main
+completes a workspace scan, selects only ready rows with matching validation
+witnesses from that request, rechecks their file identity and sends them
+with the workspace's current availability and count. The normal final
+catalog still owns all workspaces, missing files and relocation diagnostics.
+Preload correlates the notice to the request and validates its contents.
+The renderer checks that the request and workspace read still own the
+current Home view. The first workspace can be browsed locally while the
+aggregate request continues. A search miss stays in loading while more
+results can arrive. Ordinary Refresh retains the previous complete-list flow.
+[Service](../../src/main/projects/project-service.ts) ·
+[Preload](../../src/preload/index.ts) · [Renderer](../../src/renderer/App.vue)
+
+The ordinary Open route still needs the catalog lock. The early path is
+verified for selection and the embedded image shown in the Inspector. The
+service regression holds the next workspace scan, reads the exact saved
+PNG from the first and excludes a corrupt archive and a file replaced
+after validation. The hosted Chromium test holds the final IPC response
+and checks preview selection, search, navigation and a stale notice.
+
+The first packaged build reached the first enabled card only after all 256
+had arrived. The launch-import startup request set Home busy even with an
+empty path queue, because `takeLaunchImport` waited behind the catalog lock.
+The opt-in native preview regression reached `Expected an early card` and
+closed its window normally. A separate sandboxed Electron probe exercised
+the real built preload, delivered a matching notice to the originating
+frame and observed it before the final reply. The empty startup request now
+returns without acquiring the catalog lock. A request with a queued path
+still acquires it and rechecks close admission. Both paths keep caller
+validation. InvokeAI's `useProjectFileActions.ts` returns on an empty picker
+selection before invoking `projectFile.ts`; it has no Electron startup
+queue for project paths.
+
+The fixed AppImage SHA-256 is
+`52f65bcec71318f4dad36199231af06c118990277a12bb09c1d8fab12ff1be26`.
+The timing run used the same 256 Projects, 1,024 distinct Raster bodies,
+software-rendered KDE Wayland, ext4, 120% CPU, 4 GiB RAM and zero swap as
+the recorded R11 workload. The first launches both started with empty
+Project indexes. Each cell is one observation. Writes during fixture
+staging can warm the OS cache.
+
+| Home milestone                     | Prior R11 | First verified workspace R14 |
+| ---------------------------------- | --------: | ---------------------------: |
+| Visible Home, fresh index          |    3.61 s |                       2.94 s |
+| First selectable card, fresh index |   22.55 s |                       6.86 s |
+| All 256 cards, fresh index         |   22.56 s |                      19.88 s |
+| All 256 cards, indexed restart     |    7.58 s |                       7.09 s |
+
+The first selection measurement in R14 observed 64 cards. In a separate
+R15 run with an actual selection, the exact signed merged preview reached
+its decoded 1024×1024 ready state at 8.78 s with the same 64 cards in the
+grid. The selected card and preview source survived the full catalog reply.
+That interaction run has its own timing receipt because selecting a Project
+requests preview I/O during discovery. This establishes earlier selection
+and preview on the multi-workspace fixture. Complete discovery and Open
+latency remain separate performance checks.
+
+The two final Home runs closed normally twice each. Independent byte
+readback compared each of their 1,024 Raster hashes to the recorded
+workload, checked 2,304 ZIP members and 1,792 manifest entries per run,
+and verified 256 ready rows, 256 archive witnesses, 30 migrations and 20
+exited process identities in each run. Typecheck, scoped lint, packaging,
+175 focused Node tests and six controlled Playwright tests passed.
+
+An adjacent run on the same package verified an explicit `.igs` argument
+at cold launch, five secondary launches, deferred path intake and restart
+using direct Type 2 FUSE. Both primary windows closed normally and released
+their mounts. The earlier extract-and-run attempt reached the close boundary
+and exited 127 with `Failed to clean up cache directory`. Its owned processes
+exited and the failure receipt remains.
+
+`runs/packaged-home-scale/20261126-r12` and `20261126-r13` keep the initial
+measurement, sandboxed preload probe and native early-card failure.
+`20261126-r14` and `20261126-r15` keep the final Home timings, input manifests,
+audit receipts, sample `.igs` files and closed indexes. The path-launch
+attempts are under `runs/packaged-project-launch/20261126-r1` and
+`20261126-r2`. Cleanup after the native and audit scopes exited reclaimed
+5,172,629,504 allocated bytes across the six runs.

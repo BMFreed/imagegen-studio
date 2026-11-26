@@ -116,6 +116,11 @@ environment and remaining limits, and update the current stage and next run.
         Indexed restart reached all cards in 7.58 s. First discovery still
         leaves Home waiting for the complete catalog.
         [Distinct-layer AppImage measurement](./phase-5-packaged-home-scale-research.md#first-packaged-discovery-with-distinct-raster-bodies)
+  - [x] On the same distinct-layer fixture, Home exposed the first 64
+        verified cards at 6.86 s. A separate AppImage run decoded the selected
+        saved preview at 8.78 s while the remaining folders were still scanning.
+        Full discovery and Open latency remain separate checks.
+        [First verified workspace](./phase-5-packaged-home-scale-research.md#show-the-first-verified-workspace-during-initial-discovery)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old

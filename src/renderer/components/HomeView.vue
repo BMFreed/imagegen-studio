@@ -998,10 +998,15 @@ function recoveryLabel(project: ProjectSummary): string | null {
                     />
                   </div>
 
-                  <div v-if="loading && displayProjects.length === 0" class="browser-state">
+                  <div
+                    v-if="loading && visibleProjects.length === 0"
+                    aria-label="Loading projects"
+                    class="browser-state"
+                    role="status"
+                  >
                     <NSpin size="small" />
                   </div>
-                  <div v-else-if="displayProjects.length === 0" class="browser-state">
+                  <div v-else-if="!error && displayProjects.length === 0" class="browser-state">
                     <NEmpty :description="trashView ? 'Trash is empty' : 'No projects yet'">
                       <template v-slot:icon><NIcon :component="FolderIcon" /></template>
                       <template v-if="!trashView" v-slot:extra>
@@ -1011,7 +1016,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                       </template>
                     </NEmpty>
                   </div>
-                  <div v-else-if="visibleProjects.length === 0" class="browser-state">
+                  <div v-else-if="!error && visibleProjects.length === 0" class="browser-state">
                     <NEmpty description="No projects match this search or filter">
                       <template v-slot:extra>
                         <NButton secondary @click="resetFilters">Reset filters</NButton>
@@ -1019,7 +1024,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                     </NEmpty>
                   </div>
                   <div
-                    v-else
+                    v-else-if="visibleProjects.length > 0"
                     :aria-label="viewMode === 'grid' ? 'Project grid' : 'Project list'"
                     class="project-list"
                     :class="{ 'project-grid': viewMode === 'grid' }"

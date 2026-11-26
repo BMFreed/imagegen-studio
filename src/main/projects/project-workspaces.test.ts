@@ -1,3 +1,5 @@
+import type { ProjectHomeCatalog } from '../../shared/api.js'
+
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -20,6 +22,10 @@ import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectIndexRepository } from './project-index.js'
+import {
+  parseProjectMergedPreviewImageUrl,
+  readProjectMergedPreview,
+} from './project-preview-resource.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
@@ -606,6 +612,106 @@ test('Home discovers each workspace once after startup and sees external Project
     repository.scans.length = 0
     assert.deepEqual(await service.listWorkspaces(), refreshed.workspaces)
     assert.deepEqual(repository.scans.sort(), expectedScans)
+  })
+})
+
+test('Home exposes only verified first-folder Projects and their previews while a later folder scans', async () => {
+  await withWorkspaceFixture(async (fixture) => {
+    const later = await fixture.service.addWorkspace(
+      { color: 'blue', displayName: 'Later workspace' },
+      await fixture.folder('later'),
+    )
+    const first = await fixture.repository.workspaceById('uncategorized')
+    const healthy = await ProjectSession.create(
+      path.join(first.directoryPath, 'checked.igs'),
+      'Checked project',
+      fixture.roots,
+    )
+    const replaced = await ProjectSession.create(
+      path.join(first.directoryPath, 'replaced.igs'),
+      'Replaced project',
+      fixture.roots,
+    )
+    await writeFile(path.join(first.directoryPath, 'corrupt.igs'), 'not an archive')
+    await ProjectSession.create(
+      path.join(later.directoryPath, 'later.igs'),
+      'Later project',
+      fixture.roots,
+    )
+    const replacement = path.join(first.directoryPath, 'replacement.tmp')
+    await writeFile(replacement, 'replaced after validation')
+
+    let markLaterStarted!: () => void
+    let allowLaterScan!: () => void
+    const laterStarted = new Promise<void>((resolve) => (markLaterStarted = resolve))
+    const allowLater = new Promise<void>((resolve) => (allowLaterScan = resolve))
+    class PausedIndex extends ProjectIndexRepository {
+      override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+        if (args[0] === later.id) {
+          markLaterStarted()
+          await allowLater
+        }
+        const records = await super.scanWorkspace(...args)
+        if (args[0] === first.id) {
+          await rename(replacement, replaced.filePath)
+        }
+        return records
+      }
+    }
+    const repository = new PausedIndex(fixture.database.db)
+    const initial: ProjectHomeCatalog[] = []
+    const final = fixture.makeService(repository).listHomeCatalog(undefined, (catalog) => {
+      initial.push(catalog)
+    })
+    try {
+      await Promise.race([
+        laterStarted,
+        final.then(() => assert.fail('The full catalog must wait for the later folder.')),
+      ])
+      assert.equal(initial.length, 1)
+      const { projects, workspaces } = initial[0]
+      assert.deepEqual(
+        workspaces.map(({ availability, id, projectCount }) => [id, availability, projectCount]),
+        [[first.id, 'available', 3]],
+      )
+      assert.deepEqual(
+        projects.map(({ health, recoveryStatus, title, workspaceId }) => [
+          title,
+          workspaceId,
+          health,
+          recoveryStatus,
+        ]),
+        [['Checked project', first.id, 'ready', 'none']],
+      )
+      assert.ok(projects[0].previewUrl)
+      const resource = parseProjectMergedPreviewImageUrl(projects[0].previewUrl)
+      assert.ok(resource)
+      const preview = await readProjectMergedPreview(resource, repository)
+      assert.equal(preview.status, 200)
+      assert.deepEqual(
+        Buffer.from(await preview.arrayBuffer()),
+        await (await readIgsPackage(healthy.filePath)).readMember('preview/merged.png'),
+      )
+    } finally {
+      allowLaterScan()
+      await final
+    }
+    const completed = await final
+    assert.equal(initial.length, 1)
+    assert.deepEqual(
+      completed.projects.find(({ title }) => title === 'Checked project'),
+      initial[0].projects[0],
+    )
+    assert.equal(completed.projects.length, 4)
+    assert.deepEqual(
+      completed.workspaces.map(({ id }) => id),
+      [first.id, later.id],
+    )
+    assert.equal(
+      completed.projects.find(({ fileName }) => fileName === 'corrupt.igs')?.health,
+      'corrupt',
+    )
+    assert.equal(completed.projects.find(({ title }) => title === 'Later project')?.health, 'ready')
   })
 })
 

@@ -2293,7 +2293,10 @@ export class ProjectService {
     return await this.readProjectSummaries(workspaceId, (id) => this.scanWorkspaceIfAvailable(id))
   }
 
-  async listHomeCatalog(workspaceId?: string): Promise<ProjectHomeCatalog> {
+  async listHomeCatalog(
+    workspaceId?: string,
+    onInitial?: (catalog: ProjectHomeCatalog) => void,
+  ): Promise<ProjectHomeCatalog> {
     if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
@@ -2315,7 +2318,26 @@ export class ProjectService {
       }
       return false
     }
-    const workspaceRecords = await this.scanRegisteredWorkspaces(scan)
+    let publishInitial = workspaceId === undefined ? onInitial : undefined
+    const workspaceRecords = await this.scanRegisteredWorkspaces(
+      scan,
+      publishInitial &&
+        (async (workspace) => {
+          if (!publishInitial) {
+            return
+          }
+          try {
+            const initial = await this.readInitialHomeCatalog(workspace, validated)
+            if (initial) {
+              const notify = publishInitial
+              publishInitial = undefined
+              notify(initial)
+            }
+          } catch {
+            // The scoped projection is optional. The final read still reports catalog errors.
+          }
+        }),
+    )
     const projects = await this.readProjectSummaries(workspaceId, scan, validated)
     // A successful retry while reading the cards can change the sidebar counts.
     return { projects, workspaces: await this.readWorkspaceSummaries(workspaceRecords) }
@@ -5034,6 +5056,41 @@ export class ProjectService {
     return { kind: 'opened', tab }
   }
 
+  private async readInitialHomeCatalog(
+    workspace: ProjectWorkspaceRecord,
+    validated: ReadonlyMap<string, ProjectIndexRecord>,
+  ): Promise<ProjectHomeCatalog | null> {
+    const [summary] = await this.readWorkspaceSummaries([workspace])
+    if (summary.availability !== 'available' || summary.projectCount === 0) {
+      return null
+    }
+    const records = await this.options.repository.listProjects(workspace.id)
+    const modifiedTimes = await this.options.repository.listProjectModifiedTimes(workspace.id)
+    const projects = await Promise.all(
+      records.map(async (record): Promise<ProjectSummary | null> => {
+        const witness = validated.get(record.localProjectKey)
+        if (
+          record.fileHealth !== 'ready' ||
+          !record.fileFingerprint ||
+          witness?.workspaceId !== record.workspaceId ||
+          witness.canonicalPath !== record.canonicalPath ||
+          witness.fileFingerprint !== record.fileFingerprint
+        ) {
+          return null
+        }
+        const project = await this.toSummary(
+          record,
+          true,
+          modifiedTimes.get(record.localProjectKey) ?? null,
+          witness,
+        )
+        return (await this.options.repository.matchesSavedFile(record)) ? project : null
+      }),
+    )
+    const ready = projects.filter((project) => project !== null)
+    return ready.length > 0 ? { projects: ready, workspaces: [summary] } : null
+  }
+
   private async readProjectSummaries(
     workspaceId: string | undefined,
     scan: (id: string) => Promise<unknown>,
@@ -5339,14 +5396,16 @@ export class ProjectService {
 
   private async scanRegisteredWorkspaces(
     scan: (id: string) => Promise<boolean>,
+    afterScan?: (workspace: ProjectWorkspaceRecord) => Promise<void>,
   ): Promise<ProjectWorkspaceRecord[]> {
     await this.initializeStorage()
     const workspaces = await this.options.repository.listWorkspaces()
-    for (const workspace of workspaces) {
+    for (const [index, workspace] of workspaces.entries()) {
       const firstDefault = workspace.id === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
-      if (!(await scan(workspace.id)) && firstDefault) {
-        // The old eager discovery gave a briefly unavailable default folder another chance.
-        await scan(workspace.id)
+      // The old eager discovery gave a briefly unavailable default folder another chance.
+      const scanned = (await scan(workspace.id)) || (firstDefault && (await scan(workspace.id)))
+      if (afterScan && scanned && index + 1 < workspaces.length) {
+        await afterScan(workspace)
       }
     }
     return workspaces
