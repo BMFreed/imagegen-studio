@@ -890,3 +890,59 @@ After the readbacks and physical-exit checks, cleanup reclaimed
 and private profiles. Each run retains its receipts and selected archive
 witnesses. The two closed Home indexes, both Saved generations indexes and
 the exact candidate AppImage remain available for review.
+
+## Time spent on the first 256-Project catalog
+
+An isolated copy of Studio `060023e2` timed the current Main catalog and
+its existing archive readers. The fixture used 256 four-Raster Projects
+across three registered folders and 1,013,853,696 archive bytes. The timing
+wrappers call the same parser, hashing and SQLite code. Two fresh service
+instances each made one first catalog request, with SQLite closed and reopened
+between them in the same Node process. The workload used 120% CPU, 4 GiB RAM
+and zero swap. The results measure elapsed time in Main, including waits.
+
+| Main phase                        | Fresh index | Indexed restart |
+| --------------------------------- | ----------: | --------------: |
+| First complete catalog            |     12.48 s |         12.09 s |
+| Full archive parser               |      8.71 s |          8.36 s |
+| PNG member reads and validation   |      7.69 s |          7.56 s |
+| Schema preflight                  |      0.40 s |          0.27 s |
+| Whole-archive hashes before/after |      2.36 s |          1.89 s |
+
+The parser includes the PNG and schema spans. Each cold request had 256
+full validations, 1,280 PNG member reads and two whole-archive hashes per
+file. A subsequent unchanged Refresh took 1.72 s and did one hash per
+file. The external-change control validated two archives, found the
+replacement and added file, marked the moved original missing and retained
+254 unchanged neighbors. Both catalog lifetimes passed closed-index and
+saved preview checks. Peak memory was 1,405,571,072 bytes with zero OOM
+events. The timing excludes Electron and renderer work. Filesystem cache
+could be warm. Independent readback rehashed 257 extant archive files and
+checked both SQLite snapshots, the 30 migration hashes, the source pins
+and the nested timing counts. The fixture had already superseded one
+archive body, represented in the original input and initial index.
+
+At clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`, the
+Home and Projects callers under `invokeai/frontend/webv2/src/workbench/launchpad/pages`
+fetch managed projections through `workbench/projects/library.ts` and
+`workbench/projects/api.ts`. `invokeai/app/api/routers/projects.py` calls
+`invokeai/app/services/project_records/project_records_default.py` and
+`invokeai/app/services/shared/database/queries/projects.py`. That path does
+not validate portable archives. The external font catalog gives a closer
+precedent. `invokeai/app/services/fonts/fonts_default.py` reuses an indexed
+record for matching file size and SHA-256, and parses the same bounded
+buffer it hashed on a miss. The startup owner is
+`invokeai/app/api/dependencies.py`, the rescan caller is
+`invokeai/app/api/routers/fonts.py`, and the records are managed by
+`invokeai/app/services/shared/database/queries/fonts.py`.
+
+PNG member checks took most of the first-request time in this fixture.
+Reusing a byte-verified durable projection across restart is the next
+approach to qualify. It needs archive and validator identity and must
+preserve invalidation on external changes and rebuilding of accepted
+result rows. First discovery still requires full verification. The
+diagnostic leaves catalog behavior unchanged and the complete-catalog gate
+open. Results and the isolated instrumentation are under
+`runs/home-catalog-layered-main/20261126-cold-costs`.
+Cleanup kept the input manifests, timings, closed SQLite snapshots and a
+sample archive, and reclaimed 1,068,609,536 allocated bytes.
