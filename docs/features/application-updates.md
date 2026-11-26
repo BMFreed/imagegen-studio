@@ -569,6 +569,11 @@ to another new path through KDE. Both earlier stages were preserved and
 the next launch reopened the Project revision saved explicitly in the
 previous application.
 
+[Occupied native destination](../engineering/phase-5-packaged-recovery-kde-chooser-research.md#an-occupied-recovery-destination-selected-through-kde)
+verifies the create-only rule when KDE returns an existing file after its
+overwrite confirmation. Studio preserves the occupied file and lets the
+user select a fresh path for the same verified download.
+
 Qualification: 636 Main PASS/one existing platform SKIP, 358 full browser PASS before
 its local contrast correction plus 5 focused final PASS, exact semantic mutation
 restoration and one actual packaged A→B with two normal exits. B has trust but no

@@ -41,13 +41,16 @@ assert.ok(
           '--kde-save',
           '--kde-save-after-replace',
           '--kde-save-default',
+          '--kde-save-occupied',
         ].includes(rest[0]))),
 )
 const kdeRecoverNext = rest[0] === '--kde-recover-next'
 const kdeInstallNext = rest[0] === '--kde-install-next' || kdeRecoverNext
 const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
-const kdeSaveDefault = rest[0] === '--kde-save-default' || kdeInstallNext || afterReplace
+const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
+const kdeSaveDefault =
+  rest[0] === '--kde-save-default' || kdeInstallNext || afterReplace || kdeSaveOccupied
 const kdeSave = rest[0] === '--kde-save' || kdeSaveDefault
 const outputRoot = path.join(
   kdeSave ? os.userInfo().homedir : os.homedir(),
@@ -68,6 +71,7 @@ if (kdeSave) {
   await assertPrivateWayland()
   process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS = run
 }
+if (kdeSaveOccupied) process.env.IMAGEGEN_RECOVERY_QUALIFY_OCCUPIED = '1'
 const execute = (command, args, options) =>
   promisify(execFile)(
     command,
@@ -298,6 +302,7 @@ const cwd = path.join(root, 'cwd')
 const data = installedRuntime ? path.dirname(installedRuntime.appData) : path.join(root, 'data')
 const workspace = path.join(data, 'imagegen-studio/workspaces/Uncategorized')
 const original = path.join(applicationDir, 'Original.AppImage')
+const occupiedPath = path.join(applicationDir, 'Occupied.AppImage')
 const newPath = path.join(
   applicationDir,
   kdeSaveDefault ? 'ImageGen-Studio-0.2.0-Recovery.appimage' : 'Recovered.AppImage',
@@ -336,6 +341,12 @@ if (kdeSaveDefault) {
     `XDG_DOWNLOAD_DIR="${applicationDir}"\n`,
     { flag: 'wx', mode: 0o600 },
   )
+}
+if (kdeSaveOccupied) {
+  await fs.writeFile(occupiedPath, 'Existing file owned by the recovery destination fixture.\n', {
+    flag: 'wx',
+    mode: 0o600,
+  })
 }
 
 async function inspectInstalledProject(filename) {
@@ -606,6 +617,7 @@ for (const key of [
   'ELECTRON_NO_ASAR',
   'ELECTRON_RUN_AS_NODE',
   'IMAGEGEN_DEV_SERVER_URL',
+  'IMAGEGEN_RECOVERY_QUALIFY_OCCUPIED',
   'IMAGEGEN_TEST_IMAGE_WORKER',
   'IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME',
   'IGS_RECOVERY_QUALIFICATION_OWNER_START',
@@ -1556,32 +1568,63 @@ try {
   const downloadedB = await call(first, 'applicationUpdates', 'getStatus')
   assert.equal(downloadedB.availableVersion, '0.2.0')
   assert.equal(downloadedB.verification, 'signed-release')
+  const downloadRequests = requests.length
+  const occupied = kdeSaveOccupied
+    ? { before: await fileWitness(occupiedPath), path: occupiedPath }
+    : null
+  if (occupied) report.kdeSave.occupied = occupied
+  const conflictMessage = 'The recovery destination already exists. Choose a new AppImage path.'
+  const firstSaveResult = occupied
+    ? {
+        error: { code: 'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS', message: conflictMessage },
+        ok: false,
+      }
+    : { ok: true, value: { status: 'canceled' } }
   const chooseRecovery = async (destination) => {
     if (!kdeSave) {
       await save.click()
       return
     }
+    const confirmExistingRecovery = occupied !== null && destination === occupiedPath
     const choice = await driveKdeSaveChooser({
       state: old,
       destination,
       trigger: save,
       windowTitle: 'Save Recovery AppImage',
-      acceptDefault: kdeSaveDefault && destination !== null,
+      acceptDefault: kdeSaveDefault && destination !== null && !confirmExistingRecovery,
+      confirmExistingRecovery,
       onPresented: async () => {
         await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
+        if (confirmExistingRecovery) {
+          assert.deepEqual(await fileWitness(occupiedPath), occupied.before)
+        }
       },
     })
     report.kdeSave.portal.push(choice)
   }
-  await chooseRecovery(null)
+  const beforeFirstSave = occupied ? (await fs.readdir(applicationDir)).sort() : null
+  await chooseRecovery(occupied ? occupiedPath : null)
   await expect
     .poll(async () => (await events()).filter((event) => event.name === 'recovery-response').length)
     .toBe(1)
   await expect(save).toBeEnabled()
-  await fs.lstat(newPath).then(
-    () => assert.fail('Cancel published an AppImage.'),
-    (error) => assert.equal(error.code, 'ENOENT'),
-  )
+  await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
+  if (occupied) {
+    await expect(updates.getByText(conflictMessage, { exact: true })).toBeVisible()
+    await expect(updates.getByText('Recovery AppImage saved', { exact: true })).toBeHidden()
+    const response = await nativeEvent('recovery-response', '0.1.0')
+    assert.equal(response.pid, old.pid)
+    assert.deepEqual(response.result, firstSaveResult)
+    occupied.response = response.result
+    occupied.afterRefusal = await fileWitness(occupiedPath)
+    assert.deepEqual(occupied.afterRefusal, occupied.before)
+    assert.deepEqual((await fs.readdir(applicationDir)).sort(), beforeFirstSave)
+    assert.deepEqual(await call(first, 'applicationUpdates', 'getStatus'), downloadedB)
+    assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
+    assert.equal(await hash(project), projectSha)
+    assert.equal(requests.length, downloadRequests)
+    await first.screenshot({ path: path.join(run, 'occupied-recovery-destination.png') })
+  }
   if (kdeSave) assert.deepEqual(await retainedState(), retained)
   await chooseRecovery(newPath)
   if (kdeSaveDefault) {
@@ -1608,10 +1651,7 @@ try {
     (await events())
       .filter((event) => event.name === 'recovery-response')
       .map((event) => event.result),
-    [
-      { ok: true, value: { status: 'canceled' } },
-      { ok: true, value: { status: 'saved' } },
-    ],
+    [firstSaveResult, { ok: true, value: { status: 'saved' } }],
   )
   assert.equal((await events()).filter((event) => event.name === 'relaunch').length, 0)
   const retainedAfter = await retainedState()
@@ -1725,6 +1765,11 @@ try {
   }
 
   assert.deepEqual(await retainedState(), retained)
+  if (occupied) {
+    occupied.afterReopen = await fileWitness(occupiedPath)
+    assert.deepEqual(occupied.afterReopen, occupied.before)
+    assert.equal(requests.length, downloadRequests)
+  }
   if (kdeSave) {
     report.kdeSave.retainedAfterReopen = await retainedState()
     assert.deepEqual(report.kdeSave.retainedAfterReopen, retained)

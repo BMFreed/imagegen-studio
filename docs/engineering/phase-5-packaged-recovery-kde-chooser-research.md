@@ -98,6 +98,59 @@ the actual KDE Wayland portal with a qualification publisher and isolated
 AppData. Shipping publisher trust, installed-engine continuity and the
 wider desktop matrix remain open.
 
+## An occupied recovery destination selected through KDE
+
+Base `9f98a95a`. Clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7` was reread at
+`invokeai/app/util/database_copy.py::copy_to_sqlite`, `_copy_to_sqlite` and
+`_move_into_place`, reached by `invoke-db-copy`. Those owners verify a
+private SQLite copy before `invokeai/app/util/no_replace.py::publish_noreplace`
+tries to publish it. The occupied case keeps the existing file. Studio
+qualifies its existing signed publisher and typed refusal under the same
+create-only rule. Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce`
+delegates installation through `src/main/main-process-manager.ts` and
+`src/main/updater.ts` without a fresh-path Save action.
+
+The `--kde-save-occupied` qualification creates a private mode-0600
+sentinel named `Occupied.AppImage` under the isolated Applications
+directory. The fixture accepts the real KDE **Overwrite File?** prompt
+only for that owned path. KDE returns a successful SaveFile response with
+the exact occupied URI. Production Main returns
+`APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS`, and Updates asks the
+user to choose a new AppImage path. File identity, mode, timestamps and
+SHA-256 are exact after refusal. The application directory retains the
+same entries, including the original AppImage and stage. The Project
+stays open with its saved bytes intact.
+
+The second Save uses the same signed download and accepts KDE's fresh
+lowercase default filename. The loopback feed observes just the explicit
+Check and Download across both attempts and the restart. The published B
+matches the signed bytes. After normal A close, B reports recovery clear
+and opens the same Project. The occupied sentinel, original stage,
+backup and lock preserve their witnesses through B's normal exit. This
+covers a file already present at selection. The publisher race is
+covered separately by the recovery-publication tests.
+
+R1 ran in `runs/packaged-recovery-action/20261126-kde-occupied-r1` with
+software KDE Wayland, 120% CPU, 4 GiB memory and zero swap. The native
+wrapper exited zero in 26.479 s with a 1.7 GiB recorded peak. An independent
+readback verified both Ed25519 declarations, exact AppImage and embedded
+ASAR/Electron/SQLite bytes, both real portal receipts, the retained stage,
+the sentinel and both closed Project/SQLite pairs. It verified all 30
+migration hashes and exit of 16 recorded process identities. All 115
+focused publication, recovery, staging and IPC tests passed. Build,
+scoped ESLint, formatting and syntax checks passed.
+
+After physical exit, cleanup reclaimed 1,512,595,456 allocated bytes
+from this run's two owned payload and scratch paths and rechecked 47
+retained files. The sentinel sample, stage metadata, signed declarations,
+closed snapshots, chooser traces and screenshots remain in the run.
+
+Replay uses the same private KDE environment described below. Build with
+`--kde-save` and run the qualification with `--kde-save-occupied`. The
+scenario uses local qualification trust and AppData. Retirement, shipping
+trust and installed-engine continuity remain open.
+
 ## Replay
 
 Use a fresh owned child of `runs/packaged-recovery-action`, a short owned

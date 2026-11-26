@@ -5,6 +5,7 @@ from itertools import islice
 import json
 import os
 from pathlib import Path
+from pwd import getpwuid
 import stat
 import time
 
@@ -157,10 +158,10 @@ def press(button):
         raise RuntimeError("The chooser did not accept the AT-SPI action.")
 
 
-def choose(pid, title, filename, accept_label, accept_default, existing_png, suggested_name):
+def choose(pid, title, filename, accept_label, accept_default, confirm_existing, suggested_name):
     directory = title in DIRECTORY_TITLES
     matching_dialogs = owned_directory_dialogs if directory else owned_dialog
-    if existing_png:
+    if confirm_existing:
         pending = list(owned_overwrite_dialog(pid))
         if filename is None and pending:
             modal = single(pending, "owned overwrite prompt to cancel")
@@ -219,13 +220,13 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png, sug
             )
 
     button = named_control(dialog, Atspi.Role.PUSH_BUTTON, accept_label if filename else "Cancel")
-    if existing_png and filename is not None:
+    if confirm_existing and filename is not None:
         try:
             press(button)
         except (GLib.Error, RuntimeError):
             # The initial AT-SPI action can still be waiting in the nested KMessageBox loop.
             # Only a newly visible prompt from this portal process can prove it reached that loop.
-            wait_for(lambda: list(owned_overwrite_dialog(pid)), "The export action did not open the overwrite prompt.")
+            wait_for(lambda: list(owned_overwrite_dialog(pid)), "The Save action did not open the overwrite prompt.")
         modal = single(
             wait_for(lambda: list(owned_overwrite_dialog(pid)), "The overwrite prompt did not appear."),
             "owned overwrite prompt",
@@ -262,7 +263,7 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png, sug
     }
     if accept_default:
         result["acceptedDefaultName"] = filename.name
-    if existing_png and filename is not None:
+    if confirm_existing and filename is not None:
         result["overwriteConfirmation"] = {
             "pid": pid, "title": OVERWRITE_TITLE, "message": message,
             "action": "Overwrite", "closed": True,
@@ -278,6 +279,7 @@ def main():
     parser.add_argument("--select", type=Path)
     parser.add_argument("--accept-default", action="store_true")
     parser.add_argument("--owned-existing-png", action="store_true")
+    parser.add_argument("--owned-existing-recovery", action="store_true")
     parser.add_argument("--recovery-version", choices=("0.2.0", "0.4.0"))
     args = parser.parse_args()
     if args.pid <= 1 or not os.environ.get("AT_SPI_BUS_ADDRESS"):
@@ -305,6 +307,29 @@ def main():
         args.title != "Export As" or os.environ.get("IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT") != "1"
     ):
         parser.error("Existing PNG selection is restricted to the owned Project export check.")
+    if args.owned_existing_recovery:
+        if (
+            not recovery or args.owned_existing_png or args.accept_default
+            or args.recovery_version not in (None, "0.2.0")
+            or os.environ.get("IMAGEGEN_RECOVERY_QUALIFY_OCCUPIED") != "1"
+        ):
+            parser.error("Existing AppImage selection is restricted to the occupied recovery qualification.")
+        evidence = Path(os.environ["IMAGEGEN_LINUX_PACKAGE_ARTIFACTS"])
+        runs = Path(getpwuid(os.getuid()).pw_dir) / ".codex/artifacts/imagegen-studio/runs/packaged-recovery-action"
+        if evidence.parent != runs or evidence.resolve(strict=True) != evidence:
+            parser.error("Use a canonical recovery qualification directory.")
+        run = evidence.lstat()
+        if not (stat.S_ISDIR(run.st_mode) and run.st_uid == os.getuid() and run.st_mode & 0o077 == 0):
+            parser.error("The recovery qualification directory must be private and owned.")
+        occupied = evidence / "payloads" / "Applications" / "Occupied.AppImage"
+        if args.select not in (None, occupied) or occupied.resolve(strict=True) != occupied:
+            parser.error("Select only the owned occupied recovery destination.")
+        file = occupied.lstat()
+        if not (
+            stat.S_ISREG(file.st_mode) and file.st_uid == os.getuid() and file.st_nlink == 1
+            and stat.S_IMODE(file.st_mode) == 0o600
+        ):
+            parser.error("The occupied recovery destination must be a private owned regular file without aliases.")
     if args.select is not None:
         if not args.select.is_absolute():
             parser.error("The selected file must have a canonical absolute path.")
@@ -325,7 +350,7 @@ def main():
                 entry = args.select.lstat()
                 if not (stat.S_ISREG(entry.st_mode) and entry.st_uid == os.getuid() and entry.st_nlink == 1):
                     parser.error("The BBox PNG must be an owned regular file without aliases.")
-            elif args.select.exists() or args.select.is_symlink():
+            elif not args.owned_existing_recovery and (args.select.exists() or args.select.is_symlink()):
                 parser.error("The save destination must be a new file.")
         elif directory:
             evidence = Path(os.environ["IMAGEGEN_LINUX_PACKAGE_ARTIFACTS"])
@@ -346,7 +371,7 @@ def main():
     try:
         result = choose(
             args.pid, args.title, args.select, accept_label, args.accept_default,
-            args.owned_existing_png, suggested_name,
+            args.owned_existing_png or args.owned_existing_recovery, suggested_name,
         )
     except RuntimeError as error:
         if not directory:

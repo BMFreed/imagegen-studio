@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { lstat, readFile, readdir, readlink, realpath, writeFile } from 'node:fs/promises'
+import { userInfo } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -401,6 +402,7 @@ export async function driveKdeSaveChooser({
   onPresented,
   acceptDefault,
   confirmExistingPng,
+  confirmExistingRecovery,
   version,
 }) {
   const recovery = windowTitle === 'Save Recovery AppImage'
@@ -409,6 +411,8 @@ export async function driveKdeSaveChooser({
     ? `ImageGen-Studio-${version ?? '0.2.0'}-Recovery.AppImage`
     : saveNames.get(windowTitle)
   assert.ok(suggestedName, 'Use a qualified export or recovery dialog.')
+  const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
+  assert.ok(!(confirmExistingPng && confirmExistingRecovery))
   if (acceptDefault) {
     assert.ok(recovery && destination)
     assert.equal(path.basename(destination), suggestedName.replace(/\.AppImage$/, '.appimage'))
@@ -418,13 +422,24 @@ export async function driveKdeSaveChooser({
     assert.ok(
       !acceptDefault && destination && windowTitle === 'Export As' && state.name === 'first',
     )
+    assert.equal(destination, path.join(root, 'exports/primary generation box.png'))
+  }
+  if (confirmExistingRecovery) {
+    assert.equal(process.env.IMAGEGEN_RECOVERY_QUALIFY_OCCUPIED, '1')
+    assert.ok(recovery && !acceptDefault && state.name === 'recovery-original')
+    assert.equal(version ?? '0.2.0', '0.2.0')
     assert.equal(
-      destination,
-      path.join(process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS, 'exports/primary generation box.png'),
+      path.dirname(root),
+      path.join(
+        userInfo().homedir,
+        '.codex/artifacts/imagegen-studio/runs/packaged-recovery-action',
+      ),
     )
+    assert.equal(destination, path.join(root, 'payloads/Applications/Occupied.AppImage'))
+    const run = await lstat(root)
+    assert.ok(run.isDirectory() && run.uid === process.getuid() && (run.mode & 0o077) === 0)
   }
   if (destination !== undefined && destination !== null) {
-    const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
     assert.equal(await realpath(root), root)
     assert.ok(path.isAbsolute(destination) && path.resolve(destination) === destination)
     assert.equal(
@@ -437,10 +452,11 @@ export async function driveKdeSaveChooser({
     assert.equal(await realpath(parent), parent)
     const directory = await lstat(parent)
     assert.ok(directory.isDirectory() && directory.uid === process.getuid())
-    if (confirmExistingPng) {
+    if (confirmExistingPng || confirmExistingRecovery) {
       const file = await lstat(destination)
       assert.ok(file.isFile() && file.uid === process.getuid() && file.nlink === 1)
       assert.equal(await realpath(destination), destination)
+      if (confirmExistingRecovery) assert.equal(file.mode & 0o7777, 0o600)
     } else {
       await assert.rejects(lstat(destination), { code: 'ENOENT' })
     }
@@ -456,6 +472,7 @@ export async function driveKdeSaveChooser({
     onPresented,
     acceptDefault,
     confirmExistingPng,
+    confirmExistingRecovery,
     recoveryVersion: version,
   })
 }
@@ -472,6 +489,7 @@ async function drive({
   onPresented,
   acceptDefault,
   confirmExistingPng,
+  confirmExistingRecovery,
   recoveryVersion,
 }) {
   const session = await assertPrivateWayland()
@@ -533,6 +551,7 @@ async function drive({
           ...(filename ? ['--select', filename] : []),
           ...(acceptDefault && filename ? ['--accept-default'] : []),
           ...(confirmExistingPng ? ['--owned-existing-png'] : []),
+          ...(confirmExistingRecovery ? ['--owned-existing-recovery'] : []),
           ...(recoveryVersion ? ['--recovery-version', recoveryVersion] : []),
         ],
         { timeout: 15000 },
@@ -564,7 +583,7 @@ async function drive({
       selectedPath: selectedPath ?? null,
       closed: true,
       ...(acceptDefault ? { acceptedDefaultName: path.basename(selectedPath) } : {}),
-      ...(confirmExistingPng
+      ...(confirmExistingPng || confirmExistingRecovery
         ? {
             overwriteConfirmation: {
               pid: kdePid,

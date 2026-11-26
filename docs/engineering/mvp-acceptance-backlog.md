@@ -129,6 +129,11 @@ environment and remaining limits, and update the current stage and next run.
         appears during the session. The renderer checks preserved the
         download and exercised manual dismissal without a Project close.
         [Late recovery guidance](./phase-5-application-update-interruption-research.md#guidance-after-a-stage-appears-during-the-session)
+  - [x] KDE supplied an occupied AppImage path after its overwrite prompt.
+        Studio preserved the file and retried with the same signed download
+        at a fresh path. Both lifetimes closed normally with the exact
+        Project and old stage preserved.
+        [Occupied recovery destination](./phase-5-packaged-recovery-kde-chooser-research.md#an-occupied-recovery-destination-selected-through-kde)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
