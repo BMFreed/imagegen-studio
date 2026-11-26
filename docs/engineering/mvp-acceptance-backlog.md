@@ -71,6 +71,11 @@ environment and remaining limits, and update the current stage and next run.
         the sidebar as a modal, keeps Tab inside, and returns focus after Escape.
         Four sampled labels meet 4.5:1 at 900×620.
         [Native Locate and Settings result](./phase-5-packaged-workspace-chooser-research.md#locate-folder-cancellation-and-workspace-settings)
+  - [x] After a keyboard-confirmed Move to Trash, the AppImage visibly
+        focuses Search projects in the current Home view. The closed Project
+        and its Trash record survive restart, and the neighboring Project
+        survives Restore and permanent deletion of the target.
+        [Native Move to Trash result](./phase-5-packaged-project-and-preset-research.md#keyboard-focus-after-move-to-trash)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
         normal close.

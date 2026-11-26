@@ -175,6 +175,11 @@ type HomePresentationIntent = {
   target: 'current' | 'new'
 }
 type HomeOpenIntent = HomePresentationIntent & { projectId: string; trigger?: HTMLElement }
+type HomeProjectRemovalFocus = {
+  home: HomePresentationIntent
+  projectId: string
+  workspaceId: string | null
+}
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type ImportPresentation = {
   destinationId: string
@@ -551,6 +556,7 @@ const trashActionProject = ref<ProjectSummary | ProjectTrashSummary | null>(null
 const trashDialogKind = ref<'delete' | 'trash'>('trash')
 const trashActionError = ref<string | null>(null)
 const trashPendingMessage = ref<string | null>(null)
+let trashedProjectReturnFocus: HomeProjectRemovalFocus | null = null
 const trashActionBlocked = computed(
   () =>
     trashDialogKind.value === 'trash' &&
@@ -568,11 +574,7 @@ let workspaceRemovalHomeIntent: HomePresentationIntent | null = null
 const showRemoveMissingProject = ref(false)
 const removingMissingProject = ref<ProjectSummary | null>(null)
 const removeMissingProjectError = ref<string | null>(null)
-let missingProjectReturnFocus: {
-  home: HomePresentationIntent
-  projectId: string
-  workspaceId: string | null
-} | null = null
+let missingProjectReturnFocus: HomeProjectRemovalFocus | null = null
 const removeMissingProjectEligible = computed(() => {
   const captured = removingMissingProject.value
   const current = projects.value.find(({ id }) => id === captured?.id)
@@ -4107,6 +4109,7 @@ function beginTrashProject(project: ProjectSummary) {
   trashDialogKind.value = 'trash'
   trashActionError.value = null
   trashPendingMessage.value = null
+  trashedProjectReturnFocus = null
   showProjectTrashAction.value = true
 }
 
@@ -4217,10 +4220,15 @@ async function removeMissingProject() {
 function removeMissingProjectAfterLeave() {
   const focus = missingProjectReturnFocus
   missingProjectReturnFocus = null
+  if (!showRemoveMissingProject.value) {
+    focusAfterHomeProjectRemoval(focus)
+  }
+}
+
+function focusAfterHomeProjectRemoval(focus: HomeProjectRemovalFocus | null) {
   if (
     focus &&
     homeOpenIntentCurrent(focus.home) &&
-    !showRemoveMissingProject.value &&
     !selectedTrashView.value &&
     selectedWorkspaceId.value === focus.workspaceId &&
     !projects.value.some(({ id }) => id === focus.projectId) &&
@@ -4329,12 +4337,21 @@ async function confirmProjectTrashAction() {
   }
   const projectId = project.id
   const focus = kind === 'delete' ? captureTrashActionFocus('.project-trash-modal') : null
+  const home =
+    kind === 'trash' && document.activeElement?.closest('.project-trash-modal')
+      ? captureHomePresentationIntent()
+      : null
+  const workspaceId = selectedWorkspaceId.value
   let deleted = false
   pendingProjectAction.value = { kind: kind === 'trash' ? 'trash' : 'delete-project', projectId }
   trashActionError.value = null
   try {
     if (kind === 'trash') {
       await apiValue(() => projectApi().trashProject(projectId))
+      if (home) {
+        trashedProjectReturnFocus = { home, projectId, workspaceId }
+      }
+      homeProjectSummaries.value = homeProjectSummaries.value.filter(({ id }) => id !== projectId)
       showProjectTrashAction.value = false
     } else {
       if (!('trashId' in project)) {
@@ -4358,6 +4375,14 @@ async function confirmProjectTrashAction() {
     if (deleted) {
       focusAfterTrashRemoval(focus, projectId)
     }
+  }
+}
+
+function projectTrashActionAfterLeave() {
+  const focus = trashedProjectReturnFocus
+  trashedProjectReturnFocus = null
+  if (!showProjectTrashAction.value) {
+    focusAfterHomeProjectRemoval(focus)
   }
 }
 
@@ -7336,6 +7361,7 @@ onBeforeUnmount(() => {
         :kind="trashDialogKind"
         :pendingMessage="trashPendingMessage"
         :project="trashActionProject"
+        @afterLeave="projectTrashActionAfterLeave"
         @confirm="confirmProjectTrashAction"
         @switchProject="switchTrashProject"
       />

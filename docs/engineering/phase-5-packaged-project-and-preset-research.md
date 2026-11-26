@@ -212,3 +212,54 @@ The evidence directories under the local artifact root are
 `runs/packaged-project-trash/20261123-r5`.
 Guarded cleanup removed both packages, private profiles, browser scratch and
 redundant temporary output. It reclaimed 1,108,357,120 allocated bytes.
+
+## Keyboard focus after Move to Trash
+
+On `cdeb6f10`, the active Project actions button disappeared after a
+confirmed Move to Trash. In Chromium at 900×620, Escape returned to that
+button and kept the card. Confirming the move removed the card and left
+Search projects unfocused. The stock AppImage reproduced this with actual
+KDE keyboard input through the dropdown and confirmation. After the shorter
+list rendered, focus was on `BODY` with no visible indicator.
+
+In InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/frontend/webv2/src/features/gallery/ui/GalleryImageGrid.tsx` passes a
+focus resolver to `useGalleryGridHotkeys.ts`. The delete command uses the
+original opener while it remains connected and otherwise resolves a Gallery
+target. `GalleryGridFocus.browser.test.tsx` covers keeping focus on a stable
+surface during item changes and preserving focus already held elsewhere.
+Studio uses its existing Home search input as the fallback in the same view.
+
+The renderer removes the row after Main confirms the move. It focuses the
+search after Naive finishes closing the confirmation, provided the Project
+is absent, the same Home workspace remains active and the body has focus.
+The normal list and counts refresh still runs. The shared Trash confirmation
+now exposes `aria-modal` for both actions. The patch affects renderer
+presentation. [Renderer owner](../../src/renderer/App.vue) ·
+[Confirmation](../../src/renderer/components/ProjectTrashModal.vue)
+
+The repaired AppImage showed visible focus on Search projects after trusted
+keyboard confirmation. Both package runs used the same retained `.igs` input,
+KDE Wayland at 900×620, software rendering, 120% CPU, 4 GiB and zero swap.
+They exercised Restore and later permanent deletion, preserved the unrelated
+Project and text file, and closed three AppImage lifetimes each. The old
+build reached the focus assertion after those closes. The Chromium
+check mounts the production renderer with controlled IPC and independently
+covers Escape, the modal attribute, and the search focus in a scoped workspace.
+
+Independent readback matched both AppImages and their embedded application
+and SQLite addon bytes, 103 trusted key events per run and 27 exited process
+identities per run. It checked the preserved target and accepted Raster in
+the first closed SQLite and `.igs` pair, and the retired target key and
+preserved neighbor in the final pair.
+
+The old and repaired package SHA-256 digests are
+`be00e6c9ed10cbbd14f6f2d5d361c8c2fe63ad7bea6b355683cc7cd89ac9151f` and
+`69426ae2c7633262a078ec15a7f1f936aa954c545cfcbc3cbb29f01e337db5e4`.
+Native evidence is under `runs/packaged-project-trash/20261126-r1` and
+`runs/packaged-project-trash/20261126-r2`. The 30 Home browser checks,
+149 focused Main checks, typecheck, scoped lint and AppImage packaging passed.
+This qualifies the local keyboard path in the sampled desktop and viewport.
+Cleanup removed both package builds, private profiles and short scratch
+directories, reclaiming 1,087,557,632 allocated bytes. Both audit receipts,
+keyboard traces, screenshots and closed data snapshots remain.

@@ -595,6 +595,12 @@ Trash actions are:
 
 Open projects must still be closed before moving them to Trash. Workspace counters exclude trashed projects. Restore requires the original canonical folder to be registered and its source Project available; it never implicitly adds a workspace or redirects to Uncategorized. A permanent deletion that has committed but cannot finish stays visible as pending with Retry Delete and cannot be restored. Repairing access allows guarded startup recovery to finish that committed deletion.
 
+The Move to Trash confirmation opens on **Cancel**. Escape returns to the
+Project actions button. After a successful move removes that button, Home puts
+visible focus on **Search projects** in the same view if focus would otherwise
+be lost. The confirmation and permanent-delete dialog expose modal semantics.
+[Packaged Move to Trash check](../engineering/phase-5-packaged-project-and-preset-research.md#keyboard-focus-after-move-to-trash)
+
 The permanent-delete confirmation opens with focus on **Cancel**. Escape and
 Cancel return focus to the same Delete action. After Restore or a confirmed
 permanent deletion removes the focused row or its action, Home returns focus to

@@ -101,21 +101,46 @@ async function showHome(page) {
   await expect(page.getByRole('region', { name: 'Home', exact: true })).toBeVisible()
 }
 
-async function requestTrash(page) {
+async function requestTrash(page, keyboard) {
   const modal = dialog(page, 'Move Project to Trash')
   await showHome(page)
-  await button(page, `${targetTitle} project actions`).click()
-  await page
-    .locator('.n-dropdown-option-body__label')
-    .filter({ hasText: /^Move to Trash$/ })
-    .click()
+  const actions = button(page, `${targetTitle} project actions`)
+  const optionLabel = page.locator('.n-dropdown-option-body__label').filter({
+    hasText: /^Move to Trash$/,
+  })
+  if (keyboard) {
+    await keyboard.tabTo(actions, 'reach-project-actions-for-trash')
+    await keyboard.input.press('Return', 'open-project-actions-for-trash')
+    await expect(optionLabel).toBeVisible()
+    const selectedOption = page.locator('.n-dropdown-option-body--pending').filter({
+      has: optionLabel,
+    })
+    const optionCount = await page.locator('.n-dropdown-option-body:visible').count()
+    for (let count = 0; count < optionCount && !(await selectedOption.isVisible()); count++) {
+      await keyboard.input.press('Down', 'reach-move-to-trash-menu-option')
+    }
+    await expect(selectedOption).toBeVisible()
+    await keyboard.input.press('Return', 'open-move-to-trash-confirmation')
+  } else {
+    await actions.click()
+    await optionLabel.click()
+  }
   await expect(modal).toBeVisible()
   return modal
 }
 
-async function moveToTrash(page) {
-  const modal = await requestTrash(page)
-  await button(modal, 'Move to Trash').click()
+async function moveToTrash(page, keyboard) {
+  const modal = await requestTrash(page, keyboard)
+  const confirm = button(modal, 'Move to Trash')
+  if (keyboard) {
+    await expect(modal).toContainText(targetTitle)
+    await keyboard.tabTo(confirm, 'reach-move-to-trash-confirmation')
+    await expect(confirm).toBeFocused()
+    await keyboard.observe('before-confirmed-move-to-trash', confirm)
+    await keyboard.input.press('Return', 'confirm-move-to-trash')
+  } else {
+    await confirm.click()
+  }
   await expect(modal).toBeHidden()
 }
 
@@ -376,7 +401,16 @@ export async function runPackagedProjectTrash({
   await assertSource()
 
   await closeProject(firstPage, targetTitle)
-  await moveToTrash(firstPage)
+  const firstKeyboard = nativeWayland ? await connectTrashKeyboard(first, root) : null
+  await moveToTrash(firstPage, firstKeyboard)
+  let afterMoveToTrash
+  if (firstKeyboard) {
+    const projectList = firstPage.getByRole('list', { name: 'Project list', exact: true })
+    await expect(projectList.locator(`[data-project-id="${id}"]`)).toHaveCount(0)
+    await expect(button(projectList, `Select ${neighborTitle}`)).toBeVisible()
+    const search = firstPage.getByRole('textbox', { name: 'Search projects', exact: true })
+    afterMoveToTrash = await firstKeyboard.observe('after-confirmed-move-to-trash', search)
+  }
   const firstTrash = await verifyTrashed(first)
   const trashedOpenRefusal = await assertRefusal(firstPage, 'PROJECT_TRASHED', 'open', id)
   await closeNormally(first)
@@ -544,6 +578,12 @@ export async function runPackagedProjectTrash({
   const restarted = await retainOwnStore('after-delete-restart', path.basename(neighbor.filename))
 
   if (keyboard) {
+    assert.ok(
+      afterMoveToTrash?.returnedToTrigger &&
+        afterMoveToTrash.active?.focusVisible &&
+        afterMoveToTrash.active.name === 'Search projects',
+      `Confirmed Move to Trash must leave visible focus on Search projects after the original row disappears: ${JSON.stringify(afterMoveToTrash)}`,
+    )
     assert.deepEqual(
       readyEnter?.tabs,
       [{ name: targetTitle, selected: 'true' }],
@@ -606,7 +646,8 @@ export async function runPackagedProjectTrash({
       ...(keyboard && {
         keyboard: {
           trace: keyboard.trace,
-          observations: keyboard.observations,
+          observations: [...firstKeyboard.observations, ...keyboard.observations],
+          afterMoveToTrash,
           trashEnter,
           readyEnter,
         },

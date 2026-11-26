@@ -16,7 +16,7 @@ const props = defineProps<{
   project: ProjectSummary | ProjectTrashSummary | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
-const emit = defineEmits<{ confirm: []; switchProject: [] }>()
+const emit = defineEmits<{ afterLeave: []; confirm: []; switchProject: [] }>()
 const title = computed(() =>
   props.kind === 'trash' ? 'Move Project to Trash' : 'Delete Project Permanently',
 )
@@ -48,10 +48,12 @@ function close() {
     :maskClosable="false"
     :show
     :zIndex="AppLayer.dialog"
+    @afterLeave="emit('afterLeave')"
     @update:show="!$event && close()"
   >
     <NCard
       :aria-label="title"
+      aria-modal="true"
       class="project-trash-modal"
       contentScrollable
       role="dialog"

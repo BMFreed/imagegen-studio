@@ -3,7 +3,8 @@ import type { ApiResult, ProjectHomeCatalog, ProjectSummary } from '../../../src
 import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
 
-type CatalogScenario = 'fallback' | 'late-error' | 'missing-removal' | 'workspace-navigation'
+type CatalogScenario =
+  'fallback' | 'late-error' | 'missing-removal' | 'trash-project' | 'workspace-navigation'
 
 interface HomeCatalogFixture {
   catalogScopes: (string | null)[]
@@ -52,6 +53,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         health: 'missing',
         id: `project-v1-${'b'.repeat(64)}`,
       }
+      const trashTarget: ProjectSummary = { ...missing, health: 'ready', title: 'Old sketch' }
       const workspaces = [
         {
           availability: 'available' as const,
@@ -136,10 +138,11 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
             if (scenario === 'fallback') {
               return batchError
             }
-            if (scenario === 'missing-removal') {
+            if (scenario === 'missing-removal' || scenario === 'trash-project') {
+              const target = scenario === 'missing-removal' ? missing : trashTarget
               const projects = removed
                 ? [project('Current sketch')]
-                : [missing, project('Current sketch')]
+                : [target, project('Current sketch')]
               return {
                 ok: true,
                 value: {
@@ -174,6 +177,13 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           removeMissingProject: async (id: string, confirmed: boolean) => {
             if (scenario !== 'missing-removal' || id !== missing.id || !confirmed || removed) {
               throw new Error('The fixture expected one confirmed removal of Missing sketch.')
+            }
+            removed = true
+            return { ok: true, value: null }
+          },
+          trashProject: async (id: string) => {
+            if (scenario !== 'trash-project' || id !== trashTarget.id || removed) {
+              throw new Error('The fixture expected one Move to Trash of Old sketch.')
             }
             removed = true
             return { ok: true, value: null }
@@ -269,6 +279,66 @@ test('production Home restores keyboard focus after removing a missing project f
   const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
   await expect(search).toBeFocused()
   expect(await search.evaluate((input) => input.matches(':focus-visible'))).toBe(true)
+})
+
+test('production Home restores keyboard focus after moving a project to Trash', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  const home = await mountHome(page, 'trash-project')
+  const workspace = home.getByRole('button', { name: /^Current workspace\s*2$/ })
+  await workspace.press('Enter')
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  const actions = home.getByRole('button', { exact: true, name: 'Old sketch project actions' })
+  const target = home.getByRole('button', { exact: true, name: 'Select Old sketch' })
+  const neighbor = home.getByRole('button', { exact: true, name: 'Select Current sketch' })
+  const dialog = page.getByRole('dialog', { exact: true, name: 'Move Project to Trash' })
+  const moveOption = page.locator('.n-dropdown-option-body').filter({ hasText: /^Move to Trash$/ })
+  async function openConfirmation() {
+    await actions.press('Enter')
+    await expect(moveOption).toBeVisible()
+    for (let count = 0; count < 6; count++) {
+      await page.keyboard.press('ArrowDown')
+      if ((await moveOption.getAttribute('class'))?.includes('n-dropdown-option-body--pending')) {
+        break
+      }
+    }
+    await expect(moveOption).toHaveClass(/n-dropdown-option-body--pending/)
+    await page.keyboard.press('Enter')
+    await expect(dialog).toBeVisible()
+  }
+
+  await openConfirmation()
+  await expect(dialog.getByRole('button', { exact: true, name: 'Cancel' })).toBeFocused()
+  await expect(dialog).toHaveAttribute('aria-modal', 'true')
+  await expect(moveOption).toBeHidden()
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('move-to-trash-confirmation.png'),
+  })
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(actions).toBeFocused()
+  await expect(target).toBeVisible()
+
+  await openConfirmation()
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByRole('button', { exact: true, name: 'Move to Trash' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  await expect(target).toHaveCount(0)
+  await expect(neighbor).toHaveAttribute('aria-pressed', 'false')
+  await expect(home.getByRole('button', { name: /^Current workspace\s*1$/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  const search = home.getByRole('textbox', { exact: true, name: 'Search projects' })
+  await expect(search).toBeFocused()
+  expect(await search.evaluate((input) => input.matches(':focus-visible'))).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('after-move-to-trash.png') })
+  expect(await page.getByRole('tablist', { name: 'Open documents' }).getByRole('tab').count()).toBe(
+    1,
+  )
 })
 
 test('production Home switches workspaces from a complete catalog and Refresh discovers other folders', async ({
