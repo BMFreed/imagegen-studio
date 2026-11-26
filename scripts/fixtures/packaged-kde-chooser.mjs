@@ -22,7 +22,6 @@ const appImageFilter =
 const saveNames = new Map([
   ['Export As', 'canvas.png'],
   ['Export Generation BBox', 'generation-bbox.png'],
-  ['Save Recovery AppImage', 'ImageGen-Studio-0.2.0-Recovery.AppImage'],
 ])
 const processes = {
   bus: '/usr/bin/dbus-daemon',
@@ -402,13 +401,17 @@ export async function driveKdeSaveChooser({
   onPresented,
   acceptDefault,
   confirmExistingPng,
+  version,
 }) {
-  const suggestedName = saveNames.get(windowTitle)
-  assert.ok(suggestedName, 'Use a qualified export or recovery dialog.')
   const recovery = windowTitle === 'Save Recovery AppImage'
+  assert.ok(version === undefined || (recovery && ['0.2.0', '0.4.0'].includes(version)))
+  const suggestedName = recovery
+    ? `ImageGen-Studio-${version ?? '0.2.0'}-Recovery.AppImage`
+    : saveNames.get(windowTitle)
+  assert.ok(suggestedName, 'Use a qualified export or recovery dialog.')
   if (acceptDefault) {
     assert.ok(recovery && destination)
-    assert.equal(path.basename(destination), 'ImageGen-Studio-0.2.0-Recovery.appimage')
+    assert.equal(path.basename(destination), suggestedName.replace(/\.AppImage$/, '.appimage'))
   }
   if (confirmExistingPng) {
     assert.equal(process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT, '1')
@@ -453,6 +456,7 @@ export async function driveKdeSaveChooser({
     onPresented,
     acceptDefault,
     confirmExistingPng,
+    recoveryVersion: version,
   })
 }
 
@@ -468,6 +472,7 @@ async function drive({
   onPresented,
   acceptDefault,
   confirmExistingPng,
+  recoveryVersion,
 }) {
   const session = await assertPrivateWayland()
   await assertWaylandPeer(state.mainPid, session)
@@ -528,6 +533,7 @@ async function drive({
           ...(filename ? ['--select', filename] : []),
           ...(acceptDefault && filename ? ['--accept-default'] : []),
           ...(confirmExistingPng ? ['--owned-existing-png'] : []),
+          ...(recoveryVersion ? ['--recovery-version', recoveryVersion] : []),
         ],
         { timeout: 15000 },
       )

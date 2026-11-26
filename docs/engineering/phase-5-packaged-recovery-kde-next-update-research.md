@@ -103,3 +103,74 @@ Run
 `/usr/bin/python3 scripts/fixtures/packaged-project-chooser-wayland.py -- node --import tsx scripts/qualify-packaged-recovery-action.mjs <run> --kde-install-next`
 under the owned 4 GiB, zero-swap, 600-second user service. Keep both
 wrapper completion receipts and momentary source pins.
+
+## A subsequent signed recovery on a fresh path
+
+Base `3a2cb6bf`. Rechecked clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/model_install/model_install_default.py::start`
+calls the claim and staging owners in `install_staging_ledger.py`, which
+preserve recovery data and unverifiable claims. The copy flow in
+`invokeai/app/util/database_copy.py` verifies a private copy before
+publication through `invokeai/app/util/no_replace.py`. Invoke Launcher
+`c267bdb439519216b277a7a8c6ad408b9d79efce` calls `quitAndInstall` in
+`src/main/updater.ts` from the window-ready caller in
+`src/main/main-process-manager.ts`. This check exercises Studio's existing
+signed recovery action. Legacy executable ownership and safe retirement
+remain separate.
+
+`--kde-recover-next` uses the same private KDE replay above with four
+locally signed AppImages. The fixture offers D from the used C path after
+the B-to-C relaunch. The actual Updates dialog must offer Check, Download
+and Save recovery while hiding Review and Install. Requests through the
+production preload verify the Review refusal and the separate Install
+authorization guard. Before and after publication, both earlier images,
+stages and locks must match their recorded file identities and checksums.
+The KDE SaveFile response selects a fresh D path. A draft in C must stay
+open and off disk until the explicit Project Save. After normal C close,
+D must reopen the exact saved revision on the same isolated AppData and
+report recovery clear for its own path.
+
+R1 completed A and B but exceeded the driver's five-second wait for B's
+Install action while running under the CPU limit. Both applications
+closed normally. R2 copied the exact four signed AppImages into a fresh
+qualification directory and retained the original package and source
+receipts. The wider bounded wait observed B's successful Review in 5.81 s.
+
+R2 completed the chain. On C, the real renderer hid Review and Install
+after downloading signed 0.4.0. The production Review IPC returned
+`APPLICATION_UPDATE_RECOVERY_REQUIRED`. Install without a successful
+Review returned `APPLICATION_UPDATE_INSTALL_FAILED` at the IPC guard.
+This second result exercises the authorization guard. The fresh service
+preflight refusal remains covered by the separate transaction test.
+
+The real KDE SaveFile dialog published a byte-exact D under the offered
+lowercase `.appimage` name. C kept its unsaved draft and `.igs` bytes until
+the separate **Save Project** action. The explicit Save changed the prompt
+and revision, with the Project attachments preserved. After C's normal
+close, D reported recovery clear, reopened the exact saved revision and
+closed normally. No new update stage appeared on D's path. The A and C
+images, stages, private backups and lock files kept their recorded bytes
+and file identities throughout the D flow.
+
+The native wrapper exited zero under software-rendered KDE Wayland, with
+120% CPU, a 4 GiB memory cap, 1.8 GiB recorded peak and zero swap. The
+independent readback verified four signed AppImages, three real KDE
+SaveFile transactions, four normal closes and 32 exited PID/start
+identities. It checked all four Project and SQLite snapshot pairs and all
+30 migration digests. The C and D closed `.igs` copies are byte-identical.
+All 149 focused application-update tests, scoped lint, format and syntax
+checks passed. The native receipts and compact stage observations are in
+`runs/packaged-recovery-action/20261126-kde-d-r2`. The R1 timeout is retained
+separately.
+
+After the reader and native scopes exited, cleanup removed the four exact
+qualification payload and scratch paths from R1 and R2. It reclaimed
+3,902,472,192 allocated bytes and rechecked the 35 R1 and 55 R2 sealed
+evidence files. Retained stage metadata, signed declarations, D-Bus
+traces, closed Project and SQLite snapshots and native exit receipts
+remain in the run directories.
+
+This qualifies repeated explicit recovery with a loopback publisher and
+isolated AppData. Shipping trust, installed-engine compatibility, legacy
+process ownership and retirement of either used path remain open.

@@ -116,10 +116,11 @@ environment and remaining limits, and update the current stage and next run.
         two retained stages. The same D passed preflight on a fresh C
         path in the transaction fixture.
         [Next-release control](./phase-5-application-update-interruption-research.md#a-subsequent-release-on-the-used-recovery-path)
-  - [ ] Repeat the D check from the AppImage on the used path. Verify the
-        Review refusal with the Project still open and the retained stages
-        intact, then explicitly save D to a new recovery path and reopen the
-        saved Project there.
+  - [x] The AppImage refused D Review from the used C path. The native
+        KDE dialog saved signed D to a new path with both older stages intact.
+        C kept the dirty draft until explicit Project Save. D reported
+        recovery clear and opened that exact revision.
+        [Repeated native recovery](./phase-5-packaged-recovery-kde-next-update-research.md#a-subsequent-signed-recovery-on-a-fresh-path)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery

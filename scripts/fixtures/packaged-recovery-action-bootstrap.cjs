@@ -17,10 +17,11 @@ assert.equal(path.dirname(path.dirname(root)), expected)
 assert.equal(path.basename(root), 'payloads')
 assert.equal(process.env.APPIMAGELAUNCHER_DISABLE, '1')
 const version = app.getVersion()
-assert.ok(['0.1.0', '0.2.0', '0.3.0'].includes(version))
+assert.ok(['0.1.0', '0.2.0', '0.3.0', '0.4.0'].includes(version))
 const installNext = process.env.IGS_RECOVERY_QUALIFICATION_INSTALL_NEXT === '1'
 const installedMode = process.env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME
 assert.ok(installedMode === undefined || installedMode === '1')
+if (version === '0.4.0') assert.ok(kdeSave && installNext && installedMode === undefined)
 if (kdeSave) {
   assert.ok(installedMode === undefined && (installNext || version !== '0.3.0'))
   assert.equal(process.env.XDG_SESSION_TYPE, 'wayland')

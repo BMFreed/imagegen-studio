@@ -349,7 +349,6 @@ channel, формат доверенного manifest и способ восст
   при несовместимости. Existing Project можно сохранить даже пока ML runtime
   требует восстановления.
 
-
 ### Retained signed authority and offline target inspection
 
 [Offline startup authority](../engineering/phase-5-application-update-startup-authority-research.md)
@@ -374,7 +373,6 @@ rollback/delete/retirement. Backup A не получает доверия из �
 Нужные exclusive ownership, executing-body proof и recovery/finalization consumer
 остаются следующим отдельным этапом. Ни actual renderer load, ни per-dataRoot
 single-instance lock эту границу не закрывают.
-
 
 ### Captured source consistency before close and publication
 
@@ -405,7 +403,6 @@ V8 memory, связи ASAR/executable с signed outer image, всех unpacked l
 healthy startup или global ownership. Pre-capture B1/B2 mismatch, legacy/unleased
 процессы, разные dataRoots и retirement/recovery остаются открытыми. В Product,
 provenance и persisted journal новая source capability не сериализуется.
-
 
 ### Signed publisher declaration of runtime files
 
@@ -455,7 +452,6 @@ Both results preserve all recovery files and the existing retained-stage veto.
 Neither authenticates earlier loaded V8 memory, unpacked libraries, all runtime
 files, healthy startup, global process ownership or retirement. These remain
 acceptance dependencies; public promise statuses are unchanged.
-
 
 ### Admission before explicit installation closes Projects
 
@@ -559,6 +555,12 @@ contract. An explicit Check or Download clears feedback from the previous
 selection. The original AppImage stage, app data and SQLite recovery remain
 under their existing owners.
 
+[Repeated native recovery](../engineering/phase-5-packaged-recovery-kde-next-update-research.md#a-subsequent-signed-recovery-on-a-fresh-path)
+also exercised a later signed release on an already used recovery path.
+Updates kept in-place approval blocked, then saved the next signed image
+to another new path through KDE. Both earlier stages were preserved and
+the next launch reopened the Project revision saved explicitly in the
+previous application.
 
 Qualification: 636 Main PASS/one existing platform SKIP, 358 full browser PASS before
 its local contrast correction plus 5 focused final PASS, exact semantic mutation
@@ -570,7 +572,6 @@ without HTTP. Full-browser original wrapper exit/duration are unavailable; compl
 test JSON/footer and unit journal are retained. See the linked research for source
 pins, controlled native ports, full/focused visual evidence and retention receipts.
 This does not close recovery mutation or shipping acceptance.
-
 
 ### Historical state compatibility checkpoint
 
@@ -586,7 +587,6 @@ This is a synthetic empty-layer schema1 Project and source-compatible current
 qualification dependencies. It does not establish arbitrary old-state migration,
 historical desktop/CPython/ML compatibility, automatic production backup, downgrade,
 recovery/retirement or shipping. All public promise statuses remain unchanged.
-
 
 ### Pre-migration database backup and manual recovery
 

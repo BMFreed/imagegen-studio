@@ -1,4 +1,4 @@
-/** Build exact current A/B/C AppImages for the controlled local recovery-action run. */
+/** Build exact current AppImages for the controlled local recovery-action run. */
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -23,10 +23,12 @@ const [run, ...extra] = process.argv.slice(2)
 assert.ok(
   run &&
     (extra.length === 0 ||
-      (extra.length === 1 && ['--kde-save', '--kde-install-next'].includes(extra[0]))),
+      (extra.length === 1 &&
+        ['--kde-save', '--kde-install-next', '--kde-recover-next'].includes(extra[0]))),
 )
 const kdeSave = extra.length === 1
-const kdeInstallNext = extra[0] === '--kde-install-next'
+const kdeRecoverNext = extra[0] === '--kde-recover-next'
+const kdeInstallNext = extra[0] === '--kde-install-next' || kdeRecoverNext
 assert.equal(await fs.realpath(run), run)
 assert.equal(path.dirname(run), artifactRoot)
 assert.equal((await fs.lstat(run)).uid, process.geteuid())
@@ -119,10 +121,11 @@ const compatibility = {
 }
 const publicTrust = { appId: config.appId, keys: trustedKeys, schemaVersion: 1 }
 const trust = { compatibility, trustedKeys }
+const releaseVersions = ['0.1.0', '0.2.0']
+if (!kdeSave || kdeInstallNext) releaseVersions.push('0.3.0')
+if (kdeRecoverNext) releaseVersions.push('0.4.0')
 const releases = {}
-for (const version of kdeSave && !kdeInstallNext
-  ? ['0.1.0', '0.2.0']
-  : ['0.1.0', '0.2.0', '0.3.0']) {
+for (const version of releaseVersions) {
   let embedded
   const images = await build({
     projectDir: repo,
@@ -223,6 +226,7 @@ await writeJson('package-manifest.json', {
   feedPort,
   fuses: config.electronFuses,
   ...(kdeInstallNext ? { kdeInstallNext } : {}),
+  ...(kdeRecoverNext ? { kdeRecoverNext } : {}),
   ...(kdeSave ? { kdeSave } : {}),
   privateKeyRetained: false,
   releases,

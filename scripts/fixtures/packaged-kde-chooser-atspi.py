@@ -17,12 +17,12 @@ from gi.repository import Atspi, GLib
 OPEN_TITLES = ("Import Project", "Locate Project")
 DIRECTORY_TITLES = ("Add Workspace", "Locate Workspace Folder")
 DIRECTORY_ACCEPT = "OK"
+RECOVERY_TITLE = "Save Recovery AppImage"
 SAVE_NAMES = {
     "Export As": "canvas.png",
     "Export Generation BBox": "generation-bbox.png",
-    "Save Recovery AppImage": "ImageGen-Studio-0.2.0-Recovery.AppImage",
 }
-SAVE_TITLES = tuple(SAVE_NAMES)
+SAVE_TITLES = (*SAVE_NAMES, RECOVERY_TITLE)
 OVERWRITE_TITLE = "Overwrite File?"
 COLLISION_NAME = "primary generation box.png"
 
@@ -157,7 +157,7 @@ def press(button):
         raise RuntimeError("The chooser did not accept the AT-SPI action.")
 
 
-def choose(pid, title, filename, accept_label, accept_default, existing_png):
+def choose(pid, title, filename, accept_label, accept_default, existing_png, suggested_name):
     directory = title in DIRECTORY_TITLES
     matching_dialogs = owned_directory_dialogs if directory else owned_dialog
     if existing_png:
@@ -170,11 +170,10 @@ def choose(pid, title, filename, accept_label, accept_default, existing_png):
             raise RuntimeError("An overwrite prompt was already present before selection.")
     dialog = single(wait_for(lambda: list(matching_dialogs(pid, title)), "Chooser did not appear."), title)
     if filename is not None:
-        suggested_name = SAVE_NAMES.get(title)
         initial_names = {suggested_name}
         if suggested_name is not None:
             named_control(dialog, Atspi.Role.LABEL, "Name:")
-        if title == "Save Recovery AppImage":
+        if title == RECOVERY_TITLE:
             # KFileWidget can render the AppImage suffix through its filter.
             # Identify the filename by its pre-filled text instead of the combo's name.
             initial_names = {
@@ -279,6 +278,7 @@ def main():
     parser.add_argument("--select", type=Path)
     parser.add_argument("--accept-default", action="store_true")
     parser.add_argument("--owned-existing-png", action="store_true")
+    parser.add_argument("--recovery-version", choices=("0.2.0", "0.4.0"))
     args = parser.parse_args()
     if args.pid <= 1 or not os.environ.get("AT_SPI_BUS_ADDRESS"):
         parser.error("Supply the owned portal PID and its isolated AT-SPI bus.")
@@ -290,10 +290,17 @@ def main():
         parser.error("Supply an observed directory action label.")
     if not saving and not directory and args.accept_label is not None:
         parser.error("The OpenFile action label is fixed for file dialogs.")
-    if args.title == "Save Recovery AppImage" and args.accept_label != "Save":
+    recovery = args.title == RECOVERY_TITLE
+    if args.recovery_version is not None and not recovery:
+        parser.error("A recovery version requires the recovery Save dialog.")
+    if recovery and args.accept_label != "Save":
         parser.error("The recovery dialog must use the native Save action.")
-    if args.accept_default and (args.title != "Save Recovery AppImage" or args.select is None):
+    if args.accept_default and (not recovery or args.select is None):
         parser.error("Default-name acceptance requires an owned recovery destination.")
+    suggested_name = (
+        f"ImageGen-Studio-{args.recovery_version or '0.2.0'}-Recovery.AppImage"
+        if recovery else SAVE_NAMES.get(args.title)
+    )
     if args.owned_existing_png and (
         args.title != "Export As" or os.environ.get("IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT") != "1"
     ):
@@ -308,7 +315,7 @@ def main():
                 not parent.is_relative_to(evidence)
                 or parent.resolve(strict=True) != parent
                 or args.select.suffix != (
-                    ".appimage" if args.accept_default else Path(SAVE_NAMES[args.title]).suffix
+                    ".appimage" if args.accept_default else Path(suggested_name).suffix
                 )
             ):
                 parser.error("The save destination must be a canonical path of the expected format inside the run directory.")
@@ -339,7 +346,7 @@ def main():
     try:
         result = choose(
             args.pid, args.title, args.select, accept_label, args.accept_default,
-            args.owned_existing_png,
+            args.owned_existing_png, suggested_name,
         )
     except RuntimeError as error:
         if not directory:
