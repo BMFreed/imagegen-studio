@@ -427,6 +427,55 @@ test('Home snapshot reuses PNG validation only for matching member bytes and sti
   })
 })
 
+test('a full Home PNG cache reuses recent images and learns new verified bytes', async (t) => {
+  await inTemporaryDirectory(async (directory) => {
+    const firstPath = path.join(directory, 'first.igs')
+    const secondPath = path.join(directory, 'second.igs')
+    const second = rasterProject('Repeated new PNG')
+    const novelPng = pngFromScanlines(Buffer.alloc(18), false, 2, 2)
+    const layer = second.layers[0]
+    layer.asset = { ...layer.asset, bytes: novelPng.length, sha256: sha256(novelPng) }
+    await saveIgsPackage(firstPath, emptyInput())
+    await saveIgsPackage(secondPath, {
+      assets: { [layer.asset.path]: { bytes: novelPng } },
+      preview: {
+        merged: novelPng,
+        rect: { height: 2, width: 2, x: 0, y: 0 },
+        status: 'rendered',
+        thumbnail: WEBP,
+      },
+      project: second,
+    })
+
+    const validatedPngs = new Set<string>()
+    const firstBytes = await readFile(firstPath)
+    await readIgsPackageSnapshot(firstBytes, validatedPngs)
+    const recent = [...validatedPngs][0]
+    // Fill the remaining slots with unrelated keys that neither archive can hit.
+    const unrelated = Array.from({ length: 127 }, (_, index) => `0:${index}`)
+    for (const key of unrelated) {
+      validatedPngs.add(key)
+    }
+
+    const inflate = t.mock.method(zlib, 'createInflate')
+    syncBuiltinESMExports()
+    try {
+      await readIgsPackageSnapshot(firstBytes, validatedPngs)
+      assert.equal(inflate.mock.callCount(), 0, 'A full cache still reuses its existing entry.')
+
+      const opened = await readIgsPackageSnapshot(await readFile(secondPath), validatedPngs)
+      assert.deepEqual(opened.project, second)
+      assert.equal(inflate.mock.callCount(), 1, 'The new PNG is decoded once for both members.')
+      assert.equal(validatedPngs.size, 128)
+      assert.ok(validatedPngs.has(recent), 'A verified hit keeps the entry recent.')
+      assert.ok(!validatedPngs.has(unrelated[0]), 'A new entry evicts the least recent key.')
+    } finally {
+      inflate.mock.restore()
+      syncBuiltinESMExports()
+    }
+  })
+})
+
 test('Save, portable copy, reopen, edit and Save again use the real ZIP loader', async () => {
   await inTemporaryDirectory(async (directory) => {
     const originalPath = path.join(directory, 'original.igs')

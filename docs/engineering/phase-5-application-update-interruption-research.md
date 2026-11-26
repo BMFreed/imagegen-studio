@@ -215,6 +215,30 @@ duration of the operation. A matching startup snapshot and a held or
 reacquirable update lock establish different facts. The current path
 retains the stage and backup when writer participation is unknown.
 
+## Recovery without a newer release
+
+The source review at Studio `b4198ade` found a gap in the fresh-path action.
+Bundled electron-updater 6.6.2 `out/AppUpdater.js` reports no update for
+the same version. Studio's `electron-update-checker.ts` clears the signed
+update selection on that result. `ApplicationUpdatesModal.vue` offers
+Save recovery AppImage only after a signed download. A verified startup
+target cannot supply that download. The documented B-to-C and C-to-D
+scenarios each had a later release in the qualification feed.
+
+The clean InvokeAI donor at `64ff2c600f04d220e470fdaeec570bd402af42a7`
+uses explicit choice, verification and a no-replace publication in
+`invokeai/app/util/database_copy.py` and `invokeai/app/util/no_replace.py`.
+The clean Launcher at `c267bdb439519216b277a7a8c6ad408b9d79efce` has the
+same availability gate in `src/main/updater.ts`, called from
+`src/main/main-process-manager.ts`. Neither has a signed AppImage recovery
+copy of the currently running version.
+
+A fresh-path qualification needs a completed retained stage and a signed
+running target with no newer release in the feed. It should cover Cancel,
+exact bytes at the newly chosen path, a replaced source or occupied
+destination, and normal reopen of the same Project. The old AppImage, stage
+and backup are preserved. This is an open scenario found by source review.
+
 ## Guidance after a stage appears during the session
 
 The existing Main stage-veto control proves that a new retained stage

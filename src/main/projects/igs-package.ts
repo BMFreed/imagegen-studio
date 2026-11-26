@@ -1030,8 +1030,14 @@ async function readIgsPackageFromArchive(
       if (isImagePath(entry.fileName)) {
         imageDimensions(entry.fileName, result.header, limits)
       }
-      if (reusablePng && validatedPngs && validatedPngs.size < MAX_VALIDATED_PNGS) {
-        validatedPngs.add(pngKey(result))
+      if (reusablePng && validatedPngs) {
+        // Refresh verified hits and keep accepting new images after a workspace fills the cache.
+        const key = pngKey(result)
+        validatedPngs.delete(key)
+        validatedPngs.add(key)
+        if (validatedPngs.size > MAX_VALIDATED_PNGS) {
+          validatedPngs.delete(validatedPngs.values().next().value!)
+        }
       }
     }
   } finally {

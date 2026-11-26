@@ -1348,3 +1348,81 @@ After both native consumers and the independent reader exited, removing
 their disposable packages and test profiles released 3,108,868,096
 allocated bytes across the two runs. Each `retention.json` lists its
 retained copies and exact disposal paths.
+
+## Reuse recent PNG checks throughout a large workspace scan
+
+At clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/app/services/fonts/fonts_default.py` verifies the actual source
+bytes in `read_file`. `instance` refreshes the order of a cache hit and
+evicts the least recently used entries when it stores a new result.
+`invokeai/app/api/routers/fonts.py` calls this service for font instances
+and `invokeai/app/api/dependencies.py` constructs it. InvokeAI Projects
+list already managed rows and do not need to decode embedded PNGs during
+a portable archive scan.
+
+Studio applies the same replacement policy to its 128-key PNG cache in
+`igs-package.ts`. The cache previously accepted only the first 128
+distinct keys in each workspace scan. Once full, it could not reuse the
+newly decoded merged PNG when it encountered the same bytes in a layer of
+the same Project. On the distinct-Raster fixture the three folders contain
+64, 96 and 96 Projects. Four distinct Raster bodies per Project fill the
+cache after 32 Projects per folder, leaving 160 avoidable decodes.
+
+The cache still stores only byte length and SHA-256 for previously checked
+ordinary layer and merged PNGs no larger than 8 MiB. Each reuse reads the
+real ZIP member and checks both values. A hint mismatch goes through full
+PNG validation. The existing dimensions, role-specific checks, archive
+bounds and final manifest checks still apply. The cache remains local to a
+single workspace scan. Independent Open and Save use their usual validators.
+Images repeated at long intervals can be evicted before their next use.
+
+The regression passed two actual archives through the snapshot reader with
+a full cache. The earlier reader decoded the new image twice and failed
+the exact decode-count assertion. The candidate decoded it once for the
+two members, kept the verified recent hit and removed the oldest key at
+128 entries. The neighboring tests still reject changed bytes, a bad PNG
+with valid ZIP and manifest checks, and mismatched layer dimensions.
+The focused archive, index, workspace and preview tests passed
+(84 tests), as did typecheck and scoped ESLint. Independent source review
+found no regression in the byte and role checks.
+
+The matched AppImages used the distinct 256-Project fixture with no
+early preview or Open interaction, on the same ext4 and software KDE
+Wayland envelope (120% CPU, 4 GiB memory, zero swap). The R18 ASAR matched
+the previously recorded `b4198ade` package. The R19 AppImage SHA-256 was
+`89058f455f2cd43956427c9d12e63c93bce995685536e529798263e3c8aa6ad0`.
+
+| Home milestone                     | Prior R18 | Candidate R19 |
+| ---------------------------------- | --------: | ------------: |
+| Visible Home, fresh index          |    3.27 s |        3.37 s |
+| First selectable card, fresh index |    7.60 s |        7.78 s |
+| All 256 cards, fresh index         |   21.15 s |       21.28 s |
+| All 256 cards, indexed restart     |    8.43 s |        7.46 s |
+
+Each value is one observation. End-to-end first discovery showed no
+measurable improvement in this pair. Both builds rendered the exact
+catalog, decoded the sampled saved previews, passed navigation and
+Refresh, and closed normally twice with the same 256 ready rows and
+unchanged archives. The renderer measurement ends after the exact card
+names and two frames. The supported-host matrix and a settled complete
+discovery speed target remain open.
+
+The Main probe used the same 256 source archives from R18 with an empty
+index for each parser revision. It counted calls to the native PNG
+inflater while `ProjectService.listHomeCatalog` ran, forwarding every
+call to the actual inflater. The previous reader made **1,184** calls and
+the candidate made **1,024**. Both returned the exact 256 ready cards.
+The probe establishes the removal of 160 repeated decodes on this
+fixture. The native timing includes the rest of discovery and rendering.
+
+Independent byte readback verified 256 archive hashes, 2,304 ZIP entries,
+1,792 manifest entries, 30 migrations, 256 ready rows with validator
+witnesses, and 20 exited process identities per native run. It matched
+the source fixture bodies and embedded Electron between the two AppImages.
+The timing observations come from the native driver. Scope, measurements,
+closed SQLite copies, count receipts and independent audit are retained
+under `runs/packaged-home-scale/20261126-r18` and `20261126-r19`.
+After the native sessions, audit and count scopes exited, cleanup removed
+only their disposable packages, profiles and diagnostic scratch. It
+released 3,135,930,368 allocated bytes. Each `retention.json` records the
+sample archives, closed index and exact cleanup paths.

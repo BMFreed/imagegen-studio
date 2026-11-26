@@ -126,6 +126,12 @@ environment and remaining limits, and update the current stage and next run.
         editor with all 256 rows already indexed. Opening can still wait
         for the currently scanned workspace.
         [Open during initial discovery](./phase-5-packaged-home-scale-research.md#open-a-verified-project-during-the-first-home-scan)
+  - [x] Compared complete discovery on the same 256 Projects. Main did
+        160 fewer PNG decodes with a bounded cache that keeps recent
+        verifications. Both AppImages rendered all cards in about 21 s
+        on the local software Wayland configuration. A broader speed
+        target and supported-host coverage remain open.
+        [Full-discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-recent-png-checks-throughout-a-large-workspace-scan)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -155,6 +161,10 @@ environment and remaining limits, and update the current stage and next run.
         at a fresh path. Both lifetimes closed normally with the exact
         Project and old stage preserved.
         [Occupied recovery destination](./phase-5-packaged-recovery-kde-chooser-research.md#an-occupied-recovery-destination-selected-through-kde)
+  - [ ] Qualify fresh-path recovery when the verified running version is
+        still the newest release. The existing Save action requires a
+        separately downloaded signed update.
+        [Recovery without a newer release](./phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
