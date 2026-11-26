@@ -75,6 +75,9 @@ if (homeScaleSoftwareMode !== undefined) {
   )
 }
 const workspaceChooser = offlineProject === 'workspace-chooser'
+const workspaceAddKeyboardMode = process.env.IMAGEGEN_WORKSPACE_ADD_KEYBOARD
+const workspaceAddKeyboard = workspaceAddKeyboardMode === '1'
+assert.ok(workspaceAddKeyboardMode === undefined || (workspaceAddKeyboard && workspaceChooser))
 const workspaceTrashRestore = offlineProject === 'workspace-trash-restore'
 const workspaceTrashKeyboard = process.env.IMAGEGEN_WORKSPACE_TRASH_KEYBOARD
 assert.ok(
@@ -92,6 +95,7 @@ const savedResultsKeyboard = savedResultsKeyboardMode === '1'
 assert.ok(savedResultsKeyboardMode === undefined || (savedResultsKeyboard && savedResults))
 const softwareRenderer =
   homeScaleSoftware ||
+  workspaceAddKeyboard ||
   workspaceTrashRestore ||
   runtimeInstallationWarmRecheck === '1' ||
   updatesKeyboard ||
@@ -121,6 +125,7 @@ const nativeWaylandKeyboard =
   kdeChooser &&
   (offlineProject === 'home-recovery-keyboard' ||
     offlineProject === 'trash' ||
+    workspaceAddKeyboard ||
     workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
     updatesKeyboard ||
@@ -906,6 +911,13 @@ if (workspaceChooser || workspaceTrashRestore)
       'src/renderer/App.vue',
       'src/renderer/components/AddWorkspaceModal.vue',
       'src/renderer/components/HomeView.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (workspaceAddKeyboard)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-add-workspace-keyboard.mjs',
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
     ].map((file) => path.join(repo, file)),
   )
 if (workspaceTrashRestore)
@@ -2063,7 +2075,12 @@ async function runOwnedProjectProfile() {
       return { offlineProjectResult: await fixture.runPackagedHomeScale(args) }
     }
     if (workspaceChooser) {
-      return { offlineProjectResult: await fixture.runPackagedWorkspaceChooser(args) }
+      return {
+        offlineProjectResult: await fixture.runPackagedWorkspaceChooser({
+          ...args,
+          keyboard: workspaceAddKeyboard,
+        }),
+      }
     }
     if (workspaceTrashRestore) {
       return { offlineProjectResult: await fixture.runPackagedWorkspaceTrashRestore(args) }

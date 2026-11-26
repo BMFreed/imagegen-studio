@@ -648,6 +648,10 @@ flowchart TD
   G --> H["Show workspace projects"]
 ```
 
+In the desktop app, canceling the system folder chooser keeps the name and
+color draft and returns keyboard focus to the form control that opened the
+chooser. Escape from the form returns focus to the Home action.
+
 The prototype simulates the folder picker with editable `Workspace name` and `Folder` fields prefilled as `Environment studies`, plus a five-color select. `Add Workspace` validates duplicate name/path, selects the new workspace and clears project selection.
 
 Move project to workspace:

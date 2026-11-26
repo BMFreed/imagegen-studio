@@ -188,3 +188,48 @@ Replay the workspace Trash scenario with
 `IMAGEGEN_WORKSPACE_TRASH_KEYBOARD=1` and the private KWin keyboard helper.
 The PASS, baseline failure and intermediate diagnostic reports are in
 `runs/packaged-workspace-trash-restore/20261125-r3` through `20261125-r7`.
+
+## Keyboard focus after canceling Add Workspace folder selection
+
+On stock `05a8aea3`, Enter opened the system folder chooser from either
+the workspace name or the Choose Folder and Add button. The real KDE
+portal canceled both requests. The app regained focus and retained the
+name and Violet color, but Chromium reported `body` as its active
+element. The named Add Workspace dialog also appeared in Chromium's
+accessibility tree with `modal: false`. Escape from the form returned
+visible focus to the Add Workspace action in Home.
+
+The form disables its controls during folder selection. It now captures
+the active form control as it submits and restores focus after Vue has
+reenabled it on return. Closing the form clears the captured element.
+Existing Naive focus handling returns focus to the Home action after
+Escape. The custom card supplies `aria-modal="true"` on its dialog role.
+[Add Workspace form](../../src/renderer/components/AddWorkspaceModal.vue)
+
+The existing FUSE scenario accepts `IMAGEGEN_WORKSPACE_ADD_KEYBOARD=1`.
+It records Chromium semantics and trusted Wayland input at 900×620 for
+both cancellation paths. The same run also registers the intact draft,
+checks Locate cancel and refusal, and reopens the relocated Project.
+It runs to the final keyboard verdict after all three normal exits.
+[Keyboard fixture](../../scripts/fixtures/packaged-add-workspace-keyboard.mjs)
+
+Stock R1 failed the two focus-return and two modal assertions. R2
+passed all four with the same native scenario. Returning from Cancel
+focused the name field or the submit button, with a visible focus cue in
+both screenshots. Escape focused the original Home action. The next
+confirmation registered the same name and Violet color.
+
+Independent readback verified 27 trusted keyboard events, six KDE portal
+responses, three closed SQLite snapshots, five Project archives and their
+15 member hashes, and 27 exited process identities per run. It also
+verified both AppImages and the mounted ASAR before each normal close.
+The 120% CPU scopes used 4 GiB RAM and zero swap. The R2 scope peaked
+at 1,044,873,216 bytes. Candidate AppImage SHA-256 is
+`da75f791f869726006681076df540d58398387fcb2dd11ed44869b3a30976c2b`.
+Results are retained under `runs/packaged-workspace-chooser/20261126-r1`
+and `runs/packaged-workspace-chooser/20261126-r2`.
+
+The 29 focused Home browser tests, full typecheck, scoped lint, app build and
+AppImage packaging passed. Cleanup reclaimed 423,292,928 allocated bytes
+from the private profiles, scratch directories and unpacked build.
+The exact candidate AppImage, synthetic archives and compact evidence remain.

@@ -20,6 +20,10 @@ import { expect } from '@playwright/test'
 import Database from 'better-sqlite3'
 
 import { ProjectSession } from '../../src/main/projects/project-session.ts'
+import {
+  keyboardWorkspaceColor,
+  qualifyAddWorkspaceKeyboard,
+} from './packaged-add-workspace-keyboard.mjs'
 import { connectNativeInput } from './packaged-home-recovery-keyboard.mjs'
 import { driveKdeDirectoryChooser } from './packaged-kde-chooser.mjs'
 import {
@@ -183,6 +187,7 @@ export async function runPackagedWorkspaceChooser({
   launch,
   closeNormally,
   identity,
+  keyboard = false,
 }) {
   const proof = JSON.parse(
     await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
@@ -243,10 +248,17 @@ export async function runPackagedWorkspaceChooser({
   assert.equal(initial.workspaces[0].id, 'uncategorized')
   assert.deepEqual(initial.catalog, { accepted: [], jobs: 0, projects: [], receipts: 0, seeds: 0 })
   assert.deepEqual(initial.bindings, [])
-  await homeOf(first).getByRole('button', { exact: true, name: 'Add Workspace' }).click()
-  await draft.fill(displayName)
   const add = { state: first, windowTitle: 'Add Workspace', trigger: submit }
-  chooser.push(await driveKdeDirectoryChooser(add))
+  let keyboardResult
+  if (keyboard) {
+    const checked = await qualifyAddWorkspaceKeyboard({ root, state: first, displayName })
+    keyboardResult = checked.result
+    chooser.push(...checked.chooser)
+  } else {
+    await homeOf(first).getByRole('button', { exact: true, name: 'Add Workspace' }).click()
+    await draft.fill(displayName)
+    chooser.push(await driveKdeDirectoryChooser(add))
+  }
   await expect(submit).toBeEnabled()
   await expect(draft).toHaveValue(displayName)
   assert.deepEqual(snapshot(database), initial)
@@ -260,7 +272,7 @@ export async function runPackagedWorkspaceChooser({
     id: workspace.id,
     displayName,
     directory: original,
-    color: 'teal',
+    color: keyboard ? keyboardWorkspaceColor : 'teal',
     isDefault: 0,
   })
   expectCatalog(added, workspace, projects, appData)
@@ -335,6 +347,7 @@ export async function runPackagedWorkspaceChooser({
 
   const result = {
     chooser,
+    ...(keyboardResult && { keyboard: keyboardResult }),
     registeredIndex,
     locatedIndex,
     reopenedIndex,
@@ -350,6 +363,7 @@ export async function runPackagedWorkspaceChooser({
       mode: 0o600,
     },
   )
+  if (keyboardResult) assert.deepEqual(keyboardResult.issues, [], 'Add Workspace keyboard findings')
   return result
 }
 

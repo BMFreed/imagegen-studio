@@ -363,7 +363,7 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
   })
 }
 
-export async function driveKdeDirectoryChooser({ state, source, windowTitle, trigger }) {
+export async function driveKdeDirectoryChooser({ state, source, windowTitle, trigger, activate }) {
   assert.ok(directoryTitles.has(windowTitle), 'Use a qualified workspace folder dialog.')
   if (source !== undefined && source !== null) {
     const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
@@ -388,6 +388,7 @@ export async function driveKdeDirectoryChooser({ state, source, windowTitle, tri
     selectedPath: source,
     windowTitle,
     trigger,
+    activate,
     method: 'OpenFile',
     filter: directoryOption,
   })
@@ -460,6 +461,7 @@ async function drive({
   selectedPath,
   windowTitle,
   trigger,
+  activate = () => trigger.click(),
   method,
   filter,
   suggestedName,
@@ -475,7 +477,7 @@ async function drive({
   const monitor = startMonitor(method)
   try {
     await expect.poll(() => monitor.read()).toContain('member=NameAcquired')
-    await trigger.click()
+    await activate()
     let kdePid
     await expect
       .poll(async () => {

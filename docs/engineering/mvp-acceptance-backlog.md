@@ -61,9 +61,11 @@ environment and remaining limits, and update the current stage and next run.
         Both stock AppImage FUSE lifetimes also preserved the exact
         34 saved history records and navigated to the expected layers.
         [Native Saved generations result](./phase-5-stock-appimage-fuse-research.md#saved-generations-keyboard-and-modal-semantics)
-  - [ ] Check visible keyboard focus after canceling the native folder chooser
-        from Add Workspace and after dismissing the form.
-        [Existing folder chooser scenario](./phase-5-packaged-workspace-chooser-research.md#executed-result)
+  - [x] Canceling the system folder chooser from Add Workspace restores
+        visible focus to the name field or the submit button. Escape returns
+        focus to Home. The name and color survived cancellation and were used
+        by the subsequent successful registration.
+        [Native Add Workspace result](./phase-5-packaged-workspace-chooser-research.md#keyboard-focus-after-canceling-add-workspace-folder-selection)
   - [x] Both AppImage launches discovered all 256 four-Raster Projects,
         opened saved previews and preserved the archives and index through
         normal close.

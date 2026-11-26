@@ -17,6 +17,7 @@ const emit = defineEmits<{ add: [input: ProjectWorkspaceAddInput] }>()
 const formId = useId()
 const displayName = ref('')
 const color = ref<ProjectWorkspaceColor>('teal')
+let pickerTrigger: HTMLButtonElement | HTMLInputElement | null = null
 const colorOptions = PROJECT_WORKSPACE_COLORS.map((value) => ({
   label: value[0].toUpperCase() + value.slice(1),
   value,
@@ -30,11 +31,27 @@ const nameProblem = computed(() =>
 )
 
 watch(show, (visible) => {
+  pickerTrigger = null
   if (visible) {
     displayName.value = ''
     color.value = 'teal'
   }
 })
+
+watch(
+  () => props.busy,
+  (busy) => {
+    if (busy) {
+      return
+    }
+    const trigger = pickerTrigger
+    pickerTrigger = null
+    if (show.value && trigger?.isConnected && !trigger.disabled) {
+      trigger.focus({ preventScroll: true })
+    }
+  },
+  { flush: 'post' },
+)
 
 function close() {
   if (!props.busy) {
@@ -43,6 +60,14 @@ function close() {
 }
 function add() {
   if (!props.busy && displayName.value.trim() && !nameProblem.value) {
+    // Sending the picker request disables the focused form control until it returns.
+    const active = document.activeElement
+    if (
+      (active instanceof HTMLButtonElement || active instanceof HTMLInputElement) &&
+      active.form?.id === formId
+    ) {
+      pickerTrigger = active
+    }
     emit('add', { color: color.value, displayName: displayName.value.trim() })
   }
 }
@@ -58,6 +83,7 @@ function add() {
   >
     <NCard
       aria-label="Add Workspace"
+      aria-modal="true"
       class="home-modal"
       role="dialog"
       size="small"
