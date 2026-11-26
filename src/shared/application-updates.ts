@@ -66,6 +66,28 @@ export interface ApplicationUpdateInstallationRequest {
   status: 'close-requested'
 }
 
+/** Advisory selection. Main verifies the selected bytes and publisher again during Save. */
+export function applicationUpdateRecoverySaveVersion(
+  snapshot: ApplicationUpdateSnapshot | null,
+  recovery: ApplicationUpdateRecoverySnapshot | null,
+): string | null {
+  if (!snapshot || recovery?.status !== 'required') {
+    return null
+  }
+  if (snapshot.status === 'downloaded' && snapshot.verification === 'signed-release') {
+    return snapshot.availableVersion
+  }
+  if (
+    recovery.target === 'verified' &&
+    (snapshot.status === 'up-to-date' ||
+      snapshot.status === 'unavailable' ||
+      snapshot.status === 'error')
+  ) {
+    return snapshot.currentVersion
+  }
+  return null
+}
+
 export function isApplicationUpdateRecoverySaveResult(
   value: unknown,
 ): value is ApplicationUpdateRecoverySaveResult {

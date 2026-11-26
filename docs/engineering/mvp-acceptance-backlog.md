@@ -161,9 +161,10 @@ environment and remaining limits, and update the current stage and next run.
         at a fresh path. Both lifetimes closed normally with the exact
         Project and old stage preserved.
         [Occupied recovery destination](./phase-5-packaged-recovery-kde-chooser-research.md#an-occupied-recovery-destination-selected-through-kde)
-  - [ ] Qualify fresh-path recovery when the verified running version is
-        still the newest release. The existing Save action requires a
-        separately downloaded signed update.
+  - [x] With the same version in the signed feed, the AppImage reported
+        up-to-date. KDE Cancel and Save published a verified copy to a new
+        path using only the local target. The copy reopened the exact
+        Project and the original stage and backup stayed intact.
         [Recovery without a newer release](./phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,

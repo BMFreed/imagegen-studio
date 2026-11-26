@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { once } from 'node:events'
+import { chmodSync, readdirSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -25,6 +26,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import { verifyApplicationReleaseAuthority } from './application-release.js'
 import { acquireApplicationUpdateAdmission } from './application-update-admission.js'
+import { saveApplicationRecovery } from './application-update-recovery-action.js'
 import {
   type ApplicationUpdateCurrentSource,
   captureApplicationUpdateCurrentSource,
@@ -366,6 +368,109 @@ async function preserves(
   )
   return observation
 }
+
+async function currentRecovery(f: Fixture) {
+  const directory = path.join(f.root, 'recovery')
+  await fs.mkdir(directory, { mode: 0o700 })
+  const destination = path.join(directory, 'Same version.appimage')
+  const version = f.signed.manifest.version
+  const input: Parameters<typeof saveApplicationRecovery>[0] = {
+    chooseDestination: async () => destination,
+    currentVersion: version,
+    expectedVersion: version,
+    getRecoveryStatus: () => ({
+      runtime: 'unverified',
+      status: 'required',
+      target: 'verified',
+    }),
+    isCurrent: () => true,
+    originalAppImage: f.currentAppImage,
+    prepareVerifiedArtifact: async () => assert.fail('Recovery must not request a download.'),
+    readTrust: async () => f.signed.trust,
+  }
+  return { destination, directory, input }
+}
+
+test('the verified running version can be saved after native download loss', async (t) => {
+  const f = await fixture(t)
+  const { destination, input } = await currentRecovery(f)
+  await fs.unlink(f.source)
+  const before = await inventory(f.applications)
+  assert.deepEqual(
+    await saveApplicationRecovery({ ...input, chooseDestination: async () => null }),
+    { status: 'canceled' },
+  )
+  await assert.rejects(fs.lstat(destination), { code: 'ENOENT' })
+  await fs.writeFile(destination, 'Occupied by the user')
+  await assert.rejects(saveApplicationRecovery(input), {
+    code: 'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS',
+  })
+  assert.equal(await fs.readFile(destination, 'utf8'), 'Occupied by the user')
+  await fs.unlink(destination)
+  assert.deepEqual(await saveApplicationRecovery(input), { status: 'saved' })
+  assert.deepEqual(await fs.readFile(destination), f.newBytes)
+  const saved = await snapshot(destination)
+  assert.equal(Number(saved.identity.mode) & 0o7777, 0o755)
+  assert.equal(saved.identity.nlink, '1')
+  assert.notEqual(saved.identity.ino, (await snapshot(f.currentAppImage)).identity.ino)
+  assert.deepEqual(await inventory(f.applications), before)
+})
+
+test('current recovery refuses a stale verified startup observation before opening the chooser', async (t) => {
+  const f = await fixture(t)
+  const { destination, input } = await currentRecovery(f)
+  await fs.writeFile(f.currentAppImage, f.oldBytes)
+  await assert.rejects(
+    saveApplicationRecovery({
+      ...input,
+      chooseDestination: async () => assert.fail('An unverified target must not open a chooser.'),
+    }),
+    { code: 'APPLICATION_UPDATE_RECOVERY_UNAVAILABLE' },
+  )
+  await assert.rejects(fs.lstat(destination), { code: 'ENOENT' })
+})
+
+test('current recovery refuses a same-byte source replacement during the chooser', async (t) => {
+  const f = await fixture(t)
+  const { destination, input } = await currentRecovery(f)
+  await assert.rejects(
+    saveApplicationRecovery({
+      ...input,
+      chooseDestination: async () => {
+        await fs.rename(f.source, f.currentAppImage)
+        return destination
+      },
+    }),
+    { code: 'APPLICATION_UPDATE_RECOVERY_STALE' },
+  )
+  assert.deepEqual(await fs.readFile(f.currentAppImage), f.newBytes)
+  await assert.rejects(fs.lstat(destination), { code: 'ENOENT' })
+})
+
+test('current recovery rechecks stage identity after the verified private copy and before linking', async (t) => {
+  const f = await fixture(t)
+  const { destination, directory, input } = await currentRecovery(f)
+  let changed = false
+  await assert.rejects(
+    saveApplicationRecovery({
+      ...input,
+      isCurrent: () => {
+        if (
+          !changed &&
+          readdirSync(directory).some((name) => name.startsWith('.igs-app-recovery-'))
+        ) {
+          chmodSync(path.join(f.stage, 'journal.json'), 0o400)
+          changed = true
+        }
+        return true
+      },
+    }),
+    { code: 'APPLICATION_UPDATE_RECOVERY_UNSAFE' },
+  )
+  assert.ok(changed)
+  await assert.rejects(fs.lstat(destination), { code: 'ENOENT' })
+  assert.deepEqual(await fs.readFile(f.currentAppImage), f.newBytes)
+})
 
 test('offline activated and relaunching targets reauthenticate after native cache loss without writes', async (t) => {
   for (const phase of ['activated', 'relaunching']) {

@@ -551,6 +551,14 @@ blocked. Main checks the exact artifact against bundled publisher trust
 before showing the system Save dialog, then checks it again after selection.
 The renderer supplies only the version and receives a path-free outcome.
 
+If Check finds the current version, reports an error, or is unavailable,
+Updates can offer the same action for a verified retained target. Main
+authenticates that version again against the completed stage and bundled
+publisher trust before and after the dialog. It verifies the copy's exact
+bytes and rechecks the source and stage identities before publishing.
+The local recovery action needs no new release or downloaded artifact.
+[Recovery without a newer release](../engineering/phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
+
 The action saves to a new AppImage path and keeps the current application
 open. Cancel returns to Updates. The occupied-path and uncertain-publication
 messages preserve the chosen filesystem state for the user's inspection.

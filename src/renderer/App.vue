@@ -40,6 +40,7 @@ import type {
   ApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
 import {
+  applicationUpdateRecoverySaveVersion,
   isApplicationUpdateRecoverySaveResult,
   isApplicationUpdateRecoverySnapshot,
 } from '../shared/application-updates.js'
@@ -6012,20 +6013,23 @@ function dismissApplicationUpdates(force = false) {
   clearApplicationUpdatePreview()
 }
 
-async function saveApplicationRecovery(availableVersion: string) {
+async function saveApplicationRecovery(version: string) {
   if (
+    !version ||
     rendererDisposed ||
     !applicationUpdatesOpen.value ||
-    applicationUpdatesRecovery.value?.status !== 'required' ||
+    applicationUpdatesRecoveryPending.value ||
+    applicationUpdatesRecoveryError.value !== null ||
     applicationUpdatesPending.value ||
     applicationUpdatesDownloadPending.value ||
     applicationUpdateInstallPending.value ||
     applicationRecoverySavePending.value ||
     applicationRecoverySaved.value ||
     windowClosePending.value ||
-    applicationUpdatesSnapshot.value?.status !== 'downloaded' ||
-    applicationUpdatesSnapshot.value.verification !== 'signed-release' ||
-    applicationUpdatesSnapshot.value.availableVersion !== availableVersion
+    applicationUpdateRecoverySaveVersion(
+      applicationUpdatesSnapshot.value,
+      applicationUpdatesRecovery.value,
+    ) !== version
   ) {
     return
   }
@@ -6035,7 +6039,7 @@ async function saveApplicationRecovery(availableVersion: string) {
   const failure = 'The recovery AppImage could not be saved. Try again.'
   try {
     const updates = globalThis.window.api?.applicationUpdates
-    const result = await updates?.saveRecovery?.(availableVersion)
+    const result = await updates?.saveRecovery?.(version)
     if (!currentApplicationUpdatesRequest(epoch)) {
       return
     }

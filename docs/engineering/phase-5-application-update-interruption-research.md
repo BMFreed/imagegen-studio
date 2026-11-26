@@ -233,11 +233,67 @@ same availability gate in `src/main/updater.ts`, called from
 `src/main/main-process-manager.ts`. Neither has a signed AppImage recovery
 copy of the currently running version.
 
-A fresh-path qualification needs a completed retained stage and a signed
-running target with no newer release in the feed. It should cover Cancel,
-exact bytes at the newly chosen path, a replaced source or occupied
-destination, and normal reopen of the same Project. The old AppImage, stage
-and backup are preserved. This is an open scenario found by source review.
+Studio now selects the verified retained target when the feed reports
+up-to-date, the check fails, or checking is unavailable. A downloaded
+signed release retains its existing path. Both use the existing
+version-only IPC and chooser ownership checks. Main repeats the completed
+stage inspection using bundled trust before and after the chooser.
+The inspection verifies the target artifact against the signed version
+and passes a private assertion of source and stage identities to the
+publisher. It holds no descriptors across the chooser.
+
+The retained-source route uses the current local AppImage as the
+source, including a lowercase extension. The publisher checks its
+captured file identity, copies and hashes the bytes, then rechecks the
+target, journal, authority and backup identities immediately before the
+create-only link. The unsigned backup is never copied. Cancel and refusal
+preserve existing update recovery data. Existing uncertain-publication
+handling still applies. This path offers a separate copy and supplies no
+right to replace the original, retire the stage or exclude legacy writers.
+
+The old AppImage reached the signed same-version Check result and the
+exact missing-Save assertion. The real Main action tests remove the
+native download, exercise Cancel and an occupied path, confirm exact
+executable bytes and preserve the original stage. They refuse a stale
+verified startup observation and a same-byte source replacement during
+the chooser. Removing the post-copy stage identity check in an isolated
+mutation let publication proceed after the stage changed. Restoring the
+guard made the same test pass again.
+
+In the candidate KDE Wayland run, the signed loopback feed offered the
+same version and returned only one successful metadata response. The
+system Save dialog returned Cancel once and then accepted the lowercase
+default name. The two normal application lifetimes ran the same version
+from different executable inodes. The fresh path reported recovery clear
+and reopened the exact saved Project. The original AppImage, stage,
+backup and participating lock stayed intact. Both releases used
+qualification-only signing keys.
+
+The independent byte readback checked the four signed packages and their
+embedded ASAR and Electron, the two raw KDE responses, the original and
+published file identities, and the preserved stage and lock. It verified
+three closed Project and SQLite pairs with 30 migrations each, and
+confirmed physical exit of 24 recorded process identities. The RED and
+GREEN receipts are in `runs/packaged-recovery-action/20261127-current-red`
+and `20261127-current-final` under the local artifact root. The earlier
+passing candidate remains recorded under `20261127-current-green`. The
+final package was rebuilt and rerun after adding the renderer alert keys
+and reordering the shared helper for lint.
+Cleanup after physical exit reclaimed 3,961,278,464 allocated bytes across
+the three scopes. The compact proofs and closed snapshots are listed in
+each run's `retention.json`.
+
+The focused window-close suite uncovered a preexisting harness error on
+`765fdabb`. Its extracted Main code omitted the catalog lock helper.
+The fixed harness uses the actual helper and again verifies that an
+admitted Open drains while queued or new catalog operations refuse
+during ordinary close.
+
+The final focused Node run passed 679 tests with one platform skip for
+unsupported-host relaunch. All 41 Updates Chromium tests passed, including
+the same-version Save and the downloaded-release control at 900×620.
+Typecheck, scoped lint and AppImage packaging passed. Independent source
+review found no blocking issue.
 
 ## Guidance after a stage appears during the session
 

@@ -4,6 +4,7 @@ import type {
   ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
+import { applicationUpdateRecoverySaveVersion } from '../../shared/application-updates.js'
 
 import { NAlert, NButton, NCard, NModal, NProgress, NSpin } from 'naive-ui'
 import { computed } from 'vue'
@@ -34,7 +35,7 @@ const emit = defineEmits<{
   download: [availableVersion: string]
   install: [availableVersion: string]
   reviewInstallation: [availableVersion: string]
-  saveRecovery: [availableVersion: string]
+  saveRecovery: [version: string]
 }>()
 
 const activeDownload = computed(() => props.downloading || props.snapshot?.status === 'downloading')
@@ -81,18 +82,14 @@ const canReview = computed(
     props.snapshot.verification === 'signed-release' &&
     !!props.snapshot.availableVersion,
 )
-const recoverySaveEligible = computed(
-  () =>
-    !props.recoveryPending &&
-    props.recoveryError === null &&
-    props.recovery?.status === 'required' &&
-    props.snapshot?.status === 'downloaded' &&
-    props.snapshot.verification === 'signed-release' &&
-    !!props.snapshot.availableVersion,
+const recoverySaveVersion = computed(() =>
+  props.recoveryPending || props.recoveryError !== null
+    ? null
+    : applicationUpdateRecoverySaveVersion(props.snapshot, props.recovery),
 )
 const canSaveRecovery = computed(
   () =>
-    recoverySaveEligible.value &&
+    recoverySaveVersion.value !== null &&
     !props.recoverySaved &&
     !props.pending &&
     !activeDownload.value &&
@@ -145,7 +142,7 @@ function install() {
 }
 
 function saveRecovery() {
-  const version = props.snapshot?.availableVersion
+  const version = recoverySaveVersion.value
   if (canSaveRecovery.value && version) {
     emit('saveRecovery', version)
   }
@@ -224,6 +221,13 @@ function close() {
           <p class="updates-recovery-detail">
             These checks do not establish image-engine readiness.
           </p>
+          <p
+            v-if="recoverySaveVersion === snapshot?.currentVersion && !recoverySaved"
+            class="updates-recovery-detail"
+          >
+            Save a copy of this version to a new location. Studio verifies the application file
+            again before copying.
+          </p>
         </NAlert>
       </section>
       <p v-else-if="recoveryPending" class="updates-detail updates-recovery" role="status">
@@ -240,6 +244,34 @@ function close() {
       <p v-else-if="recovery?.status === 'not-checked'" class="updates-detail updates-recovery">
         Application update recovery was not checked at app startup.
       </p>
+      <div
+        v-if="recoverySavePending"
+        aria-live="polite"
+        class="updates-pending updates-recovery-feedback"
+        role="status"
+      >
+        <NSpin size="small" />
+        <span>Saving recovery AppImage…</span>
+      </div>
+      <NAlert
+        v-else-if="recoverySaveError"
+        key="n-alert-2"
+        class="updates-recovery-feedback"
+        title="Recovery AppImage could not be saved"
+        type="error"
+      >
+        {{ recoverySaveError }}
+      </NAlert>
+      <NAlert
+        v-else-if="recoverySaved"
+        key="n-alert-3"
+        class="updates-recovery-feedback"
+        role="status"
+        title="Recovery AppImage saved"
+        type="success"
+      >
+        Close ImageGen Studio, then open the AppImage you saved.
+      </NAlert>
       <section v-if="previewView" aria-label="Installation preview" class="updates-preview">
         <h3>Installation preview</h3>
         <p v-if="installationEligible" class="updates-detail">
@@ -367,34 +399,18 @@ function close() {
           snapshot && ['available', 'downloaded', 'download-error'].includes(snapshot.status)
         "
       >
-        <div v-if="recoverySavePending" aria-live="polite" class="updates-pending" role="status">
-          <NSpin size="small" />
-          <span>Saving recovery AppImage…</span>
-        </div>
         <NAlert
-          v-else-if="recoverySaveError"
-          key="n-alert-12"
-          title="Recovery AppImage could not be saved"
-          type="error"
-        >
-          {{ recoverySaveError }}
-        </NAlert>
-        <NAlert
-          v-else-if="recoverySaved"
-          key="n-alert-13"
-          role="status"
-          title="Recovery AppImage saved"
-          type="success"
-        >
-          Close ImageGen Studio, then open the AppImage you saved.
-        </NAlert>
-        <NAlert
-          v-else-if="snapshot.status === 'downloaded'"
+          v-if="
+            snapshot.status === 'downloaded' &&
+            !recoverySavePending &&
+            !recoverySaveError &&
+            !recoverySaved
+          "
           key="n-alert-4"
           title="Download completed"
           type="success"
         >
-          <template v-if="recoverySaveEligible">
+          <template v-if="recoverySaveVersion !== null">
             Save the verified AppImage to a new location and keep the original update files.
           </template>
           <template v-else>
@@ -415,7 +431,12 @@ function close() {
         >
           Could not download or verify the update. Try downloading again.
         </NAlert>
-        <NAlert v-else key="n-alert-6" title="Update available" type="info">
+        <NAlert
+          v-else-if="snapshot.status === 'available'"
+          key="n-alert-6"
+          title="Update available"
+          type="info"
+        >
           A new version is available.
         </NAlert>
         <template
@@ -439,7 +460,7 @@ function close() {
           </p>
         </section>
         <p
-          v-if="snapshot.verification === 'signed-release' && !recoverySaveEligible"
+          v-if="snapshot.verification === 'signed-release' && recoverySaveVersion === null"
           class="updates-detail"
         >
           <template v-if="snapshot.status === 'downloaded' && recoveryAllowsInstallation">
@@ -502,13 +523,13 @@ function close() {
             <NButton
               v-if="canDownload"
               key="n-button-2"
-              :type="canReview || recoverySaveEligible ? 'default' : 'primary'"
+              :type="canReview || recoverySaveVersion !== null ? 'default' : 'primary'"
               @click="download"
             >
               {{ downloadLabel }}
             </NButton>
             <NButton
-              v-if="recoverySaveEligible && !recoverySaved"
+              v-if="recoverySaveVersion !== null && !recoverySaved"
               key="n-button-4"
               aria-label="Save recovery AppImage"
               :disabled="!canSaveRecovery"
@@ -535,7 +556,8 @@ function close() {
   margin: 0 0 16px;
 }
 
-.updates-recovery {
+.updates-recovery,
+.updates-recovery-feedback {
   margin: 0 0 16px;
 }
 

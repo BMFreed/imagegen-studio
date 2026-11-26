@@ -406,7 +406,7 @@ export async function driveKdeSaveChooser({
   version,
 }) {
   const recovery = windowTitle === 'Save Recovery AppImage'
-  assert.ok(version === undefined || (recovery && ['0.2.0', '0.4.0'].includes(version)))
+  assert.ok(version === undefined || (recovery && ['0.1.0', '0.2.0', '0.4.0'].includes(version)))
   const suggestedName = recovery
     ? `ImageGen-Studio-${version ?? '0.2.0'}-Recovery.AppImage`
     : saveNames.get(windowTitle)

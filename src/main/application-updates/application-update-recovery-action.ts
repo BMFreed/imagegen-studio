@@ -11,7 +11,9 @@ import {
 } from './application-release.js'
 import {
   AppUpdateRecoveryPublishError,
+  inspectRetainedApplicationUpdate,
   publishVerifiedApplicationRecovery,
+  type RetainedApplicationRecoverySource,
 } from './application-update-staging.js'
 
 const messages = {
@@ -24,6 +26,7 @@ const messages = {
 
 type RecoveryAction = {
   chooseDestination: (suggestedName: string) => Promise<string | null>
+  currentVersion: string
   expectedVersion: string
   getRecoveryStatus: () => ApplicationUpdateRecoverySnapshot
   isCurrent: () => boolean
@@ -50,6 +53,7 @@ export async function saveApplicationRecovery(
 ): Promise<{ status: 'canceled' | 'saved' }> {
   const {
     chooseDestination,
+    currentVersion,
     expectedVersion,
     getRecoveryStatus,
     isCurrent,
@@ -57,15 +61,16 @@ export async function saveApplicationRecovery(
     prepareVerifiedArtifact,
     readTrust,
   } = input
-  if (
-    !originalAppImage ||
-    !isApplicationUpdateVersion(expectedVersion) ||
-    getRecoveryStatus().status !== 'required'
-  ) {
+  const fromRetainedTarget = expectedVersion === currentVersion
+  const recoveryEligible = () => {
+    const status = getRecoveryStatus()
+    return status.status === 'required' && (!fromRetainedTarget || status.target === 'verified')
+  }
+  if (!originalAppImage || !isApplicationUpdateVersion(expectedVersion) || !recoveryEligible()) {
     throw new ApplicationUpdateRecoveryActionError('APPLICATION_UPDATE_RECOVERY_UNAVAILABLE')
   }
   const assertCurrent = () => {
-    if (!isCurrent() || getRecoveryStatus().status !== 'required') {
+    if (!isCurrent() || !recoveryEligible()) {
       throw new ApplicationUpdateRecoveryActionError('APPLICATION_UPDATE_RECOVERY_STALE')
     }
   }
@@ -81,6 +86,33 @@ export async function saveApplicationRecovery(
       const trustBytes = canonicalRuntimeReleaseJson(rawTrust)
       // The captured data is independent of the asynchronous trust provider's original object.
       const trust = JSON.parse(trustBytes.toString('utf8')) as ApplicationReleaseTrust
+      if (fromRetainedTarget) {
+        const observed: { source?: RetainedApplicationRecoverySource } = {}
+        const inspection = await inspectRetainedApplicationUpdate({
+          captureVerifiedTarget: (source) => {
+            observed.source = source
+          },
+          currentAppImage: originalAppImage,
+          currentVersion,
+          readTrust: async () => trust,
+        })
+        assertCurrent()
+        if (
+          inspection.status !== 'retained' ||
+          inspection.targetAuthentication !== 'verified' ||
+          !observed.source
+        ) {
+          throw new ApplicationUpdateRecoveryActionError(failure)
+        }
+        return {
+          artifact: null,
+          authority: observed.source.authority,
+          retainedSource: observed.source,
+          sourceAppImage: originalAppImage,
+          trust,
+          trustBytes,
+        }
+      }
       const artifact = await prepareVerifiedArtifact(expectedVersion)
       assertCurrent()
       const authority = copyApplicationReleaseAuthority(artifact.authority)
@@ -93,7 +125,14 @@ export async function saveApplicationRecovery(
       ) {
         throw new ApplicationUpdateRecoveryActionError(failure)
       }
-      return { artifact, authority, sourceAppImage: artifact.path, trust, trustBytes }
+      return {
+        artifact,
+        authority,
+        retainedSource: undefined,
+        sourceAppImage: artifact.path,
+        trust,
+        trustBytes,
+      }
     } catch (error) {
       assertCurrent()
       throw error instanceof ApplicationUpdateRecoveryActionError
@@ -121,6 +160,11 @@ export async function saveApplicationRecovery(
 
   const after = await readSelection('APPLICATION_UPDATE_RECOVERY_STALE')
   assertCurrent()
+  try {
+    before.retainedSource?.assertCurrentSnapshot()
+  } catch {
+    throw new ApplicationUpdateRecoveryActionError('APPLICATION_UPDATE_RECOVERY_STALE')
+  }
   if (
     after.artifact !== before.artifact ||
     after.sourceAppImage !== before.sourceAppImage ||
@@ -136,6 +180,7 @@ export async function saveApplicationRecovery(
       authority: after.authority,
       destinationAppImage,
       originalAppImage,
+      retainedSource: after.retainedSource,
       sourceAppImage: after.sourceAppImage,
       trust: after.trust,
     })

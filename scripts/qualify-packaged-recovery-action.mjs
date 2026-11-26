@@ -40,6 +40,7 @@ assert.ok(
           '--kde-recover-next',
           '--kde-save',
           '--kde-save-after-replace',
+          '--kde-save-current',
           '--kde-save-default',
           '--kde-save-occupied',
         ].includes(rest[0]))),
@@ -48,9 +49,14 @@ const kdeRecoverNext = rest[0] === '--kde-recover-next'
 const kdeInstallNext = rest[0] === '--kde-install-next' || kdeRecoverNext
 const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
+const kdeSaveCurrent = rest[0] === '--kde-save-current'
 const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
 const kdeSaveDefault =
-  rest[0] === '--kde-save-default' || kdeInstallNext || afterReplace || kdeSaveOccupied
+  rest[0] === '--kde-save-default' ||
+  kdeInstallNext ||
+  afterReplace ||
+  kdeSaveCurrent ||
+  kdeSaveOccupied
 const kdeSave = rest[0] === '--kde-save' || kdeSaveDefault
 const outputRoot = path.join(
   kdeSave ? os.userInfo().homedir : os.homedir(),
@@ -100,6 +106,8 @@ const releases = releaseVersions.map((version) => {
   return release
 })
 const [a, b, c, d] = releases
+const recoveryRelease = kdeSaveCurrent ? a : b
+const recoveryVersion = kdeSaveCurrent ? '0.1.0' : '0.2.0'
 assert.ok(
   Number.isInteger(manifest.feedPort) && manifest.feedPort > 1024 && manifest.feedPort <= 65535,
 )
@@ -305,7 +313,7 @@ const original = path.join(applicationDir, 'Original.AppImage')
 const occupiedPath = path.join(applicationDir, 'Occupied.AppImage')
 const newPath = path.join(
   applicationDir,
-  kdeSaveDefault ? 'ImageGen-Studio-0.2.0-Recovery.appimage' : 'Recovered.AppImage',
+  kdeSaveDefault ? `ImageGen-Studio-${recoveryVersion}-Recovery.appimage` : 'Recovered.AppImage',
 )
 const finalRecoveryPath = path.join(applicationDir, 'ImageGen-Studio-0.4.0-Recovery.appimage')
 const stageFor = (filename) =>
@@ -661,11 +669,11 @@ async function until(probe, description, timeout = 45_000) {
   }
   throw new Error(description)
 }
-async function nativeEvent(name, version, timeout) {
+async function nativeEvent(name, version, timeout, matches = () => true) {
   return await until(
     async () => {
       const matched = (await events()).filter(
-        (item) => item.name === name && item.version === version,
+        (item) => item.name === name && item.version === version && matches(item),
       )
       assert.ok(matched.length <= 1, 'Unexpected duplicate native lifecycle event.')
       return matched[0]
@@ -876,7 +884,12 @@ async function observeRenderer(state) {
   return state
 }
 async function observeStartup(state) {
-  const startup = await nativeEvent('startup', state.version)
+  const startup = await nativeEvent(
+    'startup',
+    state.version,
+    undefined,
+    (event) => !kdeSaveCurrent || event.appImage === state.filename,
+  )
   assert.equal(startup.appImage, state.filename)
   assert.equal(startup.userData, profile)
   if (state.pid !== undefined) assert.equal(startup.pid, state.pid)
@@ -895,16 +908,18 @@ async function observeStartup(state) {
 }
 async function launch(filename, version) {
   await removePortFile()
-  const stderrPath = path.join(run, `native-${version}.stderr`)
+  const logName =
+    kdeSaveCurrent && filename === newPath ? `native-${version}-saved` : `native-${version}`
+  const stderrPath = path.join(run, `${logName}.stderr`)
   const state = {
     checks: [],
     filename,
     stderrPath,
     version,
-    ...(kdeSave ? { name: version === '0.1.0' ? 'recovery-original' : 'recovery-saved' } : {}),
+    ...(kdeSave ? { name: filename === original ? 'recovery-original' : 'recovery-saved' } : {}),
   }
   lifetimes.push(state)
-  const stdout = await fs.open(path.join(run, `native-${version}.stdout`), 'wx', 0o600)
+  const stdout = await fs.open(path.join(run, `${logName}.stdout`), 'wx', 0o600)
   const stderr = await fs.open(stderrPath, 'wx', 0o600)
   try {
     state.child = spawn(filename, [], { cwd, env, stdio: ['ignore', stdout.fd, stderr.fd] })
@@ -935,8 +950,10 @@ async function confirmNormalMainExit(state) {
     )
   }
   if (!state.exit || installNext || kdeSave) {
-    const quit = await nativeEvent('app-quit', state.version, 20_000)
-    const exit = await nativeEvent('process-exit', state.version, 20_000)
+    const matches = (event) =>
+      !kdeSaveCurrent || (event.pid === state.pid && event.start === state.start)
+    const quit = await nativeEvent('app-quit', state.version, 20_000, matches)
+    const exit = await nativeEvent('process-exit', state.version, 20_000, matches)
     for (const event of [quit, exit]) {
       assert.equal(event.code, 0)
       assert.equal(event.pid, state.pid)
@@ -1043,12 +1060,17 @@ async function editPositivePrompt(page, projectId, text) {
     })
     .toBe(true)
 }
-async function openUpdates(page) {
+async function openUpdates(page, expectCurrent = false) {
   await page.getByRole('button', { name: 'Help menu', exact: true }).click()
   await page.getByText('Check for Updates…', { exact: true }).click()
   const modal = page.getByRole('dialog', { name: 'Application Updates', exact: true })
-  await expect(modal.getByText('Update available', { exact: true })).toBeVisible()
-  await modal.getByRole('button', { name: 'Download', exact: true }).click()
+  if (expectCurrent) {
+    await expect(modal.getByText('ImageGen Studio is up to date.', { exact: true })).toBeVisible()
+    await expect(modal.getByRole('button', { name: 'Download', exact: true })).toBeHidden()
+  } else {
+    await expect(modal.getByText('Update available', { exact: true })).toBeVisible()
+    await modal.getByRole('button', { name: 'Download', exact: true }).click()
+  }
   return modal
 }
 const writeFlag = async (name, value) =>
@@ -1537,10 +1559,9 @@ try {
     assert.equal(summaries[0].previewStatus, 'rendered')
     assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
   }
-  offered = b
-  const updates = await openUpdates(first)
+  offered = recoveryRelease
+  const updates = await openUpdates(first, kdeSaveCurrent)
   const save = updates.getByRole('button', { name: 'Save recovery AppImage', exact: true })
-  await expect(save).toBeEnabled({ timeout: 120_000 })
   if (kdeSaveDefault) {
     const status = updates.getByRole('region', { name: 'Application update recovery at startup' })
     await expect(
@@ -1565,9 +1586,26 @@ try {
     ).toBeHidden()
     await first.screenshot({ path: path.join(run, 'retained-startup-status.png') })
   }
-  const downloadedB = await call(first, 'applicationUpdates', 'getStatus')
-  assert.equal(downloadedB.availableVersion, '0.2.0')
-  assert.equal(downloadedB.verification, 'signed-release')
+  if (!kdeSaveCurrent) await expect(save).toBeEnabled({ timeout: 120_000 })
+  const checked = await call(first, 'applicationUpdates', 'getStatus')
+  const onlyMetadataRequest = [
+    { method: 'GET', range: null, route: '/latest-linux.yml', status: 200 },
+  ]
+  if (kdeSaveCurrent) {
+    assert.equal(checked.status, 'up-to-date')
+    assert.equal(checked.currentVersion, recoveryVersion)
+    assert.equal(checked.availableVersion, null)
+    assert.deepEqual(requests, onlyMetadataRequest)
+    assert.deepEqual(await retainedState(), retained)
+    report.currentRecovery = { check: checked, visibleAfterCheck: await save.isVisible() }
+    await expect(
+      save,
+      'A verified retained AppImage can be saved when the feed has no newer version.',
+    ).toBeEnabled({ timeout: 5_000 })
+  } else {
+    assert.equal(checked.availableVersion, recoveryVersion)
+    assert.equal(checked.verification, 'signed-release')
+  }
   const downloadRequests = requests.length
   const occupied = kdeSaveOccupied
     ? { before: await fileWitness(occupiedPath), path: occupiedPath }
@@ -1593,6 +1631,7 @@ try {
       windowTitle: 'Save Recovery AppImage',
       acceptDefault: kdeSaveDefault && destination !== null && !confirmExistingRecovery,
       confirmExistingRecovery,
+      ...(kdeSaveCurrent ? { version: recoveryVersion } : {}),
       onPresented: async () => {
         await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
         if (confirmExistingRecovery) {
@@ -1619,7 +1658,7 @@ try {
     occupied.afterRefusal = await fileWitness(occupiedPath)
     assert.deepEqual(occupied.afterRefusal, occupied.before)
     assert.deepEqual((await fs.readdir(applicationDir)).sort(), beforeFirstSave)
-    assert.deepEqual(await call(first, 'applicationUpdates', 'getStatus'), downloadedB)
+    assert.deepEqual(await call(first, 'applicationUpdates', 'getStatus'), checked)
     assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
     assert.equal(await hash(project), projectSha)
     assert.equal(requests.length, downloadRequests)
@@ -1644,9 +1683,10 @@ try {
   })
   const materialized = await fileWitness(newPath)
   assert.equal(materialized.mode, 0o755)
-  assert.equal(materialized.sha256, b.sha256)
-  assert.notEqual(materialized.ino, packaged[1].ino)
-  assert.equal(materialized.sizeBytes, b.sizeBytes)
+  assert.equal(materialized.sha256, recoveryRelease.sha256)
+  assert.notEqual(materialized.ino, kdeSaveCurrent ? packaged[0].ino : packaged[1].ino)
+  assert.notEqual(materialized.ino, retained.image.ino)
+  assert.equal(materialized.sizeBytes, recoveryRelease.sizeBytes)
   assert.deepEqual(
     (await events())
       .filter((event) => event.name === 'recovery-response')
@@ -1671,7 +1711,7 @@ try {
 
   const requestCount = requests.length
   offered = null
-  const recovered = await launch(newPath, '0.2.0')
+  const recovered = await launch(newPath, recoveryVersion)
   const second = recovered.page
   assert.equal(requests.length, requestCount)
   assert.deepEqual(await call(second, 'applicationUpdates', 'getRecoveryStatus'), {
@@ -1781,12 +1821,16 @@ try {
   for (let index = 0; index < packaged.length; index++) {
     assert.deepEqual(await fileWitness(releases[index].filename), packaged[index])
   }
-  for (const release of releases.slice(1)) {
-    assert.ok(
-      requests.some(
-        (entry) => entry.route === '/' + path.basename(release.filename) && entry.status === 200,
-      ),
-    )
+  if (kdeSaveCurrent) {
+    assert.deepEqual(requests, onlyMetadataRequest)
+  } else {
+    for (const release of releases.slice(1)) {
+      assert.ok(
+        requests.some(
+          (entry) => entry.route === '/' + path.basename(release.filename) && entry.status === 200,
+        ),
+      )
+    }
   }
   let database
   if (installedRuntime) {
@@ -1798,7 +1842,7 @@ try {
     await assertInheritedScope(await proc(process.pid))
   }
   Object.assign(report, {
-    downloadedB,
+    ...(kdeSaveCurrent ? {} : { downloadedB: checked }),
     downloadedC,
     installed,
     materialized,

@@ -61,7 +61,7 @@ function declaration(name: string): string {
 const consumer = ts.transpileModule(
   `${declaration('sealedApplicationUpdateAdmission')}\n${mainSource.slice(regionStart, regionEnd)}\n${declaration(
     'workspaceCatalogChannels',
-  )}\n${declaration('registerProjectHandler')}
+  )}\n${declaration('withWorkspaceCatalogLock')}\n${declaration('registerProjectHandler')}
 globalThis.closeState = () => ({ resolvingClose, appDataSealed, closingAfterResolution, windowCloseEpoch, exitReady });
 globalThis.registerControlledProject = registerProjectHandler;
 globalThis.sealedAdmission = () => sealedApplicationUpdateAdmission;

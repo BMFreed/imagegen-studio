@@ -108,6 +108,12 @@ export type ApplicationUpdateStartupInspection =
     }
   | { status: 'none' }
   | { status: 'not-checked' }
+export type RetainedApplicationRecoverySource = Readonly<{
+  assertCurrentSnapshot: () => void
+  authority: ApplicationReleaseAuthority
+  currentAppImage: string
+  currentImage: FileSnapshot
+}>
 export type ApplicationUpdateCurrentImageSnapshot = FileSnapshot
 export type ApplicationUpdateCurrentSource = Readonly<{
   assertCurrentSnapshot: () => void
@@ -552,6 +558,7 @@ export async function publishVerifiedApplicationRecovery(input: {
   authority: ApplicationReleaseAuthority
   destinationAppImage: string
   originalAppImage: string
+  retainedSource?: RetainedApplicationRecoverySource
   sourceAppImage: string
   trust: ApplicationReleaseTrust
 }): Promise<Readonly<{ destinationAppImage: string; manifest: ApplicationReleaseManifest }>> {
@@ -577,13 +584,19 @@ export async function publishVerifiedApplicationRecovery(input: {
       authority,
       destinationAppImage,
       originalAppImage,
+      retainedSource,
       sourceAppImage,
       trust,
     } = input
     need(process.platform === 'linux' && process.arch === 'x64', 'UNSAFE')
     need(
       [sourceAppImage, originalAppImage, destinationAppImage].every(canonicalPath) &&
-        path.extname(sourceAppImage) === '.AppImage' &&
+        (retainedSource
+          ? sourceAppImage === originalAppImage &&
+            sourceAppImage === retainedSource.currentAppImage &&
+            authority.envelope === retainedSource.authority.envelope &&
+            authority.releaseNotesJson === retainedSource.authority.releaseNotesJson
+          : path.extname(sourceAppImage) === '.AppImage') &&
         path.extname(originalAppImage).toLowerCase() === '.appimage' &&
         path.extname(destinationAppImage).toLowerCase() === '.appimage' &&
         destinationAppImage !== originalAppImage &&
@@ -630,7 +643,10 @@ export async function publishVerifiedApplicationRecovery(input: {
       assertUnusedNamespace()
     }
     assertAvailable()
-    source = await openReader(sourceAppImage, sourceAppImage)
+    source = await openReader(sourceAppImage, sourceAppImage, retainedSource ? 0o755 : undefined)
+    if (retainedSource) {
+      need(sameIdentity(source.identity, retainedSource.currentImage.identity), 'UNSAFE')
+    }
     need(source.identity.sizeBytes === manifest.artifact.sizeBytes, 'UNSAFE')
     await classifyAppImage(source)
     await requireCopySpace(ownedParent, manifest.artifact.sizeBytes)
@@ -670,6 +686,7 @@ export async function publishVerifiedApplicationRecovery(input: {
     if (assertReadyToPublish) {
       assertClosedNow(assertReadyToPublish)
     }
+    retainedSource?.assertCurrentSnapshot()
     assertDirectories()
     assertFileNow(sourceAppImage, sourceAppImage, source.identity)
     assertFileNow(candidatePath, anchoredCandidate, executable.identity)
@@ -1561,6 +1578,7 @@ export async function stageVerifiedApplicationArtifact(input: {
  * In particular, the unsigned journal cannot supply trust or make its previous image executable.
  */
 export async function inspectRetainedApplicationUpdate(input: {
+  captureVerifiedTarget?: (source: RetainedApplicationRecoverySource) => void
   currentAppImage: string
   currentSource?: ApplicationUpdateCurrentSource | null
   currentVersion: string
@@ -1574,7 +1592,13 @@ export async function inspectRetainedApplicationUpdate(input: {
   let parent: OwnedDirectory | undefined
   let staging: OwnedDirectory | undefined
   try {
-    const { currentAppImage, currentSource = null, currentVersion, readTrust } = input
+    const {
+      captureVerifiedTarget,
+      currentAppImage,
+      currentSource = null,
+      currentVersion,
+      readTrust,
+    } = input
     need(
       process.platform === 'linux' &&
         process.arch === 'x64' &&
@@ -1884,45 +1908,55 @@ export async function inspectRetainedApplicationUpdate(input: {
         runtimeAuthentication = 'unverified'
       }
     }
-    // Finish through the same fresh descriptor/visible-path guards used before publication. No
-    // await follows this boundary, so same-byte replacement during trust/hash awaits is refused.
-    const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
-    let stageFd: number | undefined
-    try {
-      stageFd = openSync(stagingDirectory, DIRECTORY_FLAGS)
-      const parentAnchor = `/proc/self/fd/${parentFd}`
-      const stageAnchor = `/proc/self/fd/${stageFd}`
-      assertDirectoryNow({ handle: { fd: parentFd }, identity: parentIdentity }, parentPath, false)
-      assertDirectoryNow(
-        { handle: { fd: stageFd }, identity: stagingIdentity },
-        stagingDirectory,
-        true,
-      )
-      need(readdirSync(stageAnchor).sort().join('\0') === expectedMembers, 'UNSAFE')
-      for (const [name, snapshot] of [
-        [JOURNAL, journal.snapshot],
-        [ENVELOPE, envelope.snapshot],
-        [RELEASE_NOTES, notes.snapshot],
-        [BACKUP, backup],
-      ] as const) {
-        assertFileNow(
-          path.join(stagingDirectory, name),
-          path.join(stageAnchor, name),
-          snapshot.identity,
+    // Reopen only for the synchronous identity check. Recovery keeps no descriptors across the
+    // picker and reuses this assertion immediately before the destination link.
+    const assertCurrentSnapshot = () => {
+      const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
+      let stageFd: number | undefined
+      try {
+        stageFd = openSync(stagingDirectory, DIRECTORY_FLAGS)
+        const parentAnchor = `/proc/self/fd/${parentFd}`
+        const stageAnchor = `/proc/self/fd/${stageFd}`
+        assertDirectoryNow(
+          { handle: { fd: parentFd }, identity: parentIdentity },
+          parentPath,
+          false,
         )
+        assertDirectoryNow(
+          { handle: { fd: stageFd }, identity: stagingIdentity },
+          stagingDirectory,
+          true,
+        )
+        need(readdirSync(stageAnchor).sort().join('\0') === expectedMembers, 'UNSAFE')
+        for (const [name, snapshot] of [
+          [JOURNAL, journal.snapshot],
+          [ENVELOPE, envelope.snapshot],
+          [RELEASE_NOTES, notes.snapshot],
+          [BACKUP, backup],
+        ] as const) {
+          assertFileNow(
+            path.join(stagingDirectory, name),
+            path.join(stageAnchor, name),
+            snapshot.identity,
+          )
+        }
+        assertFileNow(
+          currentAppImage,
+          path.join(parentAnchor, path.basename(currentAppImage)),
+          current.identity,
+        )
+      } finally {
+        if (stageFd !== undefined) {
+          closeSync(stageFd)
+        }
+        closeSync(parentFd)
       }
-      assertFileNow(
-        currentAppImage,
-        path.join(parentAnchor, path.basename(currentAppImage)),
-        current.identity,
-      )
-      return { runtimeAuthentication, status: 'retained', targetAuthentication: 'verified' }
-    } finally {
-      if (stageFd !== undefined) {
-        closeSync(stageFd)
-      }
-      closeSync(parentFd)
     }
+    assertCurrentSnapshot()
+    captureVerifiedTarget?.(
+      Object.freeze({ assertCurrentSnapshot, authority, currentAppImage, currentImage: current }),
+    )
+    return { runtimeAuthentication, status: 'retained', targetAuthentication: 'verified' }
   } catch {
     return retained
   } finally {

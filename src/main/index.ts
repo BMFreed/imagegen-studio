@@ -28,6 +28,7 @@ import type {
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
 } from '../shared/api.js'
+import { applicationUpdateRecoverySaveVersion } from '../shared/application-updates.js'
 import { isModelRemovalId } from '../shared/model-removal.js'
 import { parsePresetApplication } from '../shared/presets/preset-application.js'
 import {
@@ -1822,6 +1823,7 @@ if (!gotInstanceLock) {
               })
               return selection.canceled ? null : (selection.filePath ?? null)
             },
+            currentVersion: app.getVersion(),
             expectedVersion,
             getRecoveryStatus: () => applicationUpdateService.getRecoveryStatus(),
             isCurrent: () =>
@@ -1831,7 +1833,11 @@ if (!gotInstanceLock) {
               !appDataSealed &&
               !closingAfterResolution &&
               !exitReady &&
-              windowCloseEpoch === observedCloseEpoch,
+              windowCloseEpoch === observedCloseEpoch &&
+              applicationUpdateRecoverySaveVersion(
+                applicationUpdateService.getStatus(),
+                applicationUpdateService.getRecoveryStatus(),
+              ) === expectedVersion,
             originalAppImage: applicationUpdateAppImage,
             prepareVerifiedArtifact: (version) =>
               applicationUpdateService.prepareVerifiedArtifact(version),

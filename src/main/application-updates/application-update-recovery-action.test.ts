@@ -104,6 +104,7 @@ async function fixture(t: TestContext) {
       calls.push(`choose:${suggestedName}`)
       return destinationAppImage
     },
+    currentVersion: '0.1.0',
     expectedVersion: version,
     getRecoveryStatus: () => required,
     isCurrent: () => true,

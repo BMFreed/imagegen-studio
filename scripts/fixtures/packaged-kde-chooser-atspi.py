@@ -280,7 +280,7 @@ def main():
     parser.add_argument("--accept-default", action="store_true")
     parser.add_argument("--owned-existing-png", action="store_true")
     parser.add_argument("--owned-existing-recovery", action="store_true")
-    parser.add_argument("--recovery-version", choices=("0.2.0", "0.4.0"))
+    parser.add_argument("--recovery-version", choices=("0.1.0", "0.2.0", "0.4.0"))
     args = parser.parse_args()
     if args.pid <= 1 or not os.environ.get("AT_SPI_BUS_ADDRESS"):
         parser.error("Supply the owned portal PID and its isolated AT-SPI bus.")

@@ -1039,9 +1039,19 @@ for (const recovery of recoveryStates) {
     }
     await expect(
       dialog(page).getByRole('button', {
-        name: /^(?:Review installation|Install and restart|Refresh preview|Save recovery AppImage)$/,
+        name: /^(?:Review installation|Install and restart|Refresh preview)$/,
       }),
     ).toHaveCount(0)
+    const save = dialog(page).getByRole('button', {
+      exact: true,
+      name: 'Save recovery AppImage',
+    })
+    if (recovery.value.status === 'required' && recovery.value.target === 'verified') {
+      await expect(save).toBeEnabled()
+    } else {
+      await expect(save).toHaveCount(0)
+      await emitInstallationIntents(page, ['saveRecovery'], currentVersion)
+    }
     await expect(
       dialog(page).getByRole('button', { exact: true, name: 'Check again' }),
     ).toBeEnabled()
@@ -1057,26 +1067,33 @@ for (const recovery of recoveryStates) {
   })
 }
 
-async function emitInstallationIntents(page: Page, intents = ['reviewInstallation', 'install']) {
+async function emitInstallationIntents(
+  page: Page,
+  intents = ['reviewInstallation', 'install'],
+  version = '0.2.0',
+) {
   // Controlled Vue intent port: exercise App's guards even when the modal hides its buttons.
-  await dialog(page).evaluate((element, intents) => {
-    type Instance = {
-      emit: (name: string, value: string) => void
-      parent: Instance | null
-      type: { __name?: string }
-    }
-    let instance = (element as HTMLElement & { __vueParentComponent?: Instance })
-      .__vueParentComponent
-    while (instance && instance.type.__name !== 'ApplicationUpdatesModal') {
-      instance = instance.parent ?? undefined
-    }
-    if (!instance) {
-      throw new Error('The actual application Updates modal owner was not found.')
-    }
-    for (const intent of intents) {
-      instance.emit(intent, '0.2.0')
-    }
-  }, intents)
+  await dialog(page).evaluate(
+    (element, { intents, version }) => {
+      type Instance = {
+        emit: (name: string, value: string) => void
+        parent: Instance | null
+        type: { __name?: string }
+      }
+      let instance = (element as HTMLElement & { __vueParentComponent?: Instance })
+        .__vueParentComponent
+      while (instance && instance.type.__name !== 'ApplicationUpdatesModal') {
+        instance = instance.parent ?? undefined
+      }
+      if (!instance) {
+        throw new Error('The actual application Updates modal owner was not found.')
+      }
+      for (const intent of intents) {
+        instance.emit(intent, version)
+      }
+    },
+    { intents, version },
+  )
 }
 
 test('required startup recovery blocks installation intents while explicit Check and Download remain available', async ({
@@ -1192,6 +1209,7 @@ test('explicit recovery AppImage Save shows pending and manual reopen in Updates
   await expect(modal.getByRole('button', { exact: true, name: 'Check again' })).toBeEnabled()
   await page.setViewportSize({ height: 620, width: 900 })
   await assertModalFits(page)
+  await expect(modal.getByText('Recovery AppImage saved', { exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('recovery-appimage-saved-900x620.png') })
 
   await modal.getByRole('button', { exact: true, name: 'Check again' }).click()
@@ -1213,6 +1231,81 @@ test('explicit recovery AppImage Save shows pending and manual reopen in Updates
     mutationCalls: ['app-save-recovery', 'app-download', 'app-save-recovery'],
     recoverySaveVersions: ['0.2.0', '0.3.0'],
     returnedRecoverySaves: 2,
+  })
+})
+
+test('verified retained target can save the current AppImage when the feed is up to date', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: snapshot('up-to-date') }],
+    recoveries: [
+      {
+        snapshot: { runtime: 'unverified', status: 'required', target: 'verified' },
+      },
+    ],
+    recoverySaves: [
+      { hold: true, result: 'canceled' },
+      { result: 'public-error' },
+      { result: 'saved' },
+    ],
+  })
+  await openUpdates(page)
+  const modal = dialog(page)
+  const save = modal.getByRole('button', { exact: true, name: 'Save recovery AppImage' })
+  await expect(modal).toContainText('ImageGen Studio is up to date.')
+  await expect(modal).toContainText('Application file: publisher signature verified.')
+  await expect(modal).toContainText('Runtime files: could not be verified.')
+  await expect(
+    modal.getByRole('button', {
+      name: /^(?:Download|Review installation|Install and restart)$/,
+    }),
+  ).toHaveCount(0)
+  await expect(save).toBeEnabled()
+  await assertModalFits(page)
+  await expect(save).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('current-appimage-ready-900x620.png') })
+  await emitInstallationIntents(page, ['saveRecovery'])
+  expect(await calls(page)).toMatchObject({ checkCalls: 1, mutationCalls: [] })
+
+  await save.focus()
+  await save.press('Enter')
+  await expect(modal.getByRole('status')).toContainText('Saving recovery AppImage…')
+  await expect(save).toBeDisabled()
+  await expect(modal.getByRole('button', { exact: true, name: 'Close' })).toBeDisabled()
+  await expect(modal.getByRole('button', { exact: true, name: 'Check again' })).toBeDisabled()
+  await emitInstallationIntents(page, ['saveRecovery'], currentVersion)
+  expect(await calls(page)).toMatchObject({
+    recoverySaveVersions: [currentVersion],
+    returnedRecoverySaves: 0,
+  })
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseRecoverySave(1),
+  )
+  await expect(save).toBeEnabled()
+  await expect(modal).not.toContainText('Recovery AppImage saved')
+
+  await save.click()
+  await expect(modal).toContainText('Recovery AppImage could not be saved')
+  await expect(modal).toContainText('Choose a new AppImage name.')
+  await save.click()
+  await expect(modal).toContainText('Recovery AppImage saved')
+  await expect(modal).toContainText('Close ImageGen Studio, then open the AppImage you saved.')
+  await expect(modal).toContainText('Application update recovery required')
+  await expect(save).toHaveCount(0)
+  await assertModalFits(page)
+  await expect(modal.getByText('Recovery AppImage saved', { exact: true })).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('current-appimage-saved-900x620.png') })
+  await modal.getByRole('button', { exact: true, name: 'Close' }).click()
+  await expect(modal).not.toBeVisible()
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 1,
+    downloadVersions: [],
+    mutationCalls: ['app-save-recovery', 'app-save-recovery', 'app-save-recovery'],
+    recoveryCalls: 1,
+    recoverySaveVersions: [currentVersion, currentVersion, currentVersion],
+    returnedRecoverySaves: 3,
   })
 })
 
