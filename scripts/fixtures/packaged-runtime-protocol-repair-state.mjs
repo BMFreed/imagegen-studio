@@ -177,6 +177,7 @@ export async function prepareHistoricalProtocolRepair({
   let upgraded
   let backup
   let saved
+  let archiveValidator
   const prompt = `${project.initialPrompt}\nSaved after Repair installed a compatible worker.`
 
   async function assertStableInputs(expectedProject) {
@@ -200,7 +201,11 @@ export async function prepareHistoricalProtocolRepair({
       first: true,
       projectId: project.projectId,
       migrationHash,
+      archiveSha256: initialProject.sha256,
     })
+    archiveValidator = comparison.startupDeltas.find(
+      ({ table }) => table === 'app_metadata',
+    )?.validator
     const paths = await backupPaths(database.file)
     assert.equal(paths.length, 1)
     const [backupFile] = paths
@@ -249,7 +254,15 @@ export async function prepareHistoricalProtocolRepair({
       first: false,
       projectId: project.projectId,
       migrationHash,
+      archiveSha256: (saved?.receipt ?? initialProject).sha256,
+      archiveValidator,
     })
+    archiveValidator ??= comparison.startupDeltas.find(
+      ({ table }) => table === 'app_metadata',
+    )?.validator
+    // The next observation starts from the previously approved derived row. Every historical
+    // metadata value and non-cache table still matches the startup snapshot.
+    upgraded.tables.app_metadata.rows = current.tables.app_metadata.rows
     return {
       comparison,
       backupMigrations: migrations,

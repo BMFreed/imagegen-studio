@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { expect } from '@playwright/test'
 
 import { snapshotDatabase } from './application-state-upgrade-fixture.mjs'
+import { compareArchiveWitnessMetadata } from './application-state-upgrade-native.mjs'
 
 const execute = promisify(execFile)
 const historicalReportSha256 = '7f6bfbf04134a862e4fa1364a0f175eff8bac32eb5cd45612a3e47484a8fe976'
@@ -158,6 +159,8 @@ export async function runPackagedRuntimeContinuity({
   }
   const before = await inspect(originalPath)
   const workspace = path.join(engine.dataRoot, 'workspaces/Uncategorized')
+  const readMetadata = () =>
+    snapshotDatabase(path.join(engine.dataRoot, 'database/app.sqlite')).tables.app_metadata
   await mkdir(workspace, { recursive: true, mode: 0o700 })
   assert.equal(await realpath(workspace), workspace)
   assert.deepEqual(await readdir(workspace), [])
@@ -215,6 +218,7 @@ export async function runPackagedRuntimeContinuity({
   const previousPorts = await readPorts(first)
   assertReady(previousPorts, engine.runtimeId)
   const id = idFor(previousPorts)
+  const previousMetadata = readMetadata()
   const prior = await editAndSave(
     first,
     id,
@@ -223,12 +227,26 @@ export async function runPackagedRuntimeContinuity({
     'after-first-close',
   )
   assert.notEqual(prior.store.project.sha256, originalFile.sha256)
+  const priorClosed = prior.database.logicalStablePart
+  assert.deepEqual(previousMetadata.columns, priorClosed.tables.app_metadata.columns)
+  const priorSaveDelta = compareArchiveWitnessMetadata(
+    previousMetadata.rows,
+    priorClosed.tables.app_metadata.rows,
+    { archiveSha256: prior.store.project.sha256 },
+  )
 
   const restarted = await launch('restarted', continuity.successor.path)
   const currentPorts = await readPorts(restarted)
   assertReady(currentPorts, engine.runtimeId)
   assert.equal(idFor(currentPorts), id)
   assert.deepEqual(await identity(filename), prior.store.project)
+  const restartMetadata = readMetadata()
+  assert.deepEqual(restartMetadata.columns, priorClosed.tables.app_metadata.columns)
+  const restartDelta = compareArchiveWitnessMetadata(
+    priorClosed.tables.app_metadata.rows,
+    restartMetadata.rows,
+    { archiveSha256: prior.store.project.sha256 },
+  )
   const current = await editAndSave(
     restarted,
     id,
@@ -237,7 +255,25 @@ export async function runPackagedRuntimeContinuity({
     'after-restarted-close',
   )
   assert.notEqual(current.store.project.sha256, prior.store.project.sha256)
-  assert.deepEqual(current.database.logicalStablePart, prior.database.logicalStablePart)
+  const currentClosed = current.database.logicalStablePart
+  const currentSaveDelta = compareArchiveWitnessMetadata(
+    restartMetadata.rows,
+    currentClosed.tables.app_metadata.rows,
+    {
+      archiveSha256: current.store.project.sha256,
+      archiveValidator: restartDelta?.validator,
+    },
+  )
+  assert.deepEqual(currentClosed, {
+    ...priorClosed,
+    tables: {
+      ...priorClosed.tables,
+      app_metadata: {
+        ...priorClosed.tables.app_metadata,
+        rows: currentClosed.tables.app_metadata.rows,
+      },
+    },
+  })
   assert.deepEqual(await identity(originalPath), originalFile)
   assert.deepEqual(await identity(reportPath), priorReport)
   assert.deepEqual(await identity(continuity.successor.path), continuity.successor)
@@ -258,7 +294,8 @@ export async function runPackagedRuntimeContinuity({
       sourceProfileSha256: reference.sourceProfileSha256,
       hashes: current.stored.hashes,
       checkedPixelsPerSave: current.stored.checkedPixels,
-      checkedDatabaseTables: Object.keys(current.database.logicalStablePart.tables).length + 1,
+      checkedDatabaseTables: Object.keys(currentClosed.tables).length + 1,
+      archiveWitnessDeltas: { priorSaveDelta, restartDelta, currentSaveDelta },
     },
   }
 }

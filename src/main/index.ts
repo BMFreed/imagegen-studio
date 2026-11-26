@@ -122,9 +122,9 @@ import {
   safeStorage,
   shell,
 } from 'electron'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
-import { mkdir, realpath } from 'node:fs/promises'
+import { mkdir, readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -551,7 +551,19 @@ if (!gotInstanceLock) {
         }
       }
       await presetService.start()
-      const projectRepository = new ProjectIndexRepository(database.db)
+      // The packaged bundle includes the archive parser and schema. Bind durable witnesses to
+      // that exact code and its runtime so updated validators recheck the original archives.
+      const archiveValidator = app.isPackaged
+        ? await readFile(__filename).then(
+            (main) =>
+              createHash('sha256')
+                .update(`${process.versions.node}\0${process.versions.zlib}\0`)
+                .update(main)
+                .digest('hex'),
+            () => undefined,
+          )
+        : undefined
+      const projectRepository = new ProjectIndexRepository(database.db, archiveValidator)
       let readGenerationSeed:
         ((projectKey: string, documentId: string) => Promise<number | null>) | null = null
       let readTemporaryRecovery:

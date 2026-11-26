@@ -268,6 +268,8 @@ app.on('browser-window-created', (_event, window) => {
         userData: app.getPath('userData'),
         runtimeProof: runtimeProof(),
         productionMain: 'dist/main/main.cjs',
+        nodeVersion: process.versions.node,
+        zlibVersion: process.versions.zlib,
         beforeExplicitDriverAction: true,
       })
     }),

@@ -8,9 +8,9 @@ and exact model relink in step 4. The same source passed Setup and
 Repair on ext4 with the qualification publisher. The stock Setup path
 requires the production publisher in step 5.
 The two-plinth reference swap failed the same visual gate in Studio and
-installed InvokeAI. Explicit Refresh passed the local 256-project
-performance check. Continue keyboard and contrast in step 2 and
-retained update ownership in step 3.
+installed InvokeAI. Explicit Refresh and indexed restart passed local
+256-project checks. First discovery remains open in step 2. Retained
+update ownership remains open in step 3.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -92,9 +92,13 @@ environment and remaining limits, and update the current stage and next run.
         [Cold Home startup comparison](./phase-5-packaged-home-scale-research.md#discover-projects-after-the-home-window-opens)
   - [x] Profiled the first complete 256-Project Main catalog with both a fresh
         and an existing SQLite index. PNG member reads and validation took
-        7.56–7.69 s. The diagnostic points to byte-verified projection reuse
-        across restart as the next performance check.
+        7.56–7.69 s.
         [Cold Main timings](./phase-5-packaged-home-scale-research.md#time-spent-on-the-first-256-project-catalog)
+  - [x] Cached validation across restart brought all 256 cards from 20.73 s
+        to 6.88 s in the matched AppImage check. Archive changes still
+        trigger full validation and saved history rebuilds from `.igs`.
+        The sampled fresh profile took 19.79 s to show all cards.
+        [Indexed restart comparison](./phase-5-packaged-home-scale-research.md#reuse-full-archive-validation-on-indexed-restart)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old

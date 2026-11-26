@@ -946,3 +946,79 @@ open. Results and the isolated instrumentation are under
 `runs/home-catalog-layered-main/20261126-cold-costs`.
 Cleanup kept the input manifests, timings, closed SQLite snapshots and a
 sample archive, and reclaimed 1,068,609,536 allocated bytes.
+
+## Reuse full archive validation on indexed restart
+
+At InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/app/services/fonts/fonts_default.py` reads a bounded font file
+once, checks its existing size and SHA-256, and gives the same bytes to the
+parser on a miss. The startup and rescan callers are
+`invokeai/app/api/dependencies.py` and `invokeai/app/api/routers/fonts.py`.
+The stored directory entries and rescan replacement are owned by
+`invokeai/app/services/shared/database/queries/fonts.py`.
+
+Studio adapts that flow to portable `.igs` files. Packaged Main keeps up to
+512 previously validated archive SHA-256s in a single derived
+`app_metadata` row. The validator digest covers the bundled Main bytes and
+the Node and zlib versions. The read of the serialized row is limited to
+36 KiB. Missing, malformed or stale validation history falls back to a
+full package check. No SQLite schema change is needed.
+
+Eligible archives are bounded to 128 MiB on disk and 64 KiB of Project
+JSON for reuse. The first scan in a Main process takes a bounded snapshot
+of each eligible archive in turn. An unchanged archive can then supply
+Home's manifest and Project JSON without decoding the image members. A
+miss checks all members and validates the images before saving its hash.
+The hash and both parsers consume the same snapshot. This also avoids
+crossing two archives when an external process temporarily replaces a
+workspace directory. Later in-process hits stream the full archive hash
+through a 1 MiB buffer. The Home IPC serializes catalog work through the
+existing app-data lock.
+
+SQLite stores no Project document in the validation row. Accepted Results
+are rebuilt from the Project document in the existing transaction. Open,
+Save and recovery still use the complete archive reader. Missing files,
+oversized candidates and failed snapshot acquisition use the existing
+validation and diagnostic paths. Full validation is required when the
+archive bytes have no known digest for the current validator.
+
+The R6 stock AppImage (`192edffd2464eff6a452d33819c20ec88997cb41ff1d4436b93e09fe34b0ec6a`)
+and the `fbedab3e` AppImage baseline ran the same 256-Project, four-Raster
+workload from fresh profiles and again after normal close. The native runs
+used local ext4, software Wayland rendering, 120% CPU, 4 GiB RAM and zero
+swap. Times start before application spawn and use the initial 1380×900
+viewport. The harness resized to 900×620 for the interaction checks.
+
+| Home milestone                   | Baseline | Candidate |
+| -------------------------------- | -------: | --------: |
+| Visible Home on first launch     |   3.01 s |    3.01 s |
+| All 256 cards on first launch    |  21.51 s |   19.79 s |
+| Visible Home on indexed restart  |   2.80 s |    2.81 s |
+| All 256 cards on indexed restart |  20.73 s |    6.88 s |
+
+Both candidate lifetimes discovered all Projects, opened the sampled
+saved previews and exited normally. Independent readback matched 2,304
+corresponding ZIP member digests across the two workloads, validated all
+256 candidate archive witnesses and their exact bundled validator, and
+checked the closed index, 30 migration hashes and physical process exit.
+Aggregate peak memory was 3,518,566,400 bytes with zero OOM events. The
+restarted catalog arrived 66.8% sooner in this comparison. The first
+full discovery remains open as a performance gate.
+
+The 198 focused tests passed, including closed-DB history rebuild,
+same-size Raster corruption with its original mtime, a stale validator and
+malformed validation history. The temporary workspace swap test returned
+the alternate title on R4 and the original card and exact Accepted Results
+on R6. Scoped ESLint, the full typecheck, application build and packaging
+passed. The production source review found no blocker. The matched runtime
+reports are under `runs/packaged-home-scale/20261126-r3` and
+`runs/packaged-home-scale/20261126-r6`.
+
+The same candidate AppImage also passed the manual SQLite recovery
+scenario in `runs/packaged-sqlite-manual-recovery/20261126-r2`. The saved
+DB/WAL/SHM set kept the committed WAL marker. Copying the selected DB29
+backup and relaunching preserved the original backup, re-applied the
+migration to DB30 and rebuilt validation history for the unchanged `.igs`.
+The historical oracles check every other `app_metadata` row exactly. The
+installed-engine and runtime-continuity fixture changes received source
+checks in this round. Their native worker runs remain separate.

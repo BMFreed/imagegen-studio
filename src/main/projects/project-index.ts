@@ -21,7 +21,14 @@ import path from 'node:path'
 
 import type { DB } from '../db/database.types.js'
 
-import { IgsPackageError, type IgsPackageReadResult, readIgsPackage } from './igs-package.js'
+import {
+  IgsPackageError,
+  type IgsPackageReadResult,
+  readIgsPackage,
+  readIgsPackageSnapshot,
+  readPreviouslyValidatedIgsMetadata,
+} from './igs-package.js'
+import { ProjectArchiveWitnesses } from './project-archive-witnesses.js'
 import { fileMtimeToHomeTimestamp } from './project-home-metadata.js'
 import {
   canonicalProjectPath,
@@ -142,8 +149,15 @@ export class ProjectIndexRepository {
     string,
     { metadata: ProjectIndexMetadata; sha256: string }
   >()
+  private readonly archiveWitnesses: ProjectArchiveWitnesses | undefined
 
-  constructor(private readonly db: Kysely<DB>) {
+  constructor(
+    private readonly db: Kysely<DB>,
+    validatorIdentity?: string,
+  ) {
+    this.archiveWitnesses = validatorIdentity
+      ? new ProjectArchiveWitnesses(db, validatorIdentity)
+      : undefined
     this.trash = new ProjectTrashStore(db)
     this.relocations = new ProjectRelocationStore(db)
   }
@@ -710,6 +724,7 @@ export class ProjectIndexRepository {
         }
       }
     }
+    await this.archiveWitnesses?.save()
     return await this.listProjects(workspaceId)
   }
 
@@ -863,6 +878,18 @@ export class ProjectIndexRepository {
         'The selected workspace folder is read-only.',
       )
     }
+  }
+
+  private canCacheArchiveMetadata(
+    canonicalPath: string,
+    manifest: IgsPackageReadResult['manifest'],
+  ): boolean {
+    const member = manifest.members.find((entry) => entry.path === 'project.json')
+    return (
+      member !== undefined &&
+      member.bytes <= MAX_CACHED_PROJECT_BYTES &&
+      (this.archiveMetadata.has(canonicalPath) || this.archiveMetadata.size < MAX_CACHED_ARCHIVES)
+    )
   }
 
   private async indexSavedLocked(
@@ -1110,37 +1137,53 @@ export class ProjectIndexRepository {
     const cached = this.archiveMetadata.get(canonicalPath)
     // Keep the budget stable for folders larger than the cache. Evicting per file
     // in scan order would evict the next scan's useful entries before it can use them.
-    const sha256 =
+    const archive =
       reuse &&
       (cached || this.archiveMetadata.size < MAX_CACHED_ARCHIVES) &&
       identity.size > 0 &&
       identity.size <= MAX_HASHED_ARCHIVE_BYTES
-        ? await readStableArchiveHash(canonicalPath, identity)
+        ? await readStableArchive(canonicalPath, identity, !cached)
         : null
-    if (cached && cached.sha256 === sha256) {
+    if (cached && cached.sha256 === archive?.sha256) {
       return cached.metadata
     }
 
+    if (archive) {
+      // Hash and parse the same bounded snapshot. Reopening by path could read a different
+      // archive, including when its parent directory is temporarily replaced.
+      const snapshot = archive.bytes
+        ? archive
+        : await readStableArchive(canonicalPath, identity, true)
+      if (snapshot?.bytes) {
+        const { bytes, sha256 } = snapshot
+        const metadata = (await this.archiveWitnesses?.contains(sha256))
+          ? await readPreviouslyValidatedIgsMetadata(bytes, MAX_CACHED_PROJECT_BYTES)
+              .then(({ document, manifest }) => ({ manifest, project: document }))
+              .catch(() => readIgsPackageSnapshot(bytes))
+          : await readIgsPackageSnapshot(bytes)
+        const index = archiveIndexMetadata(metadata.manifest, metadata.project)
+        if (this.canCacheArchiveMetadata(canonicalPath, metadata.manifest)) {
+          this.archiveMetadata.set(canonicalPath, { metadata: index, sha256 })
+          await this.archiveWitnesses?.remember(sha256)
+        }
+        return index
+      }
+    }
+
     const { manifest, project } = await readIgsPackage(canonicalPath)
-    const metadata = {
-      previewStatus: manifest.preview.status,
-      project,
-      thumbnailSha256: manifest.members.find((member) => member.path === 'preview/thumbnail.webp')
-        ?.sha256,
-    }
-    const projectMember = manifest.members.find((member) => member.path === 'project.json')
-    // Verify the same archive bytes on both sides of the full parser before memoizing it.
-    // Keep only the small index inputs. The caller still rebuilds the SQLite projection.
-    if (
-      sha256 &&
-      projectMember &&
-      projectMember.bytes <= MAX_CACHED_PROJECT_BYTES &&
-      (await readStableArchiveHash(canonicalPath, identity)) === sha256 &&
-      (this.archiveMetadata.has(canonicalPath) || this.archiveMetadata.size < MAX_CACHED_ARCHIVES)
-    ) {
-      this.archiveMetadata.set(canonicalPath, { metadata, sha256 })
-    }
-    return metadata
+    return archiveIndexMetadata(manifest, project)
+  }
+}
+
+function archiveIndexMetadata(
+  manifest: IgsPackageReadResult['manifest'],
+  project: IgsPackageReadResult['project'],
+): ProjectIndexMetadata {
+  return {
+    previewStatus: manifest.preview.status,
+    project,
+    thumbnailSha256: manifest.members.find((member) => member.path === 'preview/thumbnail.webp')
+      ?.sha256,
   }
 }
 
@@ -1337,10 +1380,11 @@ function indexFileIdentity(stat: BigIntStats): FileIdentity {
   }
 }
 
-async function readStableArchiveHash(
+async function readStableArchive(
   filePath: string,
   expected: FileIdentity,
-): Promise<string | null> {
+  captureBytes: boolean,
+): Promise<{ bytes: Buffer | null; sha256: string } | null> {
   try {
     const handle = await open(
       filePath,
@@ -1353,19 +1397,21 @@ async function readStableArchiveHash(
         return null
       }
       const hash = createHash('sha256')
-      const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, expected.size))
+      const chunkBytes = Math.min(1024 * 1024, expected.size)
+      const buffer = Buffer.allocUnsafe(captureBytes ? expected.size : chunkBytes)
       let position = 0
       while (position < expected.size) {
+        const offset = captureBytes ? position : 0
         const { bytesRead } = await handle.read(
           buffer,
-          0,
-          Math.min(buffer.length, expected.size - position),
+          offset,
+          Math.min(chunkBytes, expected.size - position),
           position,
         )
         if (bytesRead === 0) {
           return null
         }
-        hash.update(buffer.subarray(0, bytesRead))
+        hash.update(buffer.subarray(offset, offset + bytesRead))
         position += bytesRead
       }
       if (
@@ -1376,7 +1422,7 @@ async function readStableArchiveHash(
       ) {
         return null
       }
-      return hash.digest('hex')
+      return { bytes: captureBytes ? buffer : null, sha256: hash.digest('hex') }
     } finally {
       await handle.close()
     }

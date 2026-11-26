@@ -22,10 +22,12 @@ import {
 } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
+import * as yauzl from 'yauzl'
 
 import { type AppDatabase, initializeAppDatabase, openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
+import { ProjectArchiveWitnesses } from './project-archive-witnesses.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import {
   ProjectIndexError,
@@ -43,6 +45,22 @@ import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+const testValidatorIdentity = 'a'.repeat(64)
+const durableWitnessKey = 'project-archive-witnesses-v1'
+
+function trackArchiveMemberReads(t: TestContext): string[] {
+  const reads: string[] = []
+  const open = yauzl.ZipFile.prototype.openReadStreamPromise
+  t.mock.method(
+    yauzl.ZipFile.prototype,
+    'openReadStreamPromise',
+    function (this: yauzl.ZipFile, ...args: Parameters<typeof open>) {
+      reads.push(args[0].fileName)
+      return open.apply(this, args)
+    },
+  )
+  return reads
+}
 
 async function withSavedResultProject(
   run: (context: {
@@ -596,6 +614,248 @@ test('deleting all derived rows is repaired from the verified saved file without
     assert.deepEqual(await readFile(session.filePath), bytes)
   })
 })
+
+test('durable Home witness rebuilds lost accepted rows after a database restart without opening PNG members', async (t) => {
+  await withSavedResultProject(async ({ database, directory, session, workspace }) => {
+    const memberReads = trackArchiveMemberReads(t)
+    const projectId = session.localRecoveryKey
+    const rasterPath = requireRasterLayer(session.document.layers[0]).asset.path
+    const savedBytes = await readFile(session.filePath)
+    const index = new ProjectIndexRepository(database.db, testValidatorIdentity)
+    const [first] = await index.scanWorkspace(workspace.id)
+    assert.equal(first.fileHealth, 'ready')
+    assert.ok(memberReads.includes(rasterPath), 'First discovery validates actual Raster bytes.')
+    const savedRows = await index.listSavedAcceptedResults(projectId)
+    assert.equal(savedRows.length, 2)
+
+    await database.db
+      .deleteFrom('project_accepted_result_index')
+      .where('local_project_key', '=', projectId)
+      .execute()
+    await database.close()
+
+    const reopened = openAppDatabase(directory, migrations)
+    try {
+      const restarted = new ProjectIndexRepository(reopened.db, testValidatorIdentity)
+      assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), [])
+      memberReads.length = 0
+      const [rebuilt] = await restarted.scanWorkspace(workspace.id)
+      assert.deepEqual(rebuilt, first)
+      assert.deepEqual(
+        [...new Set(memberReads)].sort(),
+        ['manifest.json', 'mimetype', 'project.json'],
+        'The actual scan reads portable metadata without opening a Raster or preview stream.',
+      )
+      assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), savedRows)
+      assert.deepEqual(await readFile(session.filePath), savedBytes)
+
+      memberReads.length = 0
+      const opened = await ProjectSession.open(session.filePath, {
+        placeholdersDir,
+        scratchDir: path.join(directory, 'scratch'),
+      })
+      assert.equal(opened.document.documentRevision, first.documentRevision)
+      assert.ok(memberReads.includes(rasterPath), 'Interactive Open still validates the Raster.')
+    } finally {
+      await reopened.close()
+    }
+  })
+})
+
+test('durable Home witness parses the captured archive during a temporary workspace directory replacement', async (t) => {
+  await withSavedResultProject(async ({ database, directory, session, workspace }) => {
+    const projectId = session.localRecoveryKey
+    const filePath = session.filePath
+    const savedBytes = await readFile(filePath)
+    const expectedDigest = createHash('sha256').update(savedBytes).digest('hex')
+    const index = new ProjectIndexRepository(database.db, testValidatorIdentity)
+    const [first] = await index.scanWorkspace(workspace.id)
+    const savedRows = await index.listSavedAcceptedResults(projectId)
+    assert.equal(savedRows.length, 2)
+
+    const alternateDirectory = await mkdtemp(path.join(directory, 'alternate-workspace-'))
+    const alternatePath = path.join(alternateDirectory, path.basename(filePath))
+    const aside = path.join(directory, 'workspace-aside')
+    await copyFile(filePath, alternatePath)
+    const alternate = await ProjectSession.open(alternatePath, {
+      placeholdersDir,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    alternate.applyDocument({ ...alternate.document, layers: [], title: 'Alternate revision' })
+    await alternate.save()
+    const alternateBytes = await readFile(alternatePath)
+    assert.notDeepEqual(alternateBytes, savedBytes)
+    const originalEntry = await stat(filePath, { bigint: true })
+
+    await database.db.deleteFrom('project_accepted_result_index').execute()
+    await database.close()
+
+    let originalMoved = false
+    let replacementActive = false
+    let restoredAtArchiveRead = false
+    async function restoreWorkspace() {
+      if (replacementActive) {
+        await rename(workspace.directoryPath, alternateDirectory)
+        replacementActive = false
+      }
+      if (originalMoved) {
+        await rename(aside, workspace.directoryPath)
+        originalMoved = false
+      }
+    }
+
+    const contains = ProjectArchiveWitnesses.prototype.contains
+    t.mock.method(
+      ProjectArchiveWitnesses.prototype,
+      'contains',
+      async function (this: ProjectArchiveWitnesses, digest: string) {
+        const known = await contains.call(this, digest)
+        if (known) {
+          assert.equal(digest, expectedDigest)
+          await rename(workspace.directoryPath, aside)
+          originalMoved = true
+          await rename(alternateDirectory, workspace.directoryPath)
+          replacementActive = true
+        }
+        return known
+      },
+    )
+    const open = yauzl.ZipFile.prototype.openReadStreamPromise
+    t.mock.method(
+      yauzl.ZipFile.prototype,
+      'openReadStreamPromise',
+      async function (this: yauzl.ZipFile, ...args: Parameters<typeof open>) {
+        if (replacementActive && args[0].fileName === 'mimetype') {
+          assert.deepEqual(await readFile(filePath), alternateBytes)
+          // The ZIP source is already open. Restore the path before the scan can finish.
+          await restoreWorkspace()
+          restoredAtArchiveRead = true
+        }
+        return await open.apply(this, args)
+      },
+    )
+
+    const reopened = openAppDatabase(directory, migrations)
+    try {
+      const restarted = new ProjectIndexRepository(reopened.db, testValidatorIdentity)
+      assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), [])
+      const [rebuilt] = await restarted.scanWorkspace(workspace.id)
+      assert.ok(restoredAtArchiveRead, 'The on-disk pathname changed after the witness lookup.')
+      assert.deepEqual(rebuilt, first)
+      assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), savedRows)
+      assert.deepEqual(await readFile(filePath), savedBytes)
+      assert.deepEqual(await readFile(alternatePath), alternateBytes)
+      const restoredEntry = await stat(filePath, { bigint: true })
+      assert.equal(restoredEntry.ino, originalEntry.ino)
+      assert.equal(restoredEntry.ctimeNs, originalEntry.ctimeNs)
+    } finally {
+      await restoreWorkspace()
+      await reopened.close()
+    }
+  })
+})
+
+test('durable Home witness refuses a same-size Raster rewrite with the original inode and mtime', async (t) => {
+  await withSavedResultProject(async ({ database, directory, session, workspace }) => {
+    const projectId = session.localRecoveryKey
+    const filePath = session.filePath
+    const rasterPath = requireRasterLayer(session.document.layers[0]).asset.path
+    const originalTime = new Date('2026-01-01T00:00:00.000Z')
+    await utimes(filePath, originalTime, originalTime)
+    const index = new ProjectIndexRepository(database.db, testValidatorIdentity)
+    const [first] = await index.scanWorkspace(workspace.id)
+    assert.equal(first.fileHealth, 'ready')
+    const savedRows = await index.listSavedAcceptedResults(projectId)
+    assert.equal(savedRows.length, 2)
+    const before = await stat(filePath, { bigint: true })
+    const savedBytes = await readFile(filePath)
+    const rasterBytes = await (await readIgsPackage(filePath)).readMember(rasterPath)
+    const corrupted = Buffer.from(savedBytes)
+    // Project Save stores assets uncompressed. Change a Raster body and preserve the ZIP headers.
+    const rasterOffset = corrupted.indexOf(rasterBytes)
+    assert.ok(rasterOffset > 0)
+    assert.equal(corrupted[rasterOffset], 0x89)
+    corrupted[rasterOffset] = 0
+
+    await database.close()
+    await writeFile(filePath, corrupted)
+    await utimes(filePath, originalTime, originalTime)
+    const after = await stat(filePath, { bigint: true })
+    assert.equal(after.ino, before.ino)
+    assert.equal(after.size, before.size)
+    assert.equal(after.mtimeNs, before.mtimeNs)
+
+    const memberReads = trackArchiveMemberReads(t)
+    const reopened = openAppDatabase(directory, migrations)
+    try {
+      const restarted = new ProjectIndexRepository(reopened.db, testValidatorIdentity)
+      const [broken] = await restarted.scanWorkspace(workspace.id)
+      assert.equal(broken.fileHealth, 'corrupt')
+      assert.ok(memberReads.some((name) => name.startsWith('assets/layers/')))
+      assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), [])
+      assert.deepEqual(await readFile(filePath), corrupted)
+    } finally {
+      await reopened.close()
+    }
+
+    await writeFile(filePath, savedBytes)
+    const repairedDb = openAppDatabase(directory, migrations)
+    try {
+      const repaired = new ProjectIndexRepository(repairedDb.db, testValidatorIdentity)
+      const [record] = await repaired.scanWorkspace(workspace.id)
+      assert.equal(record.fileHealth, 'ready')
+      assert.equal(record.documentRevision, first.documentRevision)
+      assert.deepEqual(
+        await repaired.listSavedAcceptedResults(projectId),
+        savedRows.map((row) => ({ ...row, fileFingerprint: record.fileFingerprint })),
+      )
+      assert.deepEqual(await readFile(filePath), savedBytes)
+    } finally {
+      await repairedDb.close()
+    }
+  })
+})
+
+for (const [label, invalidValue] of [
+  [
+    'another validator identity',
+    (digest: string) => JSON.stringify({ sha256: [digest], validator: 'b'.repeat(64) }),
+  ],
+  ['malformed JSON', () => '{'],
+] as const) {
+  test(`durable Home witness falls back to full PNG validation for ${label}`, async (t) => {
+    await withSavedResultProject(async ({ database, directory, session, workspace }) => {
+      const projectId = session.localRecoveryKey
+      const savedBytes = await readFile(session.filePath)
+      const rasterPath = requireRasterLayer(session.document.layers[0]).asset.path
+      const index = new ProjectIndexRepository(database.db, testValidatorIdentity)
+      await index.scanWorkspace(workspace.id)
+      const savedRows = await index.listSavedAcceptedResults(projectId)
+      assert.equal(savedRows.length, 2)
+      const digest = createHash('sha256').update(savedBytes).digest('hex')
+      const { numUpdatedRows } = await database.db
+        .updateTable('app_metadata')
+        .set({ value: invalidValue(digest) })
+        .where('key', '=', durableWitnessKey)
+        .executeTakeFirst()
+      assert.equal(numUpdatedRows, 1n, 'The first scan persisted a witness to replace.')
+      await database.close()
+
+      const memberReads = trackArchiveMemberReads(t)
+      const reopened = openAppDatabase(directory, migrations)
+      try {
+        const restarted = new ProjectIndexRepository(reopened.db, testValidatorIdentity)
+        const [revalidated] = await restarted.scanWorkspace(workspace.id)
+        assert.equal(revalidated.fileHealth, 'ready')
+        assert.ok(memberReads.includes(rasterPath), 'The actual parser opened the Raster stream.')
+        assert.deepEqual(await restarted.listSavedAcceptedResults(projectId), savedRows)
+        assert.deepEqual(await readFile(session.filePath), savedBytes)
+      } finally {
+        await reopened.close()
+      }
+    })
+  })
+}
 
 test('failed derived row insertion rolls back the Home revision and every saved-history replacement', async () => {
   await withSavedResultProject(async ({ database, index, session, workspace }) => {

@@ -177,13 +177,18 @@ export async function runPackagedSqliteManualRecovery({
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   const { database, migrationName, project, projectPath } = await seed(root, appData)
   const migrationHash = (await identity(path.join(migrations, migrationName))).sha256
-  const comparisonOptions = { first: true, projectId: project.localProjectKey, migrationHash }
   await noSidecars(database)
   assert.deepEqual(await backups(database), [])
   const base = snapshotDatabase(database, { closed: true })
   assert.equal(base.schemaMigrations.length, 29)
   assert.deepEqual(base.tables.app_metadata.rows, [beforeMarker])
   const projectBefore = await witness(projectPath, identity)
+  const comparisonOptions = {
+    first: true,
+    projectId: project.localProjectKey,
+    migrationHash,
+    archiveSha256: projectBefore.sha256,
+  }
 
   const first = await launch('sqlite-before-manual-recovery')
   await observeProject(first, readPorts, project)
@@ -275,8 +280,17 @@ export async function runPackagedSqliteManualRecovery({
   assert.deepEqual(restarted.project, saved.project)
   assert.deepEqual(await witness(projectPath, identity), projectBefore)
   const recovered = snapshotDatabase(database, { closed: true })
-  const secondComparison = compareStartup(base, recovered, comparisonOptions)
-  assert.deepEqual(recovered.tables.app_metadata.rows, [beforeMarker])
+  const firstWitnessDelta = firstComparison.startupDeltas.find(
+    ({ table }) => table === 'app_metadata',
+  )
+  const secondComparison = compareStartup(base, recovered, {
+    ...comparisonOptions,
+    archiveValidator: firstWitnessDelta?.validator,
+  })
+  assert.deepEqual(
+    recovered.tables.app_metadata.rows.find(({ key }) => key === beforeMarker.key),
+    beforeMarker,
+  )
   const finalNames = await backups(database)
   assert.equal(finalNames.length, 3)
   assert.equal(finalNames.at(-1), decoyPath)

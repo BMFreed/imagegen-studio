@@ -9,7 +9,10 @@ import { promisify } from 'node:util'
 import { expect } from '@playwright/test'
 
 import { snapshotDatabase } from './application-state-upgrade-fixture.mjs'
-import { compareStartup } from './application-state-upgrade-native.mjs'
+import {
+  compareArchiveWitnessMetadata,
+  compareStartup,
+} from './application-state-upgrade-native.mjs'
 
 const execute = promisify(execFile)
 const historicalRevision = '6b812f93d2715af2c4f904e70093b3f9c5b09713'
@@ -237,11 +240,25 @@ async function openProject(page, project) {
   return opened.tab
 }
 
-function compareAfterProjectAction(before, after, allowedColumns) {
+function compareAfterProjectAction(before, after, allowedColumns, archiveProof) {
   const index = 'project_index'
   const { [index]: beforeIndex, ...beforeTables } = before.tables
   const { [index]: afterIndex, ...afterTables } = after.tables
-  assert.deepEqual({ ...before, tables: beforeTables }, { ...after, tables: afterTables })
+  const metadataDelta = compareArchiveWitnessMetadata(
+    beforeTables.app_metadata.rows,
+    afterTables.app_metadata.rows,
+    archiveProof,
+  )
+  assert.deepEqual(
+    {
+      ...before,
+      tables: {
+        ...beforeTables,
+        app_metadata: { ...beforeTables.app_metadata, rows: afterTables.app_metadata.rows },
+      },
+    },
+    { ...after, tables: afterTables },
+  )
   assert.deepEqual(beforeIndex.columns, afterIndex.columns)
   assert.equal(beforeIndex.rows.length, 1)
   assert.equal(afterIndex.rows.length, 1)
@@ -254,7 +271,7 @@ function compareAfterProjectAction(before, after, allowedColumns) {
     changes.every((name) => allowedColumns.includes(name)),
     JSON.stringify(changes),
   )
-  return { changes, row: newRow }
+  return { changes, row: newRow, metadataDelta }
 }
 
 async function compareRestoredStartup(baseline, startup, project, startupArgs) {
@@ -332,7 +349,11 @@ export async function runHistoricalUpgrade({
   assert.equal(Boolean(protocolRefusal), Boolean(previewPlaceholders))
   const { database, project } = fixture
   const previewStatus = protocolRefusal ? 'unavailable' : 'rendered'
-  const startupArgs = { projectId: project.projectId, migrationHash }
+  const startupArgs = {
+    projectId: project.projectId,
+    migrationHash,
+    archiveSha256: initialProject.sha256,
+  }
   const first = await launch('first')
   const initialPorts = await readPorts(first)
   assert.equal(initialPorts.projects.value.length, 1)
@@ -420,16 +441,27 @@ export async function runHistoricalUpgrade({
     assert.equal(preview.hashes[member], placeholderHash, member)
   }
   const savedDatabase = snapshotDatabase(database.file, { closed: true })
-  const saveComparison = compareAfterProjectAction(startup, savedDatabase, [
-    'document_revision',
-    'file_fingerprint',
-    'file_mtime_ns',
-    'file_size_bytes',
-    'indexed_at',
-    'last_opened_at',
-    'preview_status',
-    'preview_thumbnail_sha256',
-  ])
+  const savedArchiveProof = {
+    archiveSha256: saved.project.sha256,
+    archiveValidator: firstStartup.startupDeltas.find(({ table }) => table === 'app_metadata')
+      ?.validator,
+  }
+  const saveComparison = compareAfterProjectAction(
+    startup,
+    savedDatabase,
+    [
+      'document_revision',
+      'file_fingerprint',
+      'file_mtime_ns',
+      'file_size_bytes',
+      'indexed_at',
+      'last_opened_at',
+      'preview_status',
+      'preview_thumbnail_sha256',
+    ],
+    savedArchiveProof,
+  )
+  savedArchiveProof.archiveValidator ??= saveComparison.metadataDelta?.validator
   assert.equal(saveComparison.row.document_revision, savedTab.documentRevision)
   assert.equal(saveComparison.row.preview_status, previewStatus)
   assert.equal(
@@ -451,6 +483,7 @@ export async function runHistoricalUpgrade({
   assert.equal(reopenedPorts.projects.value[0].previewStatus, previewStatus)
   const secondStartup = compareStartup(savedDatabase, snapshotDatabase(database.file), {
     ...startupArgs,
+    ...savedArchiveProof,
     first: false,
   })
   const reopened = await openProject(second.page, project)
@@ -463,6 +496,7 @@ export async function runHistoricalUpgrade({
     savedDatabase,
     snapshotDatabase(database.file, { closed: true }),
     ['indexed_at', 'last_opened_at'],
+    savedArchiveProof,
   )
   assert.deepEqual(await backups(database.file), [backupPath])
   assert.deepEqual(await identity(backupPath), backupBefore)

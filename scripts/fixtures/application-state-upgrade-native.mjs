@@ -96,9 +96,67 @@ const canonical = (value) =>
       : field,
   )
 const rows = (value) => [...value].sort((a, b) => canonical(a).localeCompare(canonical(b)))
+const archiveWitnessKey = 'project-archive-witnesses-v1'
+const maximumArchiveWitnesses = 512
+const sha256 = /^[a-f0-9]{64}$/
 
-/** Account for the ONE known Main startup scan update; preserve every other existing value. */
-export function compareStartup(before, after, { first, projectId, migrationHash }) {
+function parseArchiveWitness(row) {
+  assert.equal(typeof row.value, 'string')
+  assert.ok(Buffer.byteLength(row.value) <= 36 * 1024, 'archive witness value size')
+  const value = JSON.parse(row.value)
+  assert.ok(value && typeof value === 'object')
+  assert.deepEqual(Object.keys(value).sort(), ['sha256', 'validator'])
+  assert.equal(typeof value.validator, 'string')
+  assert.match(value.validator, sha256)
+  assert.ok(Array.isArray(value.sha256))
+  assert.ok(value.sha256.length <= maximumArchiveWitnesses)
+  assert.ok(value.sha256.every((entry) => typeof entry === 'string' && sha256.test(entry)))
+  assert.equal(new Set(value.sha256).size, value.sha256.length, 'duplicate archive witness')
+  return value
+}
+
+/** Keep every historical metadata value exact. Check the derived row against the fixture bytes. */
+export function compareArchiveWitnessMetadata(
+  beforeRows,
+  afterRows,
+  { archiveSha256, archiveValidator } = {},
+) {
+  assert.deepEqual(
+    rows(afterRows.filter((row) => row.key !== archiveWitnessKey)),
+    rows(beforeRows.filter((row) => row.key !== archiveWitnessKey)),
+    'app_metadata historical rows',
+  )
+  const before = beforeRows.filter((row) => row.key === archiveWitnessKey)
+  const after = afterRows.filter((row) => row.key === archiveWitnessKey)
+  assert.ok(before.length <= 1 && after.length <= 1, 'one derived archive witness row')
+  const previous = before[0] && parseArchiveWitness(before[0])
+  const current = after[0] && parseArchiveWitness(after[0])
+  if (before[0]?.value === after[0]?.value) return null
+  assert.ok(current, 'archive witness row disappeared')
+  assert.equal(typeof archiveSha256, 'string', 'fixture archive digest is required')
+  assert.match(archiveSha256, sha256)
+  if (archiveValidator) assert.equal(current.validator, archiveValidator)
+
+  const admitted = previous?.validator === current.validator ? previous.sha256 : []
+  assert.ok(!admitted.includes(archiveSha256), 'fixture archive witness was already admitted')
+  const retained = admitted.slice(Math.max(0, admitted.length + 1 - maximumArchiveWitnesses))
+  assert.deepEqual(current.sha256, [...retained, archiveSha256], 'derived archive witness digests')
+  return {
+    table: 'app_metadata',
+    key: archiveWitnessKey,
+    owner: 'ProjectIndexRepository',
+    archiveSha256,
+    validator: current.validator,
+    validatorMatchesExpected: archiveValidator !== undefined,
+  }
+}
+
+/** Account for Main's startup scan updates and preserve historical values. */
+export function compareStartup(
+  before,
+  after,
+  { first, projectId, migrationHash, archiveSha256, archiveValidator },
+) {
   assert.equal(after.integrityCheck, 'ok')
   assert.deepEqual(after.foreignKeyCheck, [])
   const beforeNames = Object.keys(before.tables).sort(),
@@ -153,6 +211,18 @@ export function compareStartup(before, after, { first, projectId, migrationHash 
           ),
         ),
       )
+      continue
+    }
+    if (name === 'app_metadata') {
+      const delta = compareArchiveWitnessMetadata(
+        before.tables[name].rows,
+        after.tables[name].rows,
+        {
+          archiveSha256,
+          archiveValidator,
+        },
+      )
+      if (delta) deltas.push(delta)
       continue
     }
     if (name !== 'project_index') {
@@ -235,6 +305,9 @@ export async function runStateUpgrade({ repo, run, root, fixture, packageManifes
   )
   const require = createRequire(path.join(repo, 'package.json')),
     { chromium, expect } = require('@playwright/test')
+  const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+  const asarRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
+  const { extractFile } = asarRequire('@electron/asar')
   const deadline = Date.now() + 540_000
   const launcherGroup = (await fs.readFile('/proc/self/cgroup', 'utf8')).trim().slice(3)
   assert.match(launcherGroup, /\/igs-[^/]+\.service$/)
@@ -711,6 +784,24 @@ export async function runStateUpgrade({ repo, run, root, fixture, packageManifes
         await digest(ready.runtimeProof.actualExecutable, 'sha512'),
         packageManifest.package.runtimeFiles.executable.sha512,
       )
+      assert.equal(ready.runtimeProof.appDir, held.runtimeProof.appDir)
+      const productionMain = 'dist/main/main.cjs'
+      assert.equal(ready.productionMain, productionMain)
+      const bundledMain = extractFile(
+        path.join(ready.runtimeProof.appDir, 'resources/app.asar'),
+        productionMain,
+      )
+      assert.equal(
+        createHash('sha256').update(bundledMain).digest('hex'),
+        packageManifest.source[productionMain],
+      )
+      const version = /^\d+\.\d+\.\d+(?:[.-][a-z0-9.-]+)?$/
+      assert.match(ready.nodeVersion, version)
+      assert.match(ready.zlibVersion, version)
+      const archiveValidator = createHash('sha256')
+        .update(`${ready.nodeVersion}\0${ready.zlibVersion}\0`)
+        .update(bundledMain)
+        .digest('hex')
       // No explicit UI interaction has happened. The reader holds a readonly SQL transaction in
       // this DRIVER process, never an extra FD/connection inside Main's POSIX lock owner.
       const startupDatabase = snapshotDatabase(fixture.database.file)
@@ -718,6 +809,8 @@ export async function runStateUpgrade({ repo, run, root, fixture, packageManifes
         first: phase === 'first',
         projectId: fixture.project.projectId,
         migrationHash,
+        archiveSha256: await digest(fixture.project.projectFile),
+        archiveValidator,
       })
       await write(`${phase}-startup-database.json`, { snapshot: startupDatabase, comparison })
       const devtools = path.join(fixture.appData, 'DevToolsActivePort')

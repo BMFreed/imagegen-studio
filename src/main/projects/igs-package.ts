@@ -109,6 +109,8 @@ export interface IgsPackageSaveResult {
   manifest: IgsManifestV1
 }
 
+type OpenArchive = () => Promise<yauzl.ZipFile>
+
 type ScannedMember = { bytes: number; header: Buffer; sha256: string }
 
 type SourceScan = ScannedMember & { source: IgsAssetSource }
@@ -704,324 +706,21 @@ export async function readIgsPackage(
   if (!initialStat.isFile() || initialStat.isSymbolicLink()) {
     throw new IgsPackageError('INVALID_PACKAGE', 'The Project package is not a regular file.')
   }
-  // Newer formats may legitimately contain member paths unknown to v1. Read only the bounded
-  // marker and manifest first so Open can report unsupported schema before v1 path checks.
-  await preflightPackageHeader(filePath, limits)
-  const zip = await openArchive(filePath)
-  const scanned = new Map<string, ScannedMember>()
-  const metadata = new Map<string, Buffer>()
-  let totalBytes = 0
-  try {
-    if (zip.entryCount > limits.archiveEntries) {
-      throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package has too many members.')
-    }
-    for await (const entry of archiveEntries(zip)) {
-      assertZipEntry(entry)
-      if (scanned.has(entry.fileName)) {
-        throw new IgsPackageError('UNSAFE_ENTRY', `Duplicate package member: ${entry.fileName}`)
-      }
-      if (
-        !Number.isSafeInteger(entry.uncompressedSize) ||
-        entry.uncompressedSize > memberLimit(entry.fileName, limits)
-      ) {
-        throw new IgsPackageError('PACKAGE_LIMIT', `Package member is too large: ${entry.fileName}`)
-      }
-      totalBytes += entry.uncompressedSize
-      if (totalBytes > limits.archiveUncompressedBytes) {
-        throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
-      }
-      const retain =
-        entry.fileName === 'mimetype' ||
-        entry.fileName === 'manifest.json' ||
-        entry.fileName === 'project.json'
-      const stream = await openArchiveMember(zip, entry)
-      const result = await scanArchiveStream(
-        stream,
-        entry.fileName,
-        memberLimit(entry.fileName, limits),
-        retain,
-        limits,
-      )
-      if (result.bytes !== entry.uncompressedSize) {
-        throw new IgsPackageError(
-          'MEMBER_MISMATCH',
-          `Package member size changed: ${entry.fileName}`,
-        )
-      }
-      totalBytes += result.bytes - entry.uncompressedSize
-      if (totalBytes > limits.archiveUncompressedBytes) {
-        throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
-      }
-      scanned.set(entry.fileName, result)
-      if (result.content) {
-        metadata.set(entry.fileName, result.content)
-      }
-      if (isImagePath(entry.fileName)) {
-        imageDimensions(entry.fileName, result.header, limits)
-      }
-    }
-  } finally {
-    zip.close()
-  }
-
-  if (metadata.get('mimetype')?.toString('utf8') !== IGS_MIMETYPE) {
-    throw new IgsPackageError('INVALID_PACKAGE', 'This is not an ImageGen Studio Project package.')
-  }
-  const manifestJson = metadata.get('manifest.json')
-  const projectJson = metadata.get('project.json')
-  if (!manifestJson || !projectJson) {
-    throw new IgsPackageError('MISSING_ENTRY', 'The Project package is incomplete.')
-  }
-  const { document, manifest } = validateIgsPackageMetadataV1(
-    parseJson(manifestJson, 'manifest.json'),
-    parseJson(projectJson, 'project.json'),
-  )
-  const expectedPaths = new Set([
-    'manifest.json',
-    'mimetype',
-    ...manifest.members.map((m) => m.path),
-  ])
-  if (
-    expectedPaths.size !== scanned.size ||
-    [...scanned.keys()].some((name) => !expectedPaths.has(name))
-  ) {
-    throw new IgsPackageError(
-      'MEMBER_MISMATCH',
-      'The package contains unlisted or missing members.',
-    )
-  }
-  for (const member of manifest.members) {
-    const actual = scanned.get(member.path)
-    if (!actual || actual.bytes !== member.bytes || actual.sha256 !== member.sha256) {
-      throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${member.path}`)
-    }
-  }
-  for (const required of IGS_REQUIRED_MEMBER_PATHS) {
-    if (!scanned.has(required)) {
-      throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${required}`)
-    }
-  }
-  for (const layer of projectRasterAssets(document)) {
-    const dimensions = imageDimensions(
-      layer.asset.path,
-      scanned.get(layer.asset.path)!.header,
-      limits,
-    )
-    if (dimensions.width !== layer.asset.width || dimensions.height !== layer.asset.height) {
-      throw new IgsPackageError('MEMBER_MISMATCH', `Layer dimensions differ: ${layer.asset.path}`)
-    }
-  }
-  for (const asset of projectMaskAssets(document)) {
-    const dimensions = imageDimensions(asset.path, scanned.get(asset.path)!.header, limits)
-    if (dimensions.width !== asset.width || dimensions.height !== asset.height) {
-      throw new IgsPackageError('MEMBER_MISMATCH', 'The mask dimensions differ from its reference.')
-    }
-  }
-  for (const reference of projectRegionalReferenceImages(document)) {
-    for (const { member, role } of regionalReferenceMembers(reference)) {
-      verifyRegionalReferenceScan(scanned.get(member.path)!, member, role, limits)
-    }
-  }
-  // The rect is in infinite-canvas coordinates; the PNG may be downsampled.
-  // Both preview images were already checked against their encoded format and limits.
-  if (fingerprint(await lstat(filePath, { bigint: true })) !== fingerprint(initialStat)) {
-    throw new IgsPackageError('PACKAGE_CHANGED', 'The Project package changed while it was opened.')
-  }
   const packageFingerprint = fingerprint(initialStat)
-  const result: IgsPackageReadResult = {
-    extractMemberToFile: async (memberPath: string, destinationPath: string) => {
-      const expected = manifest.members.find((member) => member.path === memberPath)
-      if (!expected) {
-        throw new IgsPackageError('MISSING_ENTRY', `Unknown package member: ${memberPath}`)
-      }
-      if (fingerprint(await lstat(filePath, { bigint: true })) !== packageFingerprint) {
-        throw new IgsPackageError(
-          'PACKAGE_CHANGED',
-          'The Project package changed after it was opened.',
-        )
-      }
-      const absoluteDestination = path.resolve(destinationPath)
-      const temporaryPath = path.join(
-        path.dirname(absoluteDestination),
-        `.${path.basename(absoluteDestination)}.${randomUUID()}.tmp`,
-      )
-      const memberZip = await openArchive(filePath)
-      let committed = false
-      try {
-        for await (const entry of archiveEntries(memberZip)) {
-          if (entry.fileName !== memberPath) {
-            continue
-          }
-          assertZipEntry(entry)
-          const input = await openArchiveMember(memberZip, entry)
-          const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
-          const hash = createHash('sha256')
-          let bytes = 0
-          const validator = makeImageValidator(memberPath, limits)
-          try {
-            await pipeline(
-              input,
-              new Transform({
-                transform(chunk: Buffer, _encoding, callback) {
-                  void (async () => {
-                    bytes += chunk.length
-                    if (bytes > expected.bytes || bytes > memberLimit(memberPath, limits)) {
-                      throw new IgsPackageError(
-                        'PACKAGE_LIMIT',
-                        `Package member is too large: ${memberPath}`,
-                      )
-                    }
-                    hash.update(chunk)
-                    await validator?.feed(chunk)
-                  })().then(() => callback(null, chunk), callback)
-                },
-              }),
-              output,
-            )
-            await validator?.finish()
-          } catch (error) {
-            validator?.abort?.()
-            throw normalizeArchiveError(error)
-          }
-          if (bytes !== expected.bytes || hash.digest('hex') !== expected.sha256) {
-            throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${memberPath}`)
-          }
-          if (fingerprint(await lstat(filePath, { bigint: true })) !== packageFingerprint) {
-            throw new IgsPackageError(
-              'PACKAGE_CHANGED',
-              'The Project package changed while reading.',
-            )
-          }
-          const extracted = await open(temporaryPath, 'r')
-          try {
-            await extracted.sync()
-          } finally {
-            await extracted.close()
-          }
-          try {
-            const current = await lstat(absoluteDestination)
-            if (!current.isFile() || current.isSymbolicLink()) {
-              throw new IgsPackageError(
-                'INVALID_PACKAGE',
-                'The extraction target is not a regular file.',
-              )
-            }
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-              throw error
-            }
-          }
-          await rename(temporaryPath, absoluteDestination)
-          committed = true
-          return
-        }
-        throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${memberPath}`)
-      } finally {
-        memberZip.close()
-        if (!committed) {
-          await unlink(temporaryPath).catch(() => undefined)
-        }
-      }
-    },
-    manifest,
-    project: document,
-    readMember: async (memberPath: string) => {
-      const expected = manifest.members.find((member) => member.path === memberPath)
-      if (!expected) {
-        throw new IgsPackageError('MISSING_ENTRY', `Unknown package member: ${memberPath}`)
-      }
-      if (expected.bytes > limits.readMemberBytes) {
-        throw new IgsPackageError(
-          'PACKAGE_LIMIT',
-          `Member is too large to read into memory: ${memberPath}`,
-        )
-      }
-      if (fingerprint(await lstat(filePath, { bigint: true })) !== packageFingerprint) {
-        throw new IgsPackageError(
-          'PACKAGE_CHANGED',
-          'The Project package changed after it was opened.',
-        )
-      }
-      const memberZip = await openArchive(filePath)
-      try {
-        for await (const entry of archiveEntries(memberZip)) {
-          if (entry.fileName !== memberPath) {
-            continue
-          }
-          assertZipEntry(entry)
-          const result = await scanArchiveStream(
-            await openArchiveMember(memberZip, entry),
-            memberPath,
-            Math.min(expected.bytes, limits.readMemberBytes),
-            true,
-            limits,
-          )
-          if (result.bytes !== expected.bytes || result.sha256 !== expected.sha256) {
-            throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${memberPath}`)
-          }
-          if (fingerprint(await lstat(filePath, { bigint: true })) !== packageFingerprint) {
-            throw new IgsPackageError(
-              'PACKAGE_CHANGED',
-              'The Project package changed while reading.',
-            )
-          }
-          return result.content!
-        }
-        throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${memberPath}`)
-      } finally {
-        memberZip.close()
-      }
-    },
-  }
-  // The source conditioning image is local recovery data and deliberately absent from .igs.
-  // Portable validation still verifies that the retained contribution identity describes the
-  // actual RGBA asset. Save also enters this reader before publishing its staged archive.
-  for (const layer of projectRasterLayers(document)) {
-    if (isSmartPatchRasterLayer(layer)) {
-      await verifySmartPatchVariantPng(layer, await result.readMember(layer.asset.path))
-      continue
-    }
-    const provenance = layer.generationProvenance
-    if (provenance?.kind !== 'illustrious-outpaint' && provenance?.kind !== 'anima-outpaint') {
-      continue
-    }
-    const output = provenance.executionResultContext.output
-    const bytes = await result.readMember(layer.asset.path)
-    let alpha: Buffer
-    try {
-      alpha = decodeTargetPngAlpha(bytes, output.width, output.height)
-    } catch {
-      throw new IgsPackageError(
-        'INVALID_IMAGE',
-        'An accepted outpaint contribution must be a bounded RGBA PNG.',
-      )
-    }
-    if (
-      alpha.length !== output.contributionAlpha8.byteSize ||
-      createHash('sha256').update(alpha).digest('hex') !== output.contributionAlpha8.sha256
-    ) {
-      throw new IgsPackageError(
-        'MEMBER_MISMATCH',
-        'The accepted outpaint contribution alpha differs from its provenance.',
-      )
-    }
-  }
-  for (const layer of document.layers) {
-    if (layer.kind !== 'smart-patch') {
-      continue
-    }
-    for (const variant of layer.rasterSubLayers) {
-      await verifySmartPatchVariantPng(variant, await result.readMember(variant.asset.path))
-    }
-  }
-  for (const asset of projectMaskAssets(document)) {
-    try {
-      decodeProjectMaskPng(await result.readMember(asset.path), asset)
-    } catch {
-      throw new IgsPackageError('INVALID_IMAGE', 'The owned mask PNG coverage is invalid.')
-    }
-  }
-  return result
+  return readIgsPackageFromArchive(
+    () => openArchive(filePath),
+    limits,
+    async () => fingerprint(await lstat(filePath, { bigint: true })) === packageFingerprint,
+  )
+}
+
+/** Fully validate an owned archive snapshot without reopening its source path. */
+export async function readIgsPackageSnapshot(bytes: Buffer): Promise<IgsPackageReadResult> {
+  return readIgsPackageFromArchive(
+    () => openArchive(bytes),
+    DEFAULT_IGS_PACKAGE_LIMITS,
+    () => true,
+  )
 }
 
 /**
@@ -1225,6 +924,352 @@ export async function saveIgsPackage(
   }
 }
 
+/**
+ * Metadata for the Home index only. The caller must prove that the complete archive bytes match a
+ * full validation.
+ */
+export async function readPreviouslyValidatedIgsMetadata(
+  bytes: Buffer,
+  projectBytes: number,
+): Promise<{ document: IgsProjectDocumentV1; manifest: IgsManifestV1 }> {
+  const { manifest, project } = await readPackageHeader(
+    () => openArchive(bytes),
+    DEFAULT_IGS_PACKAGE_LIMITS,
+    projectBytes,
+  )
+  if (!project) {
+    throw new IgsPackageError('MISSING_ENTRY', 'The Project document is missing.')
+  }
+  return validateIgsPackageMetadataV1(
+    parseJson(manifest, 'manifest.json'),
+    parseJson(project, 'project.json'),
+  )
+}
+
+async function readIgsPackageFromArchive(
+  openZip: OpenArchive,
+  limits: IgsPackageLimits,
+  archiveUnchanged: () => boolean | Promise<boolean>,
+): Promise<IgsPackageReadResult> {
+  // Newer formats may legitimately contain member paths unknown to v1. Read only the bounded
+  // marker and manifest first so Open can report unsupported schema before v1 path checks.
+  await preflightPackageHeader(openZip, limits)
+  const zip = await openZip()
+  const scanned = new Map<string, ScannedMember>()
+  const metadata = new Map<string, Buffer>()
+  let totalBytes = 0
+  try {
+    if (zip.entryCount > limits.archiveEntries) {
+      throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package has too many members.')
+    }
+    for await (const entry of archiveEntries(zip)) {
+      assertZipEntry(entry)
+      if (scanned.has(entry.fileName)) {
+        throw new IgsPackageError('UNSAFE_ENTRY', `Duplicate package member: ${entry.fileName}`)
+      }
+      if (
+        !Number.isSafeInteger(entry.uncompressedSize) ||
+        entry.uncompressedSize > memberLimit(entry.fileName, limits)
+      ) {
+        throw new IgsPackageError('PACKAGE_LIMIT', `Package member is too large: ${entry.fileName}`)
+      }
+      totalBytes += entry.uncompressedSize
+      if (totalBytes > limits.archiveUncompressedBytes) {
+        throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
+      }
+      const retain =
+        entry.fileName === 'mimetype' ||
+        entry.fileName === 'manifest.json' ||
+        entry.fileName === 'project.json'
+      const stream = await openArchiveMember(zip, entry)
+      const result = await scanArchiveStream(
+        stream,
+        entry.fileName,
+        memberLimit(entry.fileName, limits),
+        retain,
+        limits,
+      )
+      if (result.bytes !== entry.uncompressedSize) {
+        throw new IgsPackageError(
+          'MEMBER_MISMATCH',
+          `Package member size changed: ${entry.fileName}`,
+        )
+      }
+      totalBytes += result.bytes - entry.uncompressedSize
+      if (totalBytes > limits.archiveUncompressedBytes) {
+        throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
+      }
+      scanned.set(entry.fileName, result)
+      if (result.content) {
+        metadata.set(entry.fileName, result.content)
+      }
+      if (isImagePath(entry.fileName)) {
+        imageDimensions(entry.fileName, result.header, limits)
+      }
+    }
+  } finally {
+    zip.close()
+  }
+
+  if (metadata.get('mimetype')?.toString('utf8') !== IGS_MIMETYPE) {
+    throw new IgsPackageError('INVALID_PACKAGE', 'This is not an ImageGen Studio Project package.')
+  }
+  const manifestJson = metadata.get('manifest.json')
+  const projectJson = metadata.get('project.json')
+  if (!manifestJson || !projectJson) {
+    throw new IgsPackageError('MISSING_ENTRY', 'The Project package is incomplete.')
+  }
+  const { document, manifest } = validateIgsPackageMetadataV1(
+    parseJson(manifestJson, 'manifest.json'),
+    parseJson(projectJson, 'project.json'),
+  )
+  const expectedPaths = new Set([
+    'manifest.json',
+    'mimetype',
+    ...manifest.members.map((m) => m.path),
+  ])
+  if (
+    expectedPaths.size !== scanned.size ||
+    [...scanned.keys()].some((name) => !expectedPaths.has(name))
+  ) {
+    throw new IgsPackageError(
+      'MEMBER_MISMATCH',
+      'The package contains unlisted or missing members.',
+    )
+  }
+  for (const member of manifest.members) {
+    const actual = scanned.get(member.path)
+    if (!actual || actual.bytes !== member.bytes || actual.sha256 !== member.sha256) {
+      throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${member.path}`)
+    }
+  }
+  for (const required of IGS_REQUIRED_MEMBER_PATHS) {
+    if (!scanned.has(required)) {
+      throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${required}`)
+    }
+  }
+  for (const layer of projectRasterAssets(document)) {
+    const dimensions = imageDimensions(
+      layer.asset.path,
+      scanned.get(layer.asset.path)!.header,
+      limits,
+    )
+    if (dimensions.width !== layer.asset.width || dimensions.height !== layer.asset.height) {
+      throw new IgsPackageError('MEMBER_MISMATCH', `Layer dimensions differ: ${layer.asset.path}`)
+    }
+  }
+  for (const asset of projectMaskAssets(document)) {
+    const dimensions = imageDimensions(asset.path, scanned.get(asset.path)!.header, limits)
+    if (dimensions.width !== asset.width || dimensions.height !== asset.height) {
+      throw new IgsPackageError('MEMBER_MISMATCH', 'The mask dimensions differ from its reference.')
+    }
+  }
+  for (const reference of projectRegionalReferenceImages(document)) {
+    for (const { member, role } of regionalReferenceMembers(reference)) {
+      verifyRegionalReferenceScan(scanned.get(member.path)!, member, role, limits)
+    }
+  }
+  // The rect is in infinite-canvas coordinates; the PNG may be downsampled.
+  // Both preview images were already checked against their encoded format and limits.
+  if (!(await archiveUnchanged())) {
+    throw new IgsPackageError('PACKAGE_CHANGED', 'The Project package changed while it was opened.')
+  }
+  const result: IgsPackageReadResult = {
+    extractMemberToFile: async (memberPath: string, destinationPath: string) => {
+      const expected = manifest.members.find((member) => member.path === memberPath)
+      if (!expected) {
+        throw new IgsPackageError('MISSING_ENTRY', `Unknown package member: ${memberPath}`)
+      }
+      if (!(await archiveUnchanged())) {
+        throw new IgsPackageError(
+          'PACKAGE_CHANGED',
+          'The Project package changed after it was opened.',
+        )
+      }
+      const absoluteDestination = path.resolve(destinationPath)
+      const temporaryPath = path.join(
+        path.dirname(absoluteDestination),
+        `.${path.basename(absoluteDestination)}.${randomUUID()}.tmp`,
+      )
+      const memberZip = await openZip()
+      let committed = false
+      try {
+        for await (const entry of archiveEntries(memberZip)) {
+          if (entry.fileName !== memberPath) {
+            continue
+          }
+          assertZipEntry(entry)
+          const input = await openArchiveMember(memberZip, entry)
+          const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
+          const hash = createHash('sha256')
+          let bytes = 0
+          const validator = makeImageValidator(memberPath, limits)
+          try {
+            await pipeline(
+              input,
+              new Transform({
+                transform(chunk: Buffer, _encoding, callback) {
+                  void (async () => {
+                    bytes += chunk.length
+                    if (bytes > expected.bytes || bytes > memberLimit(memberPath, limits)) {
+                      throw new IgsPackageError(
+                        'PACKAGE_LIMIT',
+                        `Package member is too large: ${memberPath}`,
+                      )
+                    }
+                    hash.update(chunk)
+                    await validator?.feed(chunk)
+                  })().then(() => callback(null, chunk), callback)
+                },
+              }),
+              output,
+            )
+            await validator?.finish()
+          } catch (error) {
+            validator?.abort?.()
+            throw normalizeArchiveError(error)
+          }
+          if (bytes !== expected.bytes || hash.digest('hex') !== expected.sha256) {
+            throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${memberPath}`)
+          }
+          if (!(await archiveUnchanged())) {
+            throw new IgsPackageError(
+              'PACKAGE_CHANGED',
+              'The Project package changed while reading.',
+            )
+          }
+          const extracted = await open(temporaryPath, 'r')
+          try {
+            await extracted.sync()
+          } finally {
+            await extracted.close()
+          }
+          try {
+            const current = await lstat(absoluteDestination)
+            if (!current.isFile() || current.isSymbolicLink()) {
+              throw new IgsPackageError(
+                'INVALID_PACKAGE',
+                'The extraction target is not a regular file.',
+              )
+            }
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw error
+            }
+          }
+          await rename(temporaryPath, absoluteDestination)
+          committed = true
+          return
+        }
+        throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${memberPath}`)
+      } finally {
+        memberZip.close()
+        if (!committed) {
+          await unlink(temporaryPath).catch(() => undefined)
+        }
+      }
+    },
+    manifest,
+    project: document,
+    readMember: async (memberPath: string) => {
+      const expected = manifest.members.find((member) => member.path === memberPath)
+      if (!expected) {
+        throw new IgsPackageError('MISSING_ENTRY', `Unknown package member: ${memberPath}`)
+      }
+      if (expected.bytes > limits.readMemberBytes) {
+        throw new IgsPackageError(
+          'PACKAGE_LIMIT',
+          `Member is too large to read into memory: ${memberPath}`,
+        )
+      }
+      if (!(await archiveUnchanged())) {
+        throw new IgsPackageError(
+          'PACKAGE_CHANGED',
+          'The Project package changed after it was opened.',
+        )
+      }
+      const memberZip = await openZip()
+      try {
+        for await (const entry of archiveEntries(memberZip)) {
+          if (entry.fileName !== memberPath) {
+            continue
+          }
+          assertZipEntry(entry)
+          const result = await scanArchiveStream(
+            await openArchiveMember(memberZip, entry),
+            memberPath,
+            Math.min(expected.bytes, limits.readMemberBytes),
+            true,
+            limits,
+          )
+          if (result.bytes !== expected.bytes || result.sha256 !== expected.sha256) {
+            throw new IgsPackageError('MEMBER_MISMATCH', `Package member differs: ${memberPath}`)
+          }
+          if (!(await archiveUnchanged())) {
+            throw new IgsPackageError(
+              'PACKAGE_CHANGED',
+              'The Project package changed while reading.',
+            )
+          }
+          return result.content!
+        }
+        throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${memberPath}`)
+      } finally {
+        memberZip.close()
+      }
+    },
+  }
+  // The source conditioning image is local recovery data and deliberately absent from .igs.
+  // Portable validation still verifies that the retained contribution identity describes the
+  // actual RGBA asset. Save also enters this reader before publishing its staged archive.
+  for (const layer of projectRasterLayers(document)) {
+    if (isSmartPatchRasterLayer(layer)) {
+      await verifySmartPatchVariantPng(layer, await result.readMember(layer.asset.path))
+      continue
+    }
+    const provenance = layer.generationProvenance
+    if (provenance?.kind !== 'illustrious-outpaint' && provenance?.kind !== 'anima-outpaint') {
+      continue
+    }
+    const output = provenance.executionResultContext.output
+    const bytes = await result.readMember(layer.asset.path)
+    let alpha: Buffer
+    try {
+      alpha = decodeTargetPngAlpha(bytes, output.width, output.height)
+    } catch {
+      throw new IgsPackageError(
+        'INVALID_IMAGE',
+        'An accepted outpaint contribution must be a bounded RGBA PNG.',
+      )
+    }
+    if (
+      alpha.length !== output.contributionAlpha8.byteSize ||
+      createHash('sha256').update(alpha).digest('hex') !== output.contributionAlpha8.sha256
+    ) {
+      throw new IgsPackageError(
+        'MEMBER_MISMATCH',
+        'The accepted outpaint contribution alpha differs from its provenance.',
+      )
+    }
+  }
+  for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch') {
+      continue
+    }
+    for (const variant of layer.rasterSubLayers) {
+      await verifySmartPatchVariantPng(variant, await result.readMember(variant.asset.path))
+    }
+  }
+  for (const asset of projectMaskAssets(document)) {
+    try {
+      decodeProjectMaskPng(await result.readMember(asset.path), asset)
+    } catch {
+      throw new IgsPackageError('INVALID_IMAGE', 'The owned mask PNG coverage is invalid.')
+    }
+  }
+  return result
+}
+
 function verifyRegionalReferenceScan(
   scanned: ScannedMember,
   member: IgsProjectAssetRefV1,
@@ -1293,15 +1338,18 @@ function normalizeArchiveError(error: unknown): Error {
   return new IgsPackageError('INVALID_PACKAGE', 'The Project package contains malformed ZIP data.')
 }
 
-async function openArchive(filePath: string): Promise<yauzl.ZipFile> {
+async function openArchive(source: string | Buffer): Promise<yauzl.ZipFile> {
   try {
-    return await yauzl.openPromise(filePath, {
+    const options: yauzl.Options = {
       autoClose: false,
       decodeStrings: true,
       lazyEntries: true,
       strictFileNames: true,
       validateEntrySizes: true,
-    })
+    }
+    return await (typeof source === 'string'
+      ? yauzl.openPromise(source, options)
+      : yauzl.fromBufferPromise(source, options))
   } catch (error) {
     throw normalizeArchiveError(error)
   }
@@ -1339,15 +1387,28 @@ async function scanArchiveStream(
   }
 }
 
-async function preflightPackageHeader(filePath: string, limits: IgsPackageLimits): Promise<void> {
-  const zip = await openArchive(filePath)
+async function preflightPackageHeader(
+  openZip: OpenArchive,
+  limits: IgsPackageLimits,
+): Promise<void> {
+  const { manifest } = await readPackageHeader(openZip, limits)
+  parseIgsManifestV1(parseJson(manifest, 'manifest.json'))
+}
+
+async function readPackageHeader(
+  openZip: OpenArchive,
+  limits: IgsPackageLimits,
+  projectBytes?: number,
+): Promise<{ manifest: Buffer; project: Buffer | undefined }> {
+  const zip = await openZip()
   const metadata = new Map<string, Buffer>()
   try {
     if (zip.entryCount > limits.archiveEntries) {
       throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package has too many members.')
     }
     for await (const entry of archiveEntries(zip)) {
-      if (entry.fileName !== 'mimetype' && entry.fileName !== 'manifest.json') {
+      const isProject = entry.fileName === 'project.json' && projectBytes !== undefined
+      if (entry.fileName !== 'mimetype' && entry.fileName !== 'manifest.json' && !isProject) {
         continue
       }
       if (metadata.has(entry.fileName) || entry.isEncrypted() || !entry.canDecodeFileData()) {
@@ -1356,7 +1417,7 @@ async function preflightPackageHeader(filePath: string, limits: IgsPackageLimits
       const result = await scanArchiveStream(
         await openArchiveMember(zip, entry),
         entry.fileName,
-        memberLimit(entry.fileName, limits),
+        Math.min(memberLimit(entry.fileName, limits), isProject ? projectBytes : Infinity),
         true,
         limits,
       )
@@ -1372,7 +1433,7 @@ async function preflightPackageHeader(filePath: string, limits: IgsPackageLimits
   if (!manifest) {
     throw new IgsPackageError('MISSING_ENTRY', 'The Project manifest is missing.')
   }
-  parseIgsManifestV1(parseJson(manifest, 'manifest.json'))
+  return { manifest, project: metadata.get('project.json') }
 }
 
 function resolveLimits(overrides: Partial<IgsPackageLimits> | undefined): IgsPackageLimits {
