@@ -116,7 +116,7 @@ interface ProjectIndexMetadata {
 
 interface IndexSavedOptions {
   expectedDocumentId?: string
-  reuseVerifiedArchive?: boolean
+  validatedPngs?: Set<string>
 }
 
 export class ProjectIndexError extends Error {
@@ -665,6 +665,7 @@ export class ProjectIndexRepository {
       (await this.relocations.list()).flatMap((entry) => [entry.sourcePath, entry.destinationPath]),
     )
     const seen = new Set<string>()
+    const validatedPngs = new Set<string>()
     for (const entry of entries) {
       if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.igs') {
         continue
@@ -683,7 +684,7 @@ export class ProjectIndexRepository {
         continue
       }
       try {
-        const project = await this.indexSaved(filePath, workspaceId, { reuseVerifiedArchive: true })
+        const project = await this.indexSaved(filePath, workspaceId, { validatedPngs })
         onValidated?.(project)
       } catch (error) {
         if (error instanceof IgsSchemaError) {
@@ -918,7 +919,7 @@ export class ProjectIndexRepository {
     const { previewStatus, project, thumbnailSha256 } = await this.readIndexMetadata(
       canonicalPath,
       before,
-      options.reuseVerifiedArchive === true,
+      options.validatedPngs,
     )
     const after = await fileIdentity(canonicalPath)
     if (before.fingerprint !== after.fingerprint) {
@@ -1132,13 +1133,13 @@ export class ProjectIndexRepository {
   private async readIndexMetadata(
     canonicalPath: string,
     identity: FileIdentity,
-    reuse: boolean,
+    validatedPngs?: Set<string>,
   ): Promise<ProjectIndexMetadata> {
     const cached = this.archiveMetadata.get(canonicalPath)
     // Keep the budget stable for folders larger than the cache. Evicting per file
     // in scan order would evict the next scan's useful entries before it can use them.
     const archive =
-      reuse &&
+      validatedPngs &&
       (cached || this.archiveMetadata.size < MAX_CACHED_ARCHIVES) &&
       identity.size > 0 &&
       identity.size <= MAX_HASHED_ARCHIVE_BYTES
@@ -1159,8 +1160,8 @@ export class ProjectIndexRepository {
         const metadata = (await this.archiveWitnesses?.contains(sha256))
           ? await readPreviouslyValidatedIgsMetadata(bytes, MAX_CACHED_PROJECT_BYTES)
               .then(({ document, manifest }) => ({ manifest, project: document }))
-              .catch(() => readIgsPackageSnapshot(bytes))
-          : await readIgsPackageSnapshot(bytes)
+              .catch(() => readIgsPackageSnapshot(bytes, validatedPngs))
+          : await readIgsPackageSnapshot(bytes, validatedPngs)
         const index = archiveIndexMetadata(metadata.manifest, metadata.project)
         if (this.canCacheArchiveMetadata(canonicalPath, metadata.manifest)) {
           this.archiveMetadata.set(canonicalPath, { metadata: index, sha256 })

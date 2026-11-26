@@ -1022,3 +1022,88 @@ migration to DB30 and rebuilt validation history for the unchanged `.igs`.
 The historical oracles check every other `app_metadata` row exactly. The
 installed-engine and runtime-continuity fixture changes received source
 checks in this round. Their native worker runs remain separate.
+
+## Reuse structural validation for repeated PNG members during discovery
+
+At InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/app/services/fonts/fonts_default.py` reads bounded actual bytes
+before checking the hash in `read_file`. `instance` uses the verified hash
+and normalized parameters to reuse worker output from a bounded in-memory
+cache. The service owner is `invokeai/app/api/dependencies.py` and the
+instance endpoint is `invokeai/app/api/routers/fonts.py`.
+
+Studio applies the verified-content rule to the existing PNG structure
+validator. The workspace scan keeps up to 128 successful checks by
+SHA-256 and byte length for ordinary layer and merged-preview PNGs up to
+8 MiB. The cache lasts for one workspace scan and stores only these keys.
+The first design buffered every eligible PNG before deciding whether to
+decode. The linked fixture improved from 21.23 s to 10.33 s, but on 256
+Projects with 1,024 distinct Raster bodies the real Main catalog slowed
+from 9.40 s to 12.59 s. That design was rejected after the independent
+readback in `runs/home-png-first/20261126-unique`.
+
+In the revised reader, the parsed manifest provides a tentative lookup
+key. Unknown PNGs go directly through the usual streaming parser. A known
+key lets the reader try hashing the actual member stream without decoding
+the PNG. If its bytes or digest differ, the same entry in the same owned
+archive snapshot goes through the full validator. The manifest never
+establishes that a member can skip decoding by itself. The ZIP reader
+checks the stored or inflated size against the entry's declared size.
+
+Every archive still checks its schema, manifest membership and hashes,
+dimensions and accepted-result provenance. Regional references and masks
+retain their role-specific checks. Interactive Open and Save use the
+ordinary streaming validator. If a tentative match has both a broken ZIP
+stream and malformed PNG data, discovery can report the ZIP failure
+first. Either failure marks the archive unhealthy.
+
+The revised scanner and `202eb114` also indexed the same 256 four-layer
+Projects with 1,024 distinct Raster PNGs. The merged preview repeats the
+first Raster within each Project, and no Raster body repeats across
+Projects. Four runs per revision used both comparison orders, the same archive
+bytes, a byte-identical initial SQLite index and the same 120% CPU, 4 GiB
+RAM and zero-swap bounds. This measures `listHomeCatalog()` in Main and
+excludes Electron startup and rendering.
+
+| Distinct-Raster Main catalog |     Baseline | Revised scanner |
+| ---------------------------- | -----------: | --------------: |
+| Median across four runs      |      10.67 s |         10.08 s |
+| Range                        | 9.42–12.36 s |    8.14–11.41 s |
+
+The direction varied by pair, so these data leave the broader
+first-discovery performance gate open. Independent readback checked the
+archive bytes, 1,792 manifest-member hashes and all eight closed indexes
+in `runs/home-png-first/20261126-unique-streaming`.
+
+The matched stock AppImages ran the linked fixture with 256 Projects and
+four repeated Raster bodies. R7 used `202eb114` and the retained R6 AppImage
+(`192edffd2464eff6a452d33819c20ec88997cb41ff1d4436b93e09fe34b0ec6a`).
+The final R9 AppImage SHA-256 is
+`d12ed66ac5e54bd80906b53ce4c5daa01f4cd6b447330e9cb0f1c4c9014c09b5`.
+Each measured lifetime started before spawn, on local ext4 with software
+Wayland rendering, 120% CPU, 4 GiB RAM and zero swap.
+
+| Home milestone                   |      R7 |      R9 |
+| -------------------------------- | ------: | ------: |
+| Visible Home on first launch     |  3.21 s |  3.18 s |
+| All 256 cards on first launch    | 21.23 s | 10.26 s |
+| All 256 cards on indexed restart |  8.14 s |  7.30 s |
+
+Both AppImages found all 256 Projects, loaded the sampled saved previews
+and exited normally in each lifetime. The R9 aggregate memory peak was
+3,174,154,240 bytes with zero OOM events. Independent readback checked
+each archive against its input hash and matched all 2,304 ZIP member
+bodies across the two fixtures. For each run it verified 256 ready rows,
+30 SQLite migrations, 256 full-archive witnesses bound to the bundled
+validator, and exit of 20 observed processes. The matched run is under
+`runs/packaged-home-scale/20261126-r7` and `runs/packaged-home-scale/20261126-r9`.
+
+The 199 focused tests, typecheck, scoped ESLint, build and packaging passed
+on the revised scanner. The direct regression reads the repeated member from a second ZIP,
+observes decode only for the new preview, checks loss of reuse on different
+bytes, and rejects wrong layer dimensions. It also rejects a same-size
+corrupt PNG with a matching manifest and asset digest. An isolated
+runtime mutation using size alone admitted the corrupt PNG and failed
+the test at the expected rejection. A separate mutation dropped the
+fallback decode and replaced the expected invalid-image diagnostic with a
+manifest mismatch. Plain Open validated both PNGs.

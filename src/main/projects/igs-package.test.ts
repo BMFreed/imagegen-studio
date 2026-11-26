@@ -1,5 +1,6 @@
 import {
   createEmptyProjectDocumentV1,
+  type IgsManifestV1,
   type IgsProjectDocumentV1,
   type IgsRasterLayerV1,
   IgsSchemaError,
@@ -21,17 +22,19 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import test from 'node:test'
-import { crc32, deflateSync } from 'node:zlib'
+import zlib, { crc32, deflateSync } from 'node:zlib'
 import * as yauzl from 'yauzl'
 import * as yazl from 'yazl'
 
 import {
   IgsPackageError,
   readIgsPackage,
+  readIgsPackageSnapshot,
   saveIgsPackage,
   validateSrgbPngStream,
 } from './igs-package.js'
@@ -319,6 +322,110 @@ async function writeRawZip(
   zip.end()
   await pipeline(zip.outputStream, createWriteStream(filePath))
 }
+
+test('Home snapshot reuses PNG validation only for matching member bytes and still checks layer dimensions', async (t) => {
+  await inTemporaryDirectory(async (directory) => {
+    const firstPath = path.join(directory, 'first.igs')
+    const secondPath = path.join(directory, 'second.igs')
+    const changedPng = pngFromScanlines(Buffer.alloc(18), false, 2, 2)
+    assert.notEqual(changedPng.length, PNG.length)
+    const second = rasterProject('Second Project')
+    const layer = second.layers[0]
+    await saveIgsPackage(firstPath, emptyInput())
+    await saveIgsPackage(secondPath, {
+      assets: { [layer.asset.path]: { bytes: PNG } },
+      preview: {
+        merged: changedPng,
+        rect: { height: 2, width: 2, x: 0, y: 0 },
+        status: 'rendered',
+        thumbnail: WEBP,
+      },
+      project: second,
+    })
+
+    const entries = await rawEntries(secondPath)
+    const corrupted = Buffer.from(PNG)
+    corrupted[corrupted.length - 1] ^= 1 // Damage the IEND CRC while keeping the ZIP and manifest intact.
+    const damagedPath = path.join(directory, 'damaged-layer.igs')
+    await writeRawZip(
+      damagedPath,
+      entries.map(([name, bytes]) => [name, name === layer.asset.path ? corrupted : bytes]),
+    )
+    const originalManifest = JSON.parse(
+      entries.find(([name]) => name === 'manifest.json')![1].toString('utf8'),
+    ) as IgsManifestV1
+    function withMatchingManifest(project: IgsProjectDocumentV1, raster: Buffer) {
+      const manifest = structuredClone(originalManifest)
+      const projectBytes = Buffer.from(JSON.stringify(project))
+      const adjustedEntries = new Map(entries)
+      const replacements = new Map([
+        ['project.json', projectBytes],
+        [layer.asset.path, raster],
+      ])
+      for (const [name, bytes] of replacements) {
+        const member = manifest.members.find(({ path }) => path === name)!
+        member.bytes = bytes.length
+        member.sha256 = sha256(bytes)
+        adjustedEntries.set(name, bytes)
+      }
+      adjustedEntries.set('manifest.json', Buffer.from(JSON.stringify(manifest)))
+      return [...adjustedEntries]
+    }
+    const badDigest = structuredClone(second)
+    badDigest.layers[0].asset.sha256 = sha256(corrupted)
+    const badDigestPath = path.join(directory, 'matching-damaged-digest.igs')
+    await writeRawZip(badDigestPath, withMatchingManifest(badDigest, corrupted))
+
+    const wrongDimensions = structuredClone(second)
+    wrongDimensions.layers[0].asset.width = 3
+    const dimensionsPath = path.join(directory, 'wrong-dimensions.igs')
+    await writeRawZip(dimensionsPath, withMatchingManifest(wrongDimensions, PNG))
+
+    const validatedPngs = new Set<string>()
+    const inflate = t.mock.method(zlib, 'createInflate')
+    const readEntry = t.mock.method(yauzl.ZipFile.prototype, 'openReadStreamPromise')
+    syncBuiltinESMExports()
+    try {
+      await readIgsPackageSnapshot(await readFile(firstPath), validatedPngs)
+      assert.equal(inflate.mock.callCount(), 1)
+      assert.equal(validatedPngs.size, 1)
+
+      inflate.mock.resetCalls()
+      readEntry.mock.resetCalls()
+      const opened = await readIgsPackageSnapshot(await readFile(secondPath), validatedPngs)
+      assert.deepEqual(opened.project, second)
+      const openedMembers = readEntry.mock.calls.map(({ arguments: [entry] }) => entry.fileName)
+      assert.ok(
+        openedMembers.includes(layer.asset.path),
+        'The matched PNG still reads its ZIP member.',
+      )
+      assert.equal(inflate.mock.callCount(), 1, 'Only the new preview needs a PNG inflate.')
+      assert.equal(validatedPngs.size, 2)
+      const expectedPngs = new Set(validatedPngs)
+      assert.deepEqual(await opened.readMember(layer.asset.path), PNG)
+
+      for (const invalidPath of [badDigestPath, damagedPath]) {
+        await assert.rejects(readIgsPackageSnapshot(await readFile(invalidPath), validatedPngs), {
+          code: 'INVALID_IMAGE',
+          message: /PNG chunk checksum differs/,
+        })
+      }
+      assert.deepEqual(validatedPngs, expectedPngs)
+      await assert.rejects(readIgsPackageSnapshot(await readFile(dimensionsPath), validatedPngs), {
+        code: 'MEMBER_MISMATCH',
+        message: /Layer dimensions differ/,
+      })
+
+      inflate.mock.resetCalls()
+      await readIgsPackage(secondPath)
+      assert.equal(inflate.mock.callCount(), 2, 'Normal Open validates both PNGs.')
+    } finally {
+      inflate.mock.restore()
+      readEntry.mock.restore()
+      syncBuiltinESMExports()
+    }
+  })
+})
 
 test('Save, portable copy, reopen, edit and Save again use the real ZIP loader', async () => {
   await inTemporaryDirectory(async (directory) => {

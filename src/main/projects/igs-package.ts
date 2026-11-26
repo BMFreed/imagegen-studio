@@ -111,6 +111,9 @@ export interface IgsPackageSaveResult {
 
 type OpenArchive = () => Promise<yauzl.ZipFile>
 
+const MAX_REUSABLE_PNG_BYTES = 8 * 1024 * 1024
+const MAX_VALIDATED_PNGS = 128
+
 type ScannedMember = { bytes: number; header: Buffer; sha256: string }
 
 type SourceScan = ScannedMember & { source: IgsAssetSource }
@@ -715,11 +718,15 @@ export async function readIgsPackage(
 }
 
 /** Fully validate an owned archive snapshot without reopening its source path. */
-export async function readIgsPackageSnapshot(bytes: Buffer): Promise<IgsPackageReadResult> {
+export async function readIgsPackageSnapshot(
+  bytes: Buffer,
+  validatedPngs?: Set<string>,
+): Promise<IgsPackageReadResult> {
   return readIgsPackageFromArchive(
     () => openArchive(bytes),
     DEFAULT_IGS_PACKAGE_LIMITS,
     () => true,
+    validatedPngs,
   )
 }
 
@@ -950,10 +957,12 @@ async function readIgsPackageFromArchive(
   openZip: OpenArchive,
   limits: IgsPackageLimits,
   archiveUnchanged: () => boolean | Promise<boolean>,
+  validatedPngs?: Set<string>,
 ): Promise<IgsPackageReadResult> {
   // Newer formats may legitimately contain member paths unknown to v1. Read only the bounded
   // marker and manifest first so Open can report unsupported schema before v1 path checks.
-  await preflightPackageHeader(openZip, limits)
+  const declaredManifest = await preflightPackageHeader(openZip, limits)
+  const memberHints = validatedPngs && new Map(declaredManifest.members.map((m) => [m.path, m]))
   const zip = await openZip()
   const scanned = new Map<string, ScannedMember>()
   const metadata = new Map<string, Buffer>()
@@ -981,14 +990,29 @@ async function readIgsPackageFromArchive(
         entry.fileName === 'mimetype' ||
         entry.fileName === 'manifest.json' ||
         entry.fileName === 'project.json'
+      // The ZIP stream enforces the declared size, including for compressed entries.
+      // Layer and merged PNGs share the default structural rules. References and masks
+      // have separate roles and go through their regular validation.
+      const reusablePng =
+        entry.uncompressedSize <= MAX_REUSABLE_PNG_BYTES &&
+        (entry.fileName === 'preview/merged.png' ||
+          (entry.fileName.startsWith('assets/layers/') && entry.fileName.endsWith('.png')))
+      const hint = reusablePng ? memberHints?.get(entry.fileName) : undefined
+      const tryReuse = hint?.bytes === entry.uncompressedSize && validatedPngs?.has(pngKey(hint))
+      const limit = memberLimit(entry.fileName, limits)
       const stream = await openArchiveMember(zip, entry)
-      const result = await scanArchiveStream(
-        stream,
-        entry.fileName,
-        memberLimit(entry.fileName, limits),
-        retain,
-        limits,
-      )
+      let result = await scanArchiveStream(stream, entry.fileName, limit, retain, limits, !tryReuse)
+      // A manifest claim selects a candidate only. Reuse requires the actual ZIP stream to
+      // match. A mismatch gets the ordinary validator over the same immutable archive bytes.
+      if (tryReuse && (result.sha256 !== hint.sha256 || result.bytes !== hint.bytes)) {
+        result = await scanArchiveStream(
+          await openArchiveMember(zip, entry),
+          entry.fileName,
+          limit,
+          retain,
+          limits,
+        )
+      }
       if (result.bytes !== entry.uncompressedSize) {
         throw new IgsPackageError(
           'MEMBER_MISMATCH',
@@ -1005,6 +1029,9 @@ async function readIgsPackageFromArchive(
       }
       if (isImagePath(entry.fileName)) {
         imageDimensions(entry.fileName, result.header, limits)
+      }
+      if (reusablePng && validatedPngs && validatedPngs.size < MAX_VALIDATED_PNGS) {
+        validatedPngs.add(pngKey(result))
       }
     }
   } finally {
@@ -1379,9 +1406,10 @@ async function scanArchiveStream(
   limit: number,
   retain: boolean,
   limits: IgsPackageLimits,
+  validateStructure = true,
 ): Promise<ScannedMember & { content?: Buffer }> {
   try {
-    return await scanStream(chunks, memberPath, limit, retain, limits)
+    return await scanStream(chunks, memberPath, limit, retain, limits, validateStructure)
   } catch (error) {
     throw normalizeArchiveError(error)
   }
@@ -1390,9 +1418,13 @@ async function scanArchiveStream(
 async function preflightPackageHeader(
   openZip: OpenArchive,
   limits: IgsPackageLimits,
-): Promise<void> {
+): Promise<IgsManifestV1> {
   const { manifest } = await readPackageHeader(openZip, limits)
-  parseIgsManifestV1(parseJson(manifest, 'manifest.json'))
+  return parseIgsManifestV1(parseJson(manifest, 'manifest.json'))
+}
+
+function pngKey({ bytes, sha256 }: Pick<ScannedMember, 'bytes' | 'sha256'>): string {
+  return `${bytes}:${sha256}`
 }
 
 async function readPackageHeader(
@@ -1620,12 +1652,13 @@ async function scanStream(
   limit: number,
   retain: boolean,
   limits: IgsPackageLimits,
+  validateStructure = true,
 ): Promise<ScannedMember & { content?: Buffer }> {
   const hash = createHash('sha256')
   const content: Buffer[] = []
   let header = Buffer.alloc(0)
   let bytes = 0
-  const validator = makeImageValidator(memberPath, limits)
+  const validator = validateStructure ? makeImageValidator(memberPath, limits) : null
   try {
     for await (const rawChunk of chunks) {
       const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk)

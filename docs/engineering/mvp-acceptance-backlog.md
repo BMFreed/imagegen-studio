@@ -99,6 +99,12 @@ environment and remaining limits, and update the current stage and next run.
         trigger full validation and saved history rebuilds from `.igs`.
         The sampled fresh profile took 19.79 s to show all cards.
         [Indexed restart comparison](./phase-5-packaged-home-scale-research.md#reuse-full-archive-validation-on-indexed-restart)
+  - [x] The matched AppImage check on 256 Projects with repeated Raster
+        bodies brought first discovery from 21.23 s to 10.26 s. A separate
+        Main-only comparison with 1,024 distinct Raster bodies measured
+        medians of 10.67 s before and 10.08 s after, with overlapping ranges.
+        New PNG bytes still receive the full structural check.
+        [First discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-structural-validation-for-repeated-png-members-during-discovery)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old
@@ -110,6 +116,10 @@ environment and remaining limits, and update the current stage and next run.
         two retained stages. The same D passed preflight on a fresh C
         path in the transaction fixture.
         [Next-release control](./phase-5-application-update-interruption-research.md#a-subsequent-release-on-the-used-recovery-path)
+  - [ ] Repeat the D check from the AppImage on the used path. Verify the
+        Review refusal with the Project still open and the retained stages
+        intact, then explicitly save D to a new recovery path and reopen the
+        saved Project there.
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
