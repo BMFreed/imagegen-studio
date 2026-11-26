@@ -2296,16 +2296,18 @@ export class ProjectService {
   async listHomeCatalog(
     workspaceId?: string,
     onInitial?: (catalog: ProjectHomeCatalog) => void,
+    withCatalogLock?: <T>(work: () => Promise<T>) => Promise<T>,
   ): Promise<ProjectHomeCatalog> {
     if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
-    const scanned = new Set<string>()
+    const sliceLock = workspaceId === undefined && onInitial ? withCatalogLock : undefined
+    const scanned = new Map<string, string>()
     const validated = new Map<string, ProjectIndexRecord>()
-    const scan = async (id: string) => {
+    const scan = async (id: string, directoryPath: string) => {
       // This witness belongs to the current catalog request. An unavailable folder may recover
-      // before the second consumer, so only a completed scan can be shared.
-      if (scanned.has(id)) {
+      // before the second consumer, and Locate can change the directory between lock slices.
+      if (scanned.get(id) === directoryPath) {
         return true
       }
       const completed: ProjectIndexRecord[] = []
@@ -2313,7 +2315,7 @@ export class ProjectService {
         for (const project of completed) {
           validated.set(project.localProjectKey, project)
         }
-        scanned.add(id)
+        scanned.set(id, directoryPath)
         return true
       }
       return false
@@ -2337,10 +2339,17 @@ export class ProjectService {
             // The scoped projection is optional. The final read still reports catalog errors.
           }
         }),
+      sliceLock,
     )
-    const projects = await this.readProjectSummaries(workspaceId, scan, validated)
-    // A successful retry while reading the cards can change the sidebar counts.
-    return { projects, workspaces: await this.readWorkspaceSummaries(workspaceRecords) }
+    const finish = async () => {
+      const currentWorkspaces = sliceLock
+        ? await this.options.repository.listWorkspaces()
+        : workspaceRecords
+      const projects = await this.readProjectSummaries(workspaceId, scan, validated)
+      // A successful retry while reading the cards can change the sidebar counts.
+      return { projects, workspaces: await this.readWorkspaceSummaries(currentWorkspaces) }
+    }
+    return await (sliceLock ? sliceLock(finish) : finish())
   }
 
   async listTrash(): Promise<ProjectTrashSummary[]> {
@@ -5012,7 +5021,7 @@ export class ProjectService {
   }
 
   private async openOne(projectId: string): Promise<ProjectOpenResult> {
-    const record = await this.requireReadyRecord(projectId)
+    const record = await this.requireReadyRecord(projectId, true)
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
       record.canonicalPath,
       this.options.shadow,
@@ -5093,7 +5102,7 @@ export class ProjectService {
 
   private async readProjectSummaries(
     workspaceId: string | undefined,
-    scan: (id: string) => Promise<unknown>,
+    scan: (id: string, directoryPath: string) => Promise<unknown>,
     validated?: ReadonlyMap<string, ProjectIndexRecord>,
   ): Promise<ProjectSummary[]> {
     await this.initializeStorage()
@@ -5106,7 +5115,7 @@ export class ProjectService {
         : [await this.options.repository.workspaceById(workspaceId)]
     const readableWorkspaces = new Set<string>()
     for (const workspace of workspaces) {
-      await scan(workspace.id)
+      await scan(workspace.id, workspace.directoryPath)
       if (
         (await this.options.repository.workspaceAvailability(workspace)).availability ===
         'available'
@@ -5266,15 +5275,32 @@ export class ProjectService {
     }
   }
 
-  private async requireReadyRecord(projectId: string): Promise<ProjectIndexRecord> {
+  private async requireReadyRecord(
+    projectId: string,
+    allowCurrentIndex = false,
+  ): Promise<ProjectIndexRecord> {
     await this.initialize()
     await this.assertProjectNotTrashed(projectId)
     const indexed = await this.options.repository.getProject(projectId)
     if (!indexed) {
       throw new ProjectServiceError('PROJECT_NOT_FOUND', 'This Project is not in the library.')
     }
-    const records = await this.options.repository.scanWorkspace(indexed.workspaceId)
-    const record = records.find((candidate) => candidate.localProjectKey === projectId)
+    // Like Invoke's single-Project read, Open can use the current entry by ID. Portable
+    // files additionally need a live location/fingerprint match before bypassing discovery.
+    const useIndexed =
+      allowCurrentIndex &&
+      indexed.fileHealth === 'ready' &&
+      (
+        await this.options.repository.workspaceAvailability(
+          await this.options.repository.workspaceById(indexed.workspaceId),
+        )
+      ).availability === 'available' &&
+      (await this.options.repository.matchesSavedFile(indexed))
+    const record = useIndexed
+      ? indexed
+      : (await this.options.repository.scanWorkspace(indexed.workspaceId)).find(
+          (candidate) => candidate.localProjectKey === projectId,
+        )
     if (!record) {
       throw new ProjectServiceError('PROJECT_NOT_FOUND', 'This Project is not in the library.')
     }
@@ -5395,18 +5421,39 @@ export class ProjectService {
   }
 
   private async scanRegisteredWorkspaces(
-    scan: (id: string) => Promise<boolean>,
+    scan: (id: string, directoryPath: string) => Promise<boolean>,
     afterScan?: (workspace: ProjectWorkspaceRecord) => Promise<void>,
+    withCatalogLock?: <T>(work: () => Promise<T>) => Promise<T>,
   ): Promise<ProjectWorkspaceRecord[]> {
-    await this.initializeStorage()
-    const workspaces = await this.options.repository.listWorkspaces()
-    for (const [index, workspace] of workspaces.entries()) {
-      const firstDefault = workspace.id === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
-      // The old eager discovery gave a briefly unavailable default folder another chance.
-      const scanned = (await scan(workspace.id)) || (firstDefault && (await scan(workspace.id)))
-      if (afterScan && scanned && index + 1 < workspaces.length) {
-        await afterScan(workspace)
+    const listWorkspaces = async () => {
+      await this.initializeStorage()
+      return await this.options.repository.listWorkspaces()
+    }
+    const workspaces = await (withCatalogLock ? withCatalogLock(listWorkspaces) : listWorkspaces())
+    for (const [index, planned] of workspaces.entries()) {
+      const scanWorkspace = async () => {
+        const workspace = withCatalogLock
+          ? await this.options.repository.workspaceById(planned.id).catch((error: unknown) => {
+              // In a sliced scan, removal can commit before this folder acquires its lock.
+              if (error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE') {
+                return null
+              }
+              throw error
+            })
+          : planned
+        if (!workspace) {
+          return
+        }
+        const firstDefault = workspace.id === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
+        // The old eager discovery gave a briefly unavailable default folder another chance.
+        const scanned =
+          (await scan(workspace.id, workspace.directoryPath)) ||
+          (firstDefault && (await scan(workspace.id, workspace.directoryPath)))
+        if (afterScan && scanned && index + 1 < workspaces.length) {
+          await afterScan(workspace)
+        }
       }
+      await (withCatalogLock ? withCatalogLock(scanWorkspace) : scanWorkspace())
     }
     return workspaces
   }

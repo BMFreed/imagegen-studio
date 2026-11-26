@@ -463,6 +463,86 @@ async function measureEarlyPreview(card, preview, file, total, spawnAt) {
   }
 }
 
+async function measureEarlyOpen(state, root, files, database, launchStart) {
+  const { page } = state
+  const spawnAt = state.spawnedAt ?? launchStart
+  const [file] = files
+  const home = page.getByRole('region', { exact: true, name: 'Home' })
+  const open = home.getByRole('button', { exact: true, name: `Open ${file.title}` })
+  await expect(open).toBeEnabled({ timeout: 60_000 })
+  const { projectId, partialGridCardCount } = await open.evaluate(
+    (button, selector) => ({
+      projectId: button.closest('[data-project-id]')?.getAttribute('data-project-id'),
+      partialGridCardCount: document.querySelectorAll(selector).length,
+    }),
+    gridSelectionButtons,
+  )
+  assert.equal(projectId, file.id)
+  assert.ok(partialGridCardCount > 0 && partialGridCardCount < files.length)
+  const clickAt = performance.now()
+  await open.click()
+
+  const tab = page.getByRole('tab', { exact: true, name: file.title })
+  const canvas = page.getByRole('region', { exact: true, name: 'Project Canvas' })
+  await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 60_000 })
+  await expect(canvas.locator('[data-scene-ready="true"]')).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByRole('button', { exact: true, name: 'Save Project' })).toBeEnabled({
+    timeout: 60_000,
+  })
+  const editorReadyAt = performance.now()
+
+  // Home has already been replaced by the Project. Read the live WAL-aware index
+  // independently to prove that the scan is incomplete after the editor is usable.
+  const { projects } = indexSnapshot(database)
+  const indexSampleAt = performance.now()
+  const observed = {
+    projectId: file.id,
+    title: file.title,
+    documentId: file.documentId,
+    documentRevision: file.revision,
+    partialGridCardCount,
+    clickSinceSpawnMs: clickAt - spawnAt,
+    editorReadySinceSpawnMs: editorReadyAt - spawnAt,
+    indexSampleSinceSpawnMs: indexSampleAt - spawnAt,
+    indexedProjectsAtEditorReady: projects.length,
+    startBoundary: state.spawnedAt === undefined ? 'launch call' : 'before spawn',
+  }
+  await writeJson(root, 'early-open-observation.json', observed)
+  assert.ok(
+    projects.length < files.length,
+    `Expected Project editor before the full Home index: found ${projects.length} of ${files.length} rows.`,
+  )
+  const indexed = projects.find(({ id }) => id === file.id)
+  assert.equal(indexed?.documentId, file.documentId)
+  assert.equal(indexed?.revision, file.revision)
+  assert.equal(indexed?.filename, file.bytes.path)
+  assert.equal(indexed?.health, 'ready')
+
+  await expect
+    .poll(() => indexSnapshot(database).projects.length, { timeout: 60_000 })
+    .toBe(files.length)
+  const fullIndexAt = performance.now()
+  // Read the already-open Project only after both observations are captured.
+  const opened = await page.evaluate((id) => window.api.projects.open(id), file.id)
+  assert.equal(opened.ok, true, JSON.stringify(opened))
+  assert.equal(opened.value.kind, 'opened')
+  assert.equal(opened.value.tab.id, file.id)
+  assert.equal(opened.value.tab.documentId, file.documentId)
+  assert.equal(opened.value.tab.documentRevision, file.revision)
+  assert.equal(opened.value.tab.dirty, false)
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  return {
+    name: state.name,
+    timings: {
+      earlyOpen: {
+        ...observed,
+        fullIndexSinceSpawnMs: fullIndexAt - spawnAt,
+        indexedProjectsWhenFinished: files.length,
+      },
+    },
+  }
+}
+
 async function measureHome(
   state,
   root,
@@ -773,6 +853,7 @@ export async function runPackagedHomeScale({
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
   const layered256 = (distinct || profile === 'linked-layered') && countArgument === '256'
   const earlyPreview = process.env.IMAGEGEN_HOME_SCALE_EARLY_PREVIEW
+  const earlyOpen = process.env.IMAGEGEN_HOME_SCALE_EARLY_OPEN
   assert.ok(
     linked
       ? (!distinct && countArgument === '128') || layered256
@@ -786,6 +867,11 @@ export async function runPackagedHomeScale({
   assert.ok(
     earlyPreview === undefined || (earlyPreview === '1' && distinct && layered256),
     'Use IMAGEGEN_HOME_SCALE_EARLY_PREVIEW=1 only with the 256-project distinct layered profile.',
+  )
+  assert.ok(
+    earlyOpen === undefined ||
+      (earlyOpen === '1' && distinct && layered256 && earlyPreview === undefined),
+    'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with the 256-project distinct layered profile and without EARLY_PREVIEW.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -861,18 +947,21 @@ export async function runPackagedHomeScale({
   for (const name of ['first-index', 'indexed-restart']) {
     const launchStart = performance.now()
     const state = await launch(name)
+    const openDuringDiscovery = earlyOpen === '1' && name === 'first-index'
     let measured
     try {
-      measured = await measureHome(
-        state,
-        root,
-        files,
-        launchStart,
-        canvas,
-        layered256,
-        earlyPreview === '1' && name === 'first-index',
-      )
-      if (linked) {
+      measured = openDuringDiscovery
+        ? await measureEarlyOpen(state, root, files, database, launchStart)
+        : await measureHome(
+            state,
+            root,
+            files,
+            launchStart,
+            canvas,
+            layered256,
+            earlyPreview === '1' && name === 'first-index',
+          )
+      if (linked && !openDuringDiscovery) {
         measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)
       }
       if (name === 'indexed-restart' && process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === '1') {
@@ -915,6 +1004,10 @@ export async function runPackagedHomeScale({
       ...(earlyPreview === '1' && {
         earlyPreview:
           'Opt-in first-index interaction. The sampled first card is selected and displays its merged preview while the grid still has fewer than all Projects. This interaction can affect the all-card timing.',
+      }),
+      ...(earlyOpen === '1' && {
+        earlyOpen:
+          'Opt-in first-index interaction. An ordinary Open reaches the selected Project tab, ready canvas and enabled Save before the independent live index shows all Projects. This lifetime replaces the fresh Home timing sample.',
       }),
       initialList:
         'Exact rendered card names followed by two renderer frames, before native resize',

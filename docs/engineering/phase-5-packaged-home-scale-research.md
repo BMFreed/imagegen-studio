@@ -1273,3 +1273,78 @@ audit receipts, sample `.igs` files and closed indexes. The path-launch
 attempts are under `runs/packaged-project-launch/20261126-r1` and
 `20261126-r2`. Cleanup after the native and audit scopes exited reclaimed
 5,172,629,504 allocated bytes across the six runs.
+
+## Open a verified Project during the first Home scan
+
+At clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`workbench/projects/useProjectActions.ts` calls `hydrateProjectFromServer`
+in `durableSyncedPersistence.ts`. `workbench/projects/api.ts` requests one
+Project through `app/api/routers/projects.py`. The record service
+`project_records_default.py` reads its document and workspace in one SQL
+snapshot through `shared/database/queries/projects.py`. Studio adapts that
+per-Project read. InvokeAI has no equivalent to coordinating Open with a
+live scan of multiple external portable Project folders.
+
+Only the first aggregate discovery with an early-card subscriber takes the
+existing catalog lock separately for each workspace scan. The lock still
+serializes Open, workspace changes, and one full scan of a folder. A queued
+Open can run between consecutive folders. Each slice resolves the currently
+registered path, and the final catalog reads the current registry again.
+A remapped path gets a fresh scan. Native close rechecks admission at every
+lock acquisition before any later slice can access the store. Ordinary
+Refresh uses the previous catalog-lock scope.
+
+Open uses its selected ready index row if the registered workspace is
+available and the actual file fingerprint matches. A changed or unavailable
+entry takes the existing rescan path. Open still checks canonical location
+and recovery and opens the complete `.igs` through the existing generation
+gate and document coordinator. In the renderer the Project becomes usable
+as soon as the ordinary Open succeeds. The still-running initial discovery
+can populate Home while the editor is open, or when the user returns before
+the final catalog is ready.
+
+Both native runs staged the distinct-layer fixture with 256 archives across
+three folders. They used local ext4, private software-rendered KDE Wayland,
+120% CPU, 4 GiB RAM and zero swap. The prior ASAR matched the package from
+`9b3044c6` byte for byte. The candidate AppImage SHA-256 was
+`ec0b0e37bb25d6e9dd20e0f10ab0d5254abb64e18c6e741b04ddd2f3a989888b`.
+The opt-in driver clicked the exact Home card and waited for its selected
+tab, ready canvas and enabled Save Project button. It then sampled SQLite
+through the existing WAL-aware reader. It did not issue Save.
+
+| Fresh launch, same Open scenario    | Prior R16 | Candidate R17 |
+| ----------------------------------- | --------: | ------------: |
+| Open click to usable editor         |   18.33 s |        8.58 s |
+| Spawn to usable editor              |   26.42 s |       16.15 s |
+| SQLite rows just after editor ready |       256 |           163 |
+
+The original AppImage reached the expected early-Open assertion with all
+256 rows already indexed. The candidate kept the exact Project active with
+the fixture's document and revision and later reached all 256 SQLite rows at
+22.04 s from spawn. Its separate indexed restart showed all 256 cards at
+7.01 s. These are single observations on this host. The fresh Open check
+measures the editor and persistent index after Home has been replaced.
+
+The Main test pauses the middle folder while Open queues behind it. It
+checks the exact opened Project before the final folder proceeds, plus
+workspace removal and addition between slices. A replaced archive takes
+the previous scan path and opens its actual new revision. The Chromium test
+holds the catalog reply while Open presents usable controls, then returns
+to Home and observes one final catalog reply. The 200 focused Node tests,
+seven browser tests, typecheck and AppImage packaging passed.
+
+Independent readback verified the candidate's 256 archive hashes, 2,304 ZIP
+members, 1,024 distinct Raster PNGs, 22 source pins and closed SQLite index
+with 256 rows and 30 migrations. A supplemental readback confirmed the
+previous ASAR and the shared embedded Electron bytes. It matched the
+ordered corpus descriptors and confirmed that each closed index recorded
+the exact selected Project as its only Open. The live timings and index
+samples are the native harness observations.
+
+The control and candidate receipts, audit reports, and closed SQLite
+copies are retained in `runs/packaged-home-scale/20261126-r16` and
+`runs/packaged-home-scale/20261126-r17` under the local artifact root.
+After both native consumers and the independent reader exited, removing
+their disposable packages and test profiles released 3,108,868,096
+allocated bytes across the two runs. Each `retention.json` lists its
+retained copies and exact disposal paths.

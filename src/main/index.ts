@@ -2026,6 +2026,19 @@ if (!gotInstanceLock) {
         ipcChannels.projects.trashProject,
         ipcChannels.projects.updateWorkspace,
       ])
+      function withWorkspaceCatalogLock<T>(work: () => Promise<T>): Promise<T> {
+        return withProjectPathLock(paths.dataRoot, async () => {
+          // The close drain can run between discovery slices. A queued operation must check
+          // admission again before it can scan storage or attach a Project tab.
+          if (resolvingClose || appDataSealed) {
+            throw new ProjectServiceError(
+              'PROJECT_NOT_READY',
+              'The application is closing. Try again if closing is canceled.',
+            )
+          }
+          return await work()
+        })
+      }
       function registerProjectHandler<T>(
         channel: string,
         validate: (args: unknown[]) => boolean,
@@ -2055,21 +2068,13 @@ if (!gotInstanceLock) {
           try {
             // An empty launch take does no catalog work. Before the direct handler takes the
             // path there is no yield in Main, so any later arrival will notify the renderer.
+            // An initial catalog request acquires this same lock inside each workspace slice.
             const needsCatalogLock =
               catalogOperation &&
-              (channel !== ipcChannels.projects.takeLaunchImport || launchPaths.hasPending)
+              (channel !== ipcChannels.projects.takeLaunchImport || launchPaths.hasPending) &&
+              (channel !== ipcChannels.projects.listHomeCatalog || args.length !== 2)
             const value = needsCatalogLock
-              ? await withProjectPathLock(paths.dataRoot, async () => {
-                  // A request may have queued before native close began. It cannot attach a new
-                  // tab after the close snapshot merely because its initial IPC guard passed.
-                  if (resolvingClose || appDataSealed) {
-                    throw new ProjectServiceError(
-                      'PROJECT_NOT_READY',
-                      'The application is closing. Try again if closing is canceled.',
-                    )
-                  }
-                  return await handler.call(event, ...args)
-                })
+              ? await withWorkspaceCatalogLock(() => handler.call(event, ...args))
               : await handler.call(event, ...args)
             return { ok: true, value }
           } catch (error) {
@@ -2197,6 +2202,7 @@ if (!gotInstanceLock) {
                     // The frame can exit concurrently.
                   }
                 },
+            requestId === undefined ? undefined : withWorkspaceCatalogLock,
           )
         },
       )

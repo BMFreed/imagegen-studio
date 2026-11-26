@@ -1,4 +1,9 @@
-import type { ApiResult, ProjectHomeCatalog, ProjectSummary } from '../../../src/shared/api.js'
+import type {
+  ApiResult,
+  ProjectHomeCatalog,
+  ProjectSummary,
+  ProjectTab,
+} from '../../../src/shared/api.js'
 
 import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
@@ -15,6 +20,7 @@ interface HomeCatalogFixture {
   catalogScopes: (string | null)[]
   finishPendingCatalog: () => Promise<void>
   observeExternalFileChange: () => void
+  openedProjectIds: string[]
   publishInitialCatalog: () => Promise<boolean>
   requests: { catalog: number; projects: number; workspaces: number }
   trashRequests: number
@@ -22,7 +28,7 @@ interface HomeCatalogFixture {
 
 type HomeCatalogGlobal = { homeCatalogFixture: HomeCatalogFixture } & typeof globalThis
 
-const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src/renderer')}`
+const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
 const workspaceError = 'Controlled workspace read failure.'
 
 async function mountHome(page: Page, scenario: CatalogScenario) {
@@ -30,11 +36,14 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
   await page.evaluate(
     async ({ root, scenario, workspaceError }) => {
       const loadModule = (url: string) => import(url)
-      const [{ createApp }, { default: App }] = await Promise.all([
-        loadModule('/@id/vue'),
-        loadModule(`${root}/App.vue`),
-        loadModule(`${root}/styles/global.css`),
-      ])
+      const [{ createApp }, { default: App }, { createEmptyProjectDocumentV1 }] = await Promise.all(
+        [
+          loadModule('/@id/vue'),
+          loadModule(`${root}/renderer/App.vue`),
+          loadModule(`${root}/shared/projects/project-schema.ts`),
+          loadModule(`${root}/renderer/styles/global.css`),
+        ],
+      )
       const original = document.getElementById('app') as HTMLElement & {
         __vue_app__?: { unmount: () => void }
       }
@@ -91,6 +100,21 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         id: `project-v1-${'c'.repeat(64)}`,
         workspaceId: secondWorkspace.id,
       }
+      const initialDocument = createEmptyProjectDocumentV1({
+        primaryBbox: { height: 64, width: 64, x: 0, y: 0 },
+        title: initialProject.title,
+      })
+      const initialTab: ProjectTab = {
+        ...initialDocument,
+        acceptedResults: [],
+        autosaveError: null,
+        canRedo: false,
+        canUndo: false,
+        dirty: false,
+        id: initialProject.id,
+        layers: [],
+        workspaceId: initialProject.workspaceId,
+      }
       let removed = false
       let externalFileChanged = false
       const batchError = {
@@ -123,6 +147,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
         observeExternalFileChange() {
           externalFileChanged = true
         },
+        openedProjectIds: [],
         async publishInitialCatalog() {
           initialListener?.({ projects: [initialProject], workspaces })
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
@@ -138,10 +163,26 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           onCatalogChanged: unsubscribe,
           onInstallChanged: unsubscribe,
         },
+        presets: { list: async () => ({ ok: true, value: [] }) },
         projects: {
           getGenerationProgress: async () => ({
             ok: true,
             value: { current: null, revision: 0 },
+          }),
+          getGenerationState: async () => ({
+            ok: true,
+            value: {
+              cfgRescaleSupported: false,
+              documentId: initialTab.documentId,
+              embeddingsSupported: false,
+              error: null,
+              externalVaeSupported: false,
+              img2imgSupported: false,
+              jobs: [],
+              phase: 'idle',
+              runningJobId: null,
+              vaePrecisionSupported: false,
+            },
           }),
           list: async () => {
             requests.projects++
@@ -150,6 +191,15 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               value: [project(scenario === 'fallback' ? 'Readable sketch' : 'Stale sketch')],
             }
           },
+          listGenerationResults: async () => ({
+            ok: true,
+            value: {
+              candidates: [],
+              lastActualSeed: null,
+              recoveryUnavailable: false,
+              unfinishedSiblingJobIds: [],
+            },
+          }),
           listHomeCatalog: async (
             workspaceId?: string,
             onInitial?: (catalog: ProjectHomeCatalog) => void,
@@ -192,6 +242,9 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               initialListener = onInitial
               return await pending
             }
+            if (scenario === 'early-results') {
+              return await pending
+            }
             return {
               ok: true,
               value: {
@@ -200,6 +253,18 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
               },
             }
           },
+          listSmartPatchGenerationResults: async () => ({
+            ok: true,
+            value: {
+              candidates: [],
+              documentId: initialTab.documentId,
+              documentRevision: initialTab.documentRevision,
+              kind: 'smart-patch-results',
+              lastActualSeed: null,
+              recoveryUnavailable: false,
+              targets: [],
+            },
+          }),
           listTrash: async () => {
             fixture.trashRequests++
             return { ok: true, value: [] }
@@ -212,12 +277,25 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           onGenerationChanged: unsubscribe,
           onGenerationProgress: unsubscribe,
           onTabsChanged: unsubscribe,
+          open: async (id: string) => {
+            fixture.openedProjectIds.push(id)
+            if (scenario !== 'early-results' || id !== initialTab.id) {
+              throw new Error('The fixture expected Open of the first checked Project.')
+            }
+            return { ok: true, value: { kind: 'opened', tab: initialTab } }
+          },
           removeMissingProject: async (id: string, confirmed: boolean) => {
             if (scenario !== 'missing-removal' || id !== missing.id || !confirmed || removed) {
               throw new Error('The fixture expected one confirmed removal of Missing sketch.')
             }
             removed = true
             return { ok: true, value: null }
+          },
+          sealPromptHistory: async (id: string) => {
+            if (id !== initialTab.id || !fixture.openedProjectIds.includes(id)) {
+              throw new Error('The fixture expected the open Project before switching Home.')
+            }
+            return { ok: true, value: initialTab }
           },
           trashProject: async (id: string) => {
             if (scenario !== 'trash-project' || id !== trashTarget.id || removed) {
@@ -334,6 +412,54 @@ test('production Home shows the first checked workspace while the complete catal
   await expect(linked).toHaveCount(0)
   await aggregate.click()
   await expect(linked).toBeVisible()
+  expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+})
+
+test('production Home opens a checked Project without waiting for the rest of the catalog', async ({
+  page,
+}) => {
+  const home = await mountHome(page, 'early-results')
+  await expect.poll(() => requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+  expect(
+    await page.evaluate(() =>
+      (globalThis as HomeCatalogGlobal).homeCatalogFixture.publishInitialCatalog(),
+    ),
+  ).toBe(true)
+
+  await home.getByRole('button', { exact: true, name: 'Select First sketch' }).click()
+  await home
+    .getByRole('complementary', { name: 'Project inspector' })
+    .getByRole('button', { exact: true, name: 'Open Project' })
+    .click()
+
+  const opened = page.getByRole('region', { exact: true, name: 'Project First sketch' })
+  await expect(page.getByRole('tab', { exact: true, name: 'First sketch' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(page.getByRole('tab', { exact: true, name: 'Home' })).toHaveCount(0)
+  await expect(opened.getByRole('button', { exact: true, name: 'Save Project' })).toBeEnabled()
+  expect(
+    await page.evaluate(
+      () => (globalThis as HomeCatalogGlobal).homeCatalogFixture.openedProjectIds,
+    ),
+  ).toEqual([`project-v1-${'a'.repeat(64)}`])
+  expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+
+  await page.getByRole('button', { exact: true, name: 'Open Home' }).click()
+  await expect(home).toBeVisible()
+  const refresh = home.getByRole('button', { exact: true, name: 'Refresh projects' })
+  const linked = home.getByRole('button', { exact: true, name: 'Select Linked sketch' })
+  await expect(refresh).toHaveAttribute('aria-busy', 'true')
+  await expect(home.getByRole('button', { exact: true, name: 'Select First sketch' })).toBeVisible()
+  await expect(linked).toHaveCount(0)
+  expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+
+  await page.evaluate(() =>
+    (globalThis as HomeCatalogGlobal).homeCatalogFixture.finishPendingCatalog(),
+  )
+  await expect(linked).toBeVisible()
+  await expect(refresh).not.toHaveAttribute('aria-busy', 'true')
   expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
 })
 

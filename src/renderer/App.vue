@@ -3753,7 +3753,7 @@ async function activateDocument(documentId: string): Promise<boolean> {
   if (switchingDuringHistoryOpen) {
     // History navigation required settled drafts before Main Open began.
     activeDocument.value = documentId
-    if (documentId === 'home') {
+    if (documentId === 'home' && initialHomeWorkspaceId === null) {
       void refreshProjects()
     }
     return true
@@ -3770,7 +3770,7 @@ async function activateDocument(documentId: string): Promise<boolean> {
     }
   }
   activeDocument.value = documentId
-  if (documentId === 'home') {
+  if (documentId === 'home' && initialHomeWorkspaceId === null) {
     void refreshProjects()
   }
   return true
@@ -4789,6 +4789,8 @@ async function openProject(
     focusTab(existing, preserveResultOpen)
     return
   }
+  const initialCatalogRequest =
+    homeIntent && initialHomeWorkspaceId !== null ? projectListRequest : null
   pendingProjectAction.value = { kind: 'open', projectId }
   homeError.value = null
   try {
@@ -4813,7 +4815,12 @@ async function openProject(
       if (result.tab.storageWarning) {
         globalNotice.value = result.tab.storageWarning
       }
-      await refreshProjects()
+      if (initialCatalogRequest === null) {
+        await refreshProjects()
+      } else if (initialHomeWorkspaceId === null && projectListRequest === initialCatalogRequest) {
+        // The first catalog settled during Open. Refresh its last-opened metadata in the background.
+        void refreshProjects()
+      }
     }
   } catch (cause) {
     if (isCurrent && !isCurrent()) {

@@ -22,6 +22,7 @@ import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectIndexRepository } from './project-index.js'
+import { withProjectPathLock } from './project-path-lock.js'
 import {
   parseProjectMergedPreviewImageUrl,
   readProjectMergedPreview,
@@ -93,6 +94,12 @@ class WorkspaceFixture {
     await ProjectSession.create(filePath, 'Portable donor', this.roots)
     return filePath
   }
+}
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => (resolve = done))
+  return { promise, resolve }
 }
 
 async function withWorkspaceFixture(
@@ -737,6 +744,183 @@ test('Open discovers an unindexed default Project before the first Home catalog'
     )
     await service.close(projectId)
     assert.deepEqual(await readFile(saved.filePath), before)
+  })
+})
+
+test(
+  'Initial Home releases each folder before opening a verified Project and keeps the final registry current',
+  { timeout: 10_000 },
+  async () => {
+    await withWorkspaceFixture(async (fixture) => {
+      const middle = await fixture.service.addWorkspace(
+        { color: 'blue', displayName: 'Middle' },
+        await fixture.folder('middle'),
+      )
+      const last = await fixture.service.addWorkspace(
+        { color: 'blue', displayName: 'Remaining' },
+        await fixture.folder('remaining'),
+      )
+      const removed = await fixture.service.addWorkspace(
+        { color: 'blue', displayName: 'Will be removed' },
+        await fixture.folder('removed'),
+      )
+      const first = await fixture.repository.workspaceById('uncategorized')
+      const saved = await ProjectSession.create(
+        path.join(first.directoryPath, 'checked.igs'),
+        'First checked project',
+        fixture.roots,
+      )
+      await ProjectSession.create(
+        path.join(middle.directoryPath, 'middle.igs'),
+        'Middle project',
+        fixture.roots,
+      )
+      await ProjectSession.create(
+        path.join(last.directoryPath, 'last.igs'),
+        'Remaining project',
+        fixture.roots,
+      )
+      const before = await readFile(saved.filePath)
+
+      const middleStarted = deferred()
+      const releaseMiddle = deferred()
+      const lastStarted = deferred()
+      const releaseLast = deferred()
+      const scans: string[] = []
+      class PausedIndex extends ProjectIndexRepository {
+        override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+          const [id] = args
+          scans.push(id)
+          if (id === middle.id) {
+            middleStarted.resolve()
+            await releaseMiddle.promise
+          }
+          if (id === last.id) {
+            lastStarted.resolve()
+            await releaseLast.promise
+          }
+          return await super.scanWorkspace(...args)
+        }
+      }
+      const repository = new PausedIndex(fixture.database.db)
+      const service = fixture.makeService(repository)
+      const withCatalogLock = <T>(work: () => Promise<T>) =>
+        withProjectPathLock(fixture.dataRoot, work)
+      const published: ProjectHomeCatalog[] = []
+      const catalog = service.listHomeCatalog(
+        undefined,
+        (initial) => published.push(initial),
+        withCatalogLock,
+      )
+      let opened: ReturnType<typeof service.open> | undefined
+      let registryEdit: Promise<string> | undefined
+      try {
+        await Promise.race([
+          middleStarted.promise,
+          catalog.then(() => assert.fail('Expected the middle-folder barrier')),
+        ])
+        assert.equal(published.length, 1)
+        const id = localProjectRecoveryKey(saved.filePath)
+        assert.deepEqual(
+          published[0].projects.map((item) => item.id),
+          [id],
+        )
+        opened = withCatalogLock(() => service.open(id))
+        registryEdit = withCatalogLock(async () => {
+          await service.removeWorkspace(removed.id)
+          const workspace = await service.addWorkspace(
+            { color: 'blue', displayName: 'Added after startup' },
+            await fixture.folder('added'),
+          )
+          await ProjectSession.create(
+            path.join(workspace.directoryPath, 'added.igs'),
+            'Added project',
+            fixture.roots,
+          )
+          return workspace.id
+        })
+        releaseMiddle.resolve()
+        const result = await Promise.race([
+          opened,
+          lastStarted.promise.then(() =>
+            assert.fail('Queued Open must finish before the next folder acquires the gate'),
+          ),
+        ])
+        assert.equal(result.kind, 'opened')
+        assert.equal(result.tab.documentRevision, saved.document.documentRevision)
+        await Promise.race([
+          lastStarted.promise,
+          catalog.then(() => assert.fail('The final folder remains paused')),
+        ])
+        const added = await registryEdit
+        assert.deepEqual(scans, [first.id, middle.id, added, last.id])
+        assert.equal(service.getOpenTabs()[0]?.id, id)
+        assert.deepEqual(await readFile(saved.filePath), before)
+
+        releaseLast.resolve()
+        const completed = await catalog
+        assert.deepEqual(
+          completed.workspaces.map(({ id }) => id),
+          [first.id, added, middle.id, last.id],
+        )
+        assert.deepEqual(completed.projects.map(({ title }) => title).sort(), [
+          'Added project',
+          'First checked project',
+          'Middle project',
+          'Remaining project',
+        ])
+        assert.ok(completed.projects.find((project) => project.id === id)?.lastOpenedAt)
+        assert.deepEqual(scans, [first.id, middle.id, added, last.id, added])
+        assert.equal(published.length, 1)
+        await withCatalogLock(() => service.close(id))
+        assert.deepEqual(await readFile(saved.filePath), before)
+      } finally {
+        releaseMiddle.resolve()
+        releaseLast.resolve()
+        await Promise.allSettled([catalog, opened, registryEdit])
+      }
+    })
+  },
+)
+
+test('Open rescans a ready index entry when the saved Project fingerprint changes', async () => {
+  await withWorkspaceFixture(async (fixture) => {
+    const workspace = await fixture.repository.ensureDefaultWorkspace(fixture.dataRoot)
+    const saved = await ProjectSession.create(
+      path.join(workspace.directoryPath, 'changed.igs'),
+      'Original project',
+      fixture.roots,
+    )
+    const scans: string[] = []
+    class ObservedIndex extends ProjectIndexRepository {
+      override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+        scans.push(args[0])
+        return await super.scanWorkspace(...args)
+      }
+    }
+    const repository = new ObservedIndex(fixture.database.db)
+    const service = fixture.makeService(repository)
+    const catalog = await service.listHomeCatalog()
+    const [project] = catalog.projects
+    assert.equal(project.health, 'ready')
+    const indexed = await repository.getProject(project.id)
+    assert.ok(indexed)
+    saved.applyDocument({ ...saved.document, title: 'Changed on disk' })
+    assert.equal((await saved.save()).reloadRequired, false)
+    const changed = await readFile(saved.filePath)
+    assert.equal(await repository.matchesSavedFile(indexed), false)
+
+    const opened = await service.open(project.id)
+    assert.equal(opened.kind, 'opened')
+    assert.equal(opened.tab.title, 'Changed on disk')
+    assert.equal(opened.tab.documentRevision, saved.document.documentRevision)
+    assert.deepEqual(scans, [workspace.id, workspace.id])
+    assert.equal(
+      (await repository.getProject(project.id))?.documentRevision,
+      saved.document.documentRevision,
+    )
+    await service.close(project.id)
+    assert.deepEqual(await readFile(saved.filePath), changed)
   })
 })
 
