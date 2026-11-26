@@ -1107,3 +1107,74 @@ runtime mutation using size alone admitted the corrupt PNG and failed
 the test at the expected rejection. A separate mutation dropped the
 fallback decode and replaced the expected invalid-image diagnostic with a
 manifest mismatch. Plain Open validated both PNGs.
+
+## First packaged discovery with distinct Raster bodies
+
+The 256-project AppImage comparison uses three registered folders with
+64, 96 and 96 Projects. Both workloads have four 1024×1024 RGB layers per
+Project. The repeated workload shares the same four layer bodies across
+Projects. The distinct workload reproduces the earlier Main fixture's 1,024
+seeded layer bodies. Each merged preview reuses its own first Raster. Both
+workloads share the same small WebP thumbnail fixture. The distinct case
+records the length and SHA-256 of each manifest-listed member for readback.
+
+The source check used clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. Its `HomePage.tsx` calls
+`invokeai/frontend/webv2/src/workbench/projects/library.ts` and `api.ts`.
+`invokeai/app/api/routers/projects.py` dispatches to
+`services/project_records/project_records_default.py` and
+`services/shared/database/queries/projects.py`, where the list query reads
+summary columns from already registered records. `useProjectFileActions.ts`
+and `projectFile.ts` explicitly import and validate a selected `.invk` before
+creating its record. The external-font rescan in `fonts_default.py`, reached
+via `api/routers/fonts.py` and initialized in `api/dependencies.py`, reuses
+metadata after comparing actual size and SHA-256. Studio already applies that
+rule to indexed archives. InvokeAI has no Home path equivalent to opening a
+registered folder of previously unseen portable `.igs` files.
+
+Both workloads used the same AppImage built from `3e9f7b44`, with SHA-256
+`c80da7b6b4e6ccfbb26d13111a1922f742fd911edb3b2a9d66244b0706740a31`.
+They ran serially on local ext4 in private software-rendered KDE Wayland
+sessions at 120% CPU, 4 GiB RAM and zero swap. The fresh profiles already
+had folder registrations and had no Project rows. Fixture writes can warm
+the OS file cache. The second launch reused the closed profile. The first
+selectable-card milestone is an observed visible, enabled selection button,
+and the complete milestone waits for exact card names and two renderer
+frames. Both milestones use the driver clock from before AppImage spawn.
+
+| Home milestone                     | Repeated layers | Distinct layers |
+| ---------------------------------- | --------------: | --------------: |
+| Visible Home, fresh index          |          3.65 s |          3.61 s |
+| First selectable card, fresh index |         11.47 s |         22.55 s |
+| All 256 cards, fresh index         |         11.48 s |         22.56 s |
+| All 256 cards, indexed restart     |          8.06 s |          7.58 s |
+| Aggregate Refresh, indexed restart |          3.55 s |          3.53 s |
+
+The first usable card arrived with the full list in both fresh launches.
+With distinct layers, the interval between visible Home and the first card
+was 18.94 s. In the current renderer `refreshProjects()` applies the first
+project list after `listHomeCatalog()` settles. Main scans the registered
+workspaces before returning that response. Search, Grid/List, folder
+selection and the three sampled 1024×1024 previews worked in both lifetimes
+of both workloads. Each scope had zero OOM and memory-limit events.
+[Renderer](../../src/renderer/App.vue) ·
+[Main catalog](../../src/main/projects/project-service.ts)
+
+The evidence is one fresh discovery and one indexed restart per workload on
+a single host. It establishes a first-discovery delay on this fixture and
+leaves the performance gate open. The 146 focused package, index and service
+tests passed, along with scoped ESLint and AppImage packaging.
+
+Independent readback checked both workloads against the same AppImage,
+embedded runtime and source identities. It verified 2,304 ZIP members,
+256 ready index rows, 256 archive witnesses bound to the bundled validator,
+30 migrations and 20 exited process identities per workload. It also matched
+the 1,024 distinct Raster hashes in order to the retained Main fixture and
+verified all 1,792 manifest-listed members of the distinct archives.
+
+The repeated run is `runs/packaged-home-scale/20261126-r10` and the distinct
+run is `runs/packaged-home-scale/20261126-r11`. Both retain timing reports,
+screenshots, full input manifests, independent audit receipts, the final
+SQLite and one sample `.igs`. Cleanup removed the shared package build,
+private profiles and scratch after both readers and application lifetimes
+exited, reclaiming 2,577,670,144 allocated bytes.

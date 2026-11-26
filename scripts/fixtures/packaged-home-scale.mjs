@@ -34,6 +34,8 @@ const thumbnail = Buffer.from(
   'base64',
 )
 const thumbnailSha256 = createHash('sha256').update(thumbnail).digest('hex')
+const largeRasterSize = 1024
+const distinctRasterSeed = 'ImageGen Studio distinct initial Home raster v1'
 
 function rasterFixture(size, bytes) {
   return {
@@ -56,7 +58,7 @@ function pngChunk(name, data) {
 }
 
 export function largeRasterFixture(seed = 'ImageGen Studio Home scale fixture v1') {
-  const size = 1024
+  const size = largeRasterSize
   const rowBytes = size * 3
   const texturedRows = size / 4
   const texture = createHash('shake256', { outputLength: rowBytes * texturedRows })
@@ -91,6 +93,13 @@ export function layeredRasterFixture() {
     ...largeRasterFixture(),
     additionalRasters: [2, 3, 4].map((index) => largeRasterFixture(`Home scale layer ${index}`)),
   }
+}
+
+function distinctRasterFixture(project) {
+  const [first, ...additionalRasters] = [1, 2, 3, 4].map((layer) =>
+    largeRasterFixture(`${distinctRasterSeed} project ${project} layer ${layer}`),
+  )
+  return { ...first, additionalRasters, includeMemberIdentities: true }
 }
 
 const writeJson = async (root, name, value) =>
@@ -154,10 +163,14 @@ export async function writeScaleProject(
     }),
     layers,
   })
+  const projectJson = raster.includeMemberIdentities
+    ? Buffer.from(JSON.stringify(project), 'utf8')
+    : undefined
   await saveIgsPackage(filename, {
     assets,
     preview: { merged: png, rect: canvas, status: 'rendered', thumbnail },
     project,
+    ...(projectJson && { projectJson }),
   })
   await regularFile(filename)
   return {
@@ -167,6 +180,22 @@ export async function writeScaleProject(
     revision,
     title,
     workspaceId,
+    ...(projectJson && {
+      members: [
+        {
+          bytes: projectJson.length,
+          path: 'project.json',
+          sha256: createHash('sha256').update(projectJson).digest('hex'),
+        },
+        { bytes: thumbnail.length, path: 'preview/thumbnail.webp', sha256: thumbnailSha256 },
+        { bytes: png.length, path: 'preview/merged.png', sha256: raster.pngSha256 },
+        ...layers.map(({ asset }) => ({
+          bytes: asset.bytes,
+          path: asset.path,
+          sha256: asset.sha256,
+        })),
+      ],
+    }),
   }
 }
 
@@ -181,7 +210,9 @@ export async function stageProjects(workspaces, identity, raster) {
   const files = []
   for (const workspace of workspaces) {
     for (let index = 0; index < workspace.projectCount; index++) {
-      files.push(await stageProject(workspace, files.length + 1, identity, raster))
+      const ordinal = files.length + 1
+      const fixture = typeof raster === 'function' ? raster(ordinal) : raster
+      files.push(await stageProject(workspace, ordinal, identity, fixture))
     }
   }
   return files
@@ -387,7 +418,7 @@ async function verifyExternalRefresh(page, root, workspace, files, identity) {
   }
 }
 
-async function measureHome(state, root, files, launchStart, canvas) {
+async function measureHome(state, root, files, launchStart, canvas, measureFirstCard) {
   const { page } = state
   const visibleAt = state.homeVisibleAt ?? performance.now()
   const spawnAt = state.spawnedAt ?? launchStart
@@ -398,10 +429,23 @@ async function measureHome(state, root, files, launchStart, canvas) {
   const select = (title) => grid.getByRole('button', { exact: true, name: `Select ${title}` })
   const count = files.length
 
-  await assertCards(cards, files, 60_000)
-  await expect(grid).toBeVisible()
-  await framePair(page)
-  const cardsReadyAt = performance.now()
+  const [cardsReadyAt, firstCard] = await Promise.all([
+    (async () => {
+      await assertCards(cards, files, 60_000)
+      await expect(grid).toBeVisible()
+      await framePair(page)
+      return performance.now()
+    })(),
+    measureFirstCard &&
+      cards
+        .and(grid.locator('button:enabled:visible'))
+        .first()
+        .evaluate((element) => element.getAttribute('aria-label'), undefined, { timeout: 60_000 })
+        .then((name) => ({ name, readyAt: performance.now() })),
+  ])
+  if (firstCard) {
+    assert.ok(files.some(({ title }) => firstCard.name === `Select ${title}`))
+  }
   const viewportBeforeResize = await page.evaluate(() => ({
     dpr: devicePixelRatio,
     height: innerHeight,
@@ -514,6 +558,11 @@ async function measureHome(state, root, files, launchStart, canvas) {
       searches: searchSamples,
       startup: {
         allExpectedCardsMs: cardsReadyAt - spawnAt,
+        ...(firstCard && {
+          firstSelectableCard: firstCard.name,
+          firstSelectableCardMs: firstCard.readyAt - spawnAt,
+          shellToFirstSelectableCardMs: firstCard.readyAt - visibleAt,
+        }),
         shellMs: visibleAt - spawnAt,
         shellToAllExpectedCardsMs: cardsReadyAt - visibleAt,
         startBoundary: state.spawnedAt === undefined ? 'launch call' : 'before spawn',
@@ -628,18 +677,24 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
-  const linked = ['linked-tiny', 'linked-raster', 'linked-layered'].includes(profile)
+  const distinct = profile === 'linked-layered-distinct'
+  const linked = [
+    'linked-tiny',
+    'linked-raster',
+    'linked-layered',
+    'linked-layered-distinct',
+  ].includes(profile)
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
-  const layered256 = profile === 'linked-layered' && countArgument === '256'
+  const layered256 = (distinct || profile === 'linked-layered') && countArgument === '256'
   assert.ok(
     linked
-      ? countArgument === '128' || layered256
+      ? (!distinct && countArgument === '128') || layered256
       : profile === undefined && ['32', '512'].includes(countArgument),
-    'Use 32 or 512 by default, 128 with a linked profile, or 256 with linked-layered.',
+    'Use 32 or 512 by default, 128 with linked-tiny, linked-raster or linked-layered, or 256 with either layered profile.',
   )
   assert.ok(
     !layered256 || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
-    'The 256-project linked-layered profile requires software compositing.',
+    'The 256-project layered profiles require software compositing.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -672,27 +727,38 @@ export async function runPackagedHomeScale({
   await assert.rejects(lstat(appData), { code: 'ENOENT' })
   const database = path.join(appData, 'database/app.sqlite')
   const workspaces = await prepareWorkspaces(appData, projectCount, linked)
-  const raster =
-    profile === 'linked-layered'
-      ? layeredRasterFixture()
-      : profile === 'linked-raster'
-        ? largeRasterFixture()
-        : tinyRaster
+  let raster = tinyRaster
+  if (distinct) raster = distinctRasterFixture
+  else if (profile === 'linked-layered') raster = layeredRasterFixture()
+  else if (profile === 'linked-raster') raster = largeRasterFixture()
   const files = await stageProjects(workspaces, identity, raster)
   assert.equal(files.length, projectCount)
-  const { canvas, png, pngSha256 } = raster
+  const canvas = distinct ? { height: largeRasterSize, width: largeRasterSize } : raster.canvas
+  const preview = { height: canvas.height, thumbnailSha256, width: canvas.width }
+  if (distinct) {
+    const layerHashes = new Set()
+    for (const { members } of files) {
+      const layers = members.filter(({ path: member }) => member.startsWith('assets/layers/'))
+      const merged = members.find(({ path: member }) => member === 'preview/merged.png')
+      assert.equal(layers.length, 4)
+      assert.equal(merged.sha256, layers[0].sha256)
+      for (const { sha256 } of layers) layerHashes.add(sha256)
+    }
+    assert.equal(layerHashes.size, projectCount * 4)
+    preview.mergedMatchesFirstRaster = true
+  } else {
+    preview.pngBytes = raster.png.length
+    preview.pngSha256 = raster.pngSha256
+  }
   const input = {
     files,
-    preview: {
-      height: canvas.height,
-      pngBytes: png.length,
-      pngSha256,
-      thumbnailSha256,
-      width: canvas.width,
-    },
+    preview,
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
+    ...(distinct && { distinctRasterPngCount: projectCount * 4, rasterSeed: distinctRasterSeed }),
     ...(linked && {
-      layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
+      ...(!distinct && {
+        layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
+      }),
       profile,
       workspaces,
     }),
@@ -706,7 +772,7 @@ export async function runPackagedHomeScale({
     const state = await launch(name)
     let measured
     try {
-      measured = await measureHome(state, root, files, launchStart, canvas)
+      measured = await measureHome(state, root, files, launchStart, canvas, layered256)
       if (linked) {
         measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)
       }
@@ -743,6 +809,10 @@ export async function runPackagedHomeScale({
     input,
     lifetimes,
     measurement: {
+      ...(layered256 && {
+        firstSelectableCard:
+          'First observed visible, enabled Project selection button before native resize, sampled independently of initialList',
+      }),
       initialList:
         'Exact rendered card names followed by two renderer frames, before native resize',
       interactions:

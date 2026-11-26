@@ -110,6 +110,12 @@ environment and remaining limits, and update the current stage and next run.
         medians of 10.67 s before and 10.08 s after, with overlapping ranges.
         New PNG bytes still receive the full structural check.
         [First discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-structural-validation-for-repeated-png-members-during-discovery)
+  - [x] Measured 1,024 distinct Raster bodies on the same AppImage as the
+        repeated-layer control. The fresh profile showed Home at 3.61 s,
+        its first selectable card at 22.55 s and all 256 cards at 22.56 s.
+        Indexed restart reached all cards in 7.58 s. First discovery still
+        leaves Home waiting for the complete catalog.
+        [Distinct-layer AppImage measurement](./phase-5-packaged-home-scale-research.md#first-packaged-discovery-with-distinct-raster-bodies)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Define and qualify how to retire the old

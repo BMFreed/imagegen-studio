@@ -64,7 +64,7 @@ const homeScale = offlineProject === 'home-scale'
 const updatesKeyboard = offlineProject === 'application-updates-keyboard'
 const largeLayeredHomeScale =
   homeScale &&
-  process.env.IMAGEGEN_HOME_SCALE_FIXTURE === 'linked-layered' &&
+  ['linked-layered', 'linked-layered-distinct'].includes(process.env.IMAGEGEN_HOME_SCALE_FIXTURE) &&
   process.env.IMAGEGEN_HOME_SCALE_PROJECTS === '256'
 const homeScaleSoftwareMode = process.env.IMAGEGEN_HOME_SCALE_SOFTWARE
 const homeScaleSoftware = homeScaleSoftwareMode === '1'
