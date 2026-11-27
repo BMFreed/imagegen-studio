@@ -498,10 +498,10 @@ test.describe('Create preset from project', () => {
 
     const seedSection = page.locator('.n-collapse-item').filter({ hasText: /^Seed/ })
     await expect(seedSection.getByRole('checkbox', { name: 'Included' })).not.toBeChecked()
-    const promptSection = page.locator('.n-collapse-item').filter({ hasText: /^Prompt/ })
-    await promptSection.locator('.n-collapse-item__header').click()
     const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    await expect(prompt).toBeVisible()
     await prompt.fill('edited before preset creation')
+    await expect(page.getByText('Preset created')).toBeHidden()
     await page.getByRole('button', { name: 'Create Preset' }).click()
     await expect(page.getByText('Preset created')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeHidden()

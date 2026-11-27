@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   closeSync,
   constants,
   fstatSync,
@@ -44,7 +45,9 @@ function fixture(t: { after: (cleanup: () => void) => void }) {
   const currentAppImage = path.join(root, 'Current.AppImage')
   const appPath = path.join(resourcesPath, 'app.asar')
   writeFileSync(executablePath, image(3), { mode: 0o755 })
+  chmodSync(executablePath, 0o755)
   writeFileSync(currentAppImage, image(5), { mode: 0o755 })
+  chmodSync(currentAppImage, 0o755)
   writeFileSync(appPath, Buffer.from('Controlled retained archive source.'), { mode: 0o600 })
   const archiveFd = openSync(appPath, constants.O_RDONLY)
   const executableFds: number[] = []
@@ -224,6 +227,7 @@ test(
     const f = fixture(t)
     const otherExecutable = path.join(f.root, 'other-executable')
     writeFileSync(otherExecutable, image(3), { mode: 0o755 })
+    chmodSync(otherExecutable, 0o755)
     let ownedFd = -1
     const capture = captureElectronApplicationUpdateCurrentSource(f.input, {
       ...f.port,

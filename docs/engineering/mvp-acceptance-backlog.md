@@ -314,6 +314,19 @@ entries record the state at their checkpoint.
    the previous 33 Home cases, this covers the four changed browser files
    since `4edf900e` and the Home prototype file on the rebuilt candidate.
    Receipts are in `runs/candidate-regression/20261127` under the artifact root.
+   The follow-up matched all **377 browser cases** by test ID, file, source
+   position and full title. It carried 111 recorded passes and added 265
+   passes across ten disjoint batches. The remaining Preset Manager case
+   had clicked an already expanded Prompt section, then waited for its
+   hidden textarea. The repaired case edits the visible draft and still
+   checks that creation requires confirmation. Its isolated rerun passed.
+   The original timeout, screenshot and trace remain with the combined
+   coverage receipt in `runs/prototype-browser-completion/20261127-r1`.
+   The complete application-update test matrix initially exposed four
+   permission-fixture failures under `umask 077`. A 22-case control
+   passed under `022`. The fixtures now set their intended permissions
+   explicitly. The repeated matrix under `077` finished with 644 passes,
+   zero failures and the existing unsupported-host skip.
 2. **Bounded packaged trained generation passed.** One actual 256×256 TXT job
    for each family reaches public Generate, explicit Add, Save and reopen with
    exact resource identities, frozen provenance and retained result bytes. The

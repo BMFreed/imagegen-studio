@@ -321,7 +321,9 @@ test('unsafe or noncanonical target parents refuse before creating a lock', opti
 test('existing lock permissions are refused and never repaired', options, async (t) => {
   const f = await fixture(t)
   await fs.writeFile(f.lockPath, '', { mode: 0o644 })
+  await fs.chmod(f.lockPath, 0o644)
   const before = await witness(f.lockPath)
+  assert.equal(before.mode & 0o777n, 0o644n)
   assert.throws(() => f.acquire(), refusal('UNAVAILABLE'))
   assert.deepEqual(await witness(f.lockPath), before)
   assert.equal(await ownedDescriptors(f.root), 0)
