@@ -70,3 +70,33 @@ After the audit, cleanup removed eight idle test directories and reclaimed
 the backup and Project copies, logs and receipts. All 83 files sealed before
 cleanup matched afterward. The borrowed Xvfb package remains registered in
 the parent run.
+
+## Replay on the rebuilt stock AppImage
+
+Private X11 run `runs/packaged-sqlite-manual-recovery/20261127-r1` used stock source
+`4d0cdae60ce30f06bd07974ce4b578d999f1eb6b` and AppImage SHA-256
+`e0e45842ef0ec5d13372b56f2cd9161b68ea2ec41cdfdf4fc3a9c5b919493425`.
+The clean InvokeAI checkout was `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+The manual steps and re-migration behavior are in
+`docs/src/content/docs/start-here/upgrading.mdx`.
+The startup caller in `invokeai/app/api/dependencies.py` uses
+`invokeai/app/services/shared/database/startup.py`. The migrator in
+`invokeai/app/services/shared/sqlite_migrator/sqlite_migrator_impl.py`
+calls the online backup in `invokeai/app/services/shared/database/database.py`
+before applying pending SQL. The replay used the existing Studio owners.
+
+Both AppImage startups reached Home with the saved Project indexed and
+then closed normally. Each applied migration 30 and kept a private DB29
+backup. Between the two launches, the operator fixture copied the chosen
+DB29 backup and kept the newer decoy, the displaced database with its WAL
+and SHM, and the `.igs` intact. The late committed marker stayed readable
+from the displaced trio. The restored state retained the pre-upgrade marker.
+The database was a seeded local DB29 profile and the run had no worker.
+The installed protocol-2 and historical Project replay remains a separate gate.
+
+Independent byte readback matched 43 packaged build members, 45 source pins,
+five InvokeAI paths, two `.igs` copies, the closed databases and the displaced
+main/WAL/SHM. Reconstructing two checksum-verified WAL frames in memory
+recovered one committed transaction. All 18 recorded app process identities,
+the marker writer and Xvfb were gone before compaction. The raw closed SQLite
+files, the displaced trio, both Project archives and the receipts remain retained.

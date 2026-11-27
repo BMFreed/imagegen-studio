@@ -215,6 +215,10 @@ environment and remaining limits, and update the current stage and next run.
         through explicit Save and cold reopen.
         [Exact model relink](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-on-the-stock-candidate)
         [Independent replay on 8a8af921](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-replay-on-8a8af921)
+  - [x] The rebuilt AppImage migrated a seeded DB29 profile twice, including
+        after manually copying the chosen backup. The saved Project and the
+        displaced database with its committed WAL survived both startups.
+        [SQLite recovery on the rebuilt AppImage](./phase-5-packaged-sqlite-manual-recovery-research.md#replay-on-the-rebuilt-stock-appimage)
   - [ ] Repeat the historical DB29 and real incompatible-worker checks on
         the rebuilt AppImage. Its protocol-2 worker uses CUDA for startup
         qualification before sending the incompatible hello.
@@ -303,6 +307,12 @@ entries record the state at their checkpoint.
    At `4edf900e` the browser suite reached 368 unique passes by matching
    194 completed cases from the bounded run and executing the 174 remaining
    cases in seven disjoint batches. [Browser coverage](./phase-4-home-missing-remove-research.md#complete-browser-coverage-after-the-deadline)
+   On checkout `0886a840`, all 246 focused Main and shared-contract tests
+   passed across ten SQLite, Projects and application-update files. The three
+   Updates and Model Manager browser files passed all 67 cases. Together with
+   the previous 33 Home cases, this covers the four changed browser files
+   since `4edf900e` and the Home prototype file on the rebuilt candidate.
+   Receipts are in `runs/candidate-regression/20261127` under the artifact root.
 2. **Bounded packaged trained generation passed.** One actual 256×256 TXT job
    for each family reaches public Generate, explicit Add, Save and reopen with
    exact resource identities, frozen provenance and retained result bytes. The
