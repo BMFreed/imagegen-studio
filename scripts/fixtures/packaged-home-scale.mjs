@@ -15,6 +15,12 @@ import {
   createEmptyProjectDocumentV1,
   parseProjectDocumentV1,
 } from '../../src/shared/projects/project-schema.ts'
+import {
+  createCardThumbnails,
+  measureCardThumbnails,
+  prepareCardCacheControls,
+  verifyCardCacheControls,
+} from './packaged-home-card-thumbnails.mjs'
 import { connectNativeInput } from './packaged-home-recovery-keyboard.mjs'
 import { sessionMethod } from './packaged-kde-chooser.mjs'
 import {
@@ -129,6 +135,8 @@ export async function writeScaleProject(
   workspaceId,
 ) {
   const { canvas, png } = raster
+  const previewThumbnail = raster.cardThumbnail?.bytes ?? thumbnail
+  const previewThumbnailSha = raster.cardThumbnail?.sha256 ?? thumbnailSha256
   const suffix = String(index).padStart(12, '0')
   const documentId = `2385c134-dc60-4fce-8ba5-${suffix}`
   const assets = {}
@@ -169,7 +177,7 @@ export async function writeScaleProject(
     : undefined
   await saveIgsPackage(filename, {
     assets,
-    preview: { merged: png, rect: canvas, status: 'rendered', thumbnail },
+    preview: { merged: png, rect: canvas, status: 'rendered', thumbnail: previewThumbnail },
     project,
     ...(projectJson && { projectJson }),
   })
@@ -181,6 +189,9 @@ export async function writeScaleProject(
     revision,
     title,
     workspaceId,
+    ...(raster.cardThumbnail && {
+      cardThumbnail: { rgb: raster.cardThumbnail.rgb, sha256: previewThumbnailSha },
+    }),
     ...(projectJson && {
       members: [
         {
@@ -188,7 +199,11 @@ export async function writeScaleProject(
           path: 'project.json',
           sha256: createHash('sha256').update(projectJson).digest('hex'),
         },
-        { bytes: thumbnail.length, path: 'preview/thumbnail.webp', sha256: thumbnailSha256 },
+        {
+          bytes: previewThumbnail.length,
+          path: 'preview/thumbnail.webp',
+          sha256: previewThumbnailSha,
+        },
         { bytes: png.length, path: 'preview/merged.png', sha256: raster.pngSha256 },
         ...layers.map(({ asset }) => ({
           bytes: asset.bytes,
@@ -569,6 +584,7 @@ async function measureHome(
   canvas,
   measureFirstCard,
   earlyPreview,
+  thumbnailCheck,
 ) {
   const { page } = state
   const visibleAt = state.homeVisibleAt ?? performance.now()
@@ -637,6 +653,17 @@ async function measureHome(
     (observation) => native.push(observation),
     root,
   )
+  const cardThumbnails = thumbnailCheck
+    ? await measureCardThumbnails(
+        page,
+        grid,
+        files,
+        root,
+        thumbnailCheck.appData,
+        state.name,
+        thumbnailCheck.controls,
+      )
+    : undefined
   await nativeInput.resize(900, 620)
   const settledMemory = await rendererCounters(page)
   const refresh = await measureRefresh(
@@ -722,6 +749,7 @@ async function measureHome(
   await page.screenshot({ path: path.join(root, `${state.name}-home.png`) })
 
   return {
+    ...(cardThumbnails && { cardThumbnails }),
     checks: {
       cardCount: count,
       cardNamesMatch: true,
@@ -861,6 +889,7 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
+  const cardThumbnails = profile === 'single-thumbnails'
   const singleDistinct = profile === 'single-layered-distinct'
   const distinct = singleDistinct || profile === 'linked-layered-distinct'
   const linked = [
@@ -875,13 +904,14 @@ export async function runPackagedHomeScale({
   const earlyOpen = process.env.IMAGEGEN_HOME_SCALE_EARLY_OPEN
   assert.ok(
     layered256 ||
+      (cardThumbnails && countArgument === '128') ||
       (linked && !distinct && countArgument === '128') ||
       (profile === undefined && ['32', '512'].includes(countArgument)),
-    'Use 32 or 512 by default, 128 with linked-tiny, linked-raster or linked-layered, or 256 with a layered profile.',
+    'Use 32 or 512 by default, 128 with a linked or single-thumbnails profile, or 256 with a layered profile.',
   )
   assert.ok(
-    !layered256 || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
-    'The 256-project layered profiles require software compositing.',
+    (!layered256 && !cardThumbnails) || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
+    'Layered 256-project and distinct-thumbnail profiles require software compositing.',
   )
   assert.ok(
     earlyPreview === undefined || (earlyPreview === '1' && distinct && layered256),
@@ -924,13 +954,25 @@ export async function runPackagedHomeScale({
   const database = path.join(appData, 'database/app.sqlite')
   const workspaces = await prepareWorkspaces(appData, projectCount, linked)
   let raster = tinyRaster
-  if (distinct) raster = distinctRasterFixture
+  if (cardThumbnails) {
+    const thumbnails = createCardThumbnails(projectCount)
+    raster = (index) => ({
+      ...tinyRaster,
+      cardThumbnail: thumbnails[index - 1],
+      includeMemberIdentities: true,
+    })
+  } else if (distinct) raster = distinctRasterFixture
   else if (profile === 'linked-layered') raster = layeredRasterFixture()
   else if (profile === 'linked-raster') raster = largeRasterFixture()
   const files = await stageProjects(workspaces, identity, raster)
   assert.equal(files.length, projectCount)
-  const canvas = distinct ? { height: largeRasterSize, width: largeRasterSize } : raster.canvas
-  const preview = { height: canvas.height, thumbnailSha256, width: canvas.width }
+  const baseRaster = cardThumbnails ? tinyRaster : raster
+  const canvas = distinct ? { height: largeRasterSize, width: largeRasterSize } : baseRaster.canvas
+  const preview = {
+    height: canvas.height,
+    ...(!cardThumbnails && { thumbnailSha256 }),
+    width: canvas.width,
+  }
   if (distinct) {
     const layerHashes = new Set()
     for (const { members } of files) {
@@ -943,14 +985,15 @@ export async function runPackagedHomeScale({
     assert.equal(layerHashes.size, projectCount * 4)
     preview.mergedMatchesFirstRaster = true
   } else {
-    preview.pngBytes = raster.png.length
-    preview.pngSha256 = raster.pngSha256
+    preview.pngBytes = baseRaster.png.length
+    preview.pngSha256 = baseRaster.pngSha256
   }
   const input = {
     files,
     preview,
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
     ...(distinct && { distinctRasterPngCount: projectCount * 4, rasterSeed: distinctRasterSeed }),
+    ...(cardThumbnails && { distinctCardThumbnails: projectCount }),
     ...((linked || singleDistinct) && {
       ...(!distinct && {
         layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
@@ -958,12 +1001,23 @@ export async function runPackagedHomeScale({
       profile,
       workspaces,
     }),
+    ...(cardThumbnails && { profile, workspaces }),
   }
   await writeJson(root, 'home-scale-input.json', input)
 
   const lifetimes = []
   let freshness
+  let cacheControls
   for (const name of ['first-index', 'indexed-restart']) {
+    if (cardThumbnails && name === 'indexed-restart') {
+      assert.equal(lifetimes[0].normalPhysicalExit, true)
+      cacheControls = await prepareCardCacheControls(
+        root,
+        appData,
+        lifetimes[0].cardThumbnails.front,
+      )
+      await writeJson(root, 'card-cache-controls.json', cacheControls)
+    }
     const launchStart = performance.now()
     const state = await launch(name)
     const openDuringDiscovery = earlyOpen === '1' && name === 'first-index'
@@ -979,6 +1033,7 @@ export async function runPackagedHomeScale({
             canvas,
             layered256,
             earlyPreview === '1' && name === 'first-index',
+            cardThumbnails ? { appData, controls: cacheControls } : undefined,
           )
       if (linked && !openDuringDiscovery) {
         measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)
@@ -989,6 +1044,7 @@ export async function runPackagedHomeScale({
     } finally {
       await closeNormally(state)
     }
+    if (cacheControls) await verifyCardCacheControls(cacheControls)
     const checked = await assertSavedState(
       workspaces,
       database,
@@ -1036,6 +1092,7 @@ export async function runPackagedHomeScale({
     },
     package: packageBefore,
     projectCount,
+    ...(cacheControls && { cardCacheControls: 'card-cache-controls.json' }),
     ...(freshness && { refreshControl: 'home-scale-refresh-control.json' }),
   }
 }

@@ -181,6 +181,11 @@ environment and remaining limits, and update the current stage and next run.
         returns the exact embedded WebP and releases the Project path lock.
         The unusual cache entry and the original Project keep their identities.
         [Main cache fallback](./phase-5-packaged-home-scale-research.md#unreadable-derived-thumbnail-entries)
+  - [x] On the stock AppImage with 128 distinct WebPs, the distant card
+        decoded after scrolling on both launches. Both front cards painted
+        the expected pixels even after a FIFO and a wrong valid WebP
+        replaced their cache entries before restart.
+        [Native lazy thumbnails and cache fallback](./phase-5-packaged-home-scale-research.md#native-rendering-of-distinct-lazy-thumbnails-and-cache-fallback)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

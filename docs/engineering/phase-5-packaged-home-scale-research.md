@@ -1732,3 +1732,60 @@ release of the Project path lock and exact original archive bytes.
 The sustained check is the actual Main preview consumer with an owned
 SQLite index and `.igs`. Its receipts are under
 `runs/home-cache-special-file/20261128`.
+
+### Native rendering of distinct lazy thumbnails and cache fallback
+
+On base `2f65670f`, the stock AppImage discovered 128 small owned Projects
+in one workspace. Each package contained a different 16×16 lossless WebP.
+The fixture generates the WebPs with Pillow from independently recorded
+solid RGB colors. The input receipt pins the members of each Project.
+
+The native `single-thumbnails` profile checks two front cards and the last
+card at the 1380×900 starting viewport in private software-rendered KDE
+Wayland. The last card was outside the scroll viewport and had a natural
+width of zero before interaction on both launches. Its disk entry was
+also absent on the first launch. A mouse-wheel scroll reached the last
+card. After normal decode and two frames, the probe checks the correct
+Project and WebP digest in the image URL and samples a 3×3 region of the
+actual viewport screenshot. All six painted samples matched the literal
+RGB inputs. The existing minimum-window checks still run after the
+thumbnail probe.
+
+After the first physical exit, the fixture replaced one sampled cache
+entry with an owned FIFO and another with the first card's valid WebP.
+The indexed restart painted the correct image for each card. The FIFO
+kept its device and inode and the regular entry returned to its original
+digest. The `.igs` files retained their bytes, all 128 index records
+matched on both launches, and both AppImage lifetimes closed normally.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/gallery/gallery_default.py::_to_item` supplies the URL.
+`invokeai/app/api/routers/images.py::get_image_thumbnail` checks access and
+resolves it through `services/images/images_default.py::get_path` and
+`services/image_files/image_files_disk.py::get_path`. The same image-file
+service builds the thumbnail with `invokeai/app/util/thumbnails.py`.
+Invoke's Gallery Picker uses lazy, asynchronous image decode in
+`invokeai/frontend/webv2/src/features/gallery/ui/picker/GalleryPickerGrid.tsx`.
+This profile exercises Studio's existing renderer and package reader.
+
+R1 and R2 stopped in the screenshot probe at the small-window viewport.
+Both first lifetimes exited normally. R3 used the same AppImage, sampled
+the unresized viewport and cropped the full screenshot for its pixel
+check. Run with `IMAGEGEN_HOME_SCALE_FIXTURE=single-thumbnails`,
+`IMAGEGEN_HOME_SCALE_PROJECTS=128` and
+`IMAGEGEN_HOME_SCALE_SOFTWARE=1`. The receipts are under
+`runs/packaged-home-scale/20261128-r1` through `20261128-r3`. The scope is
+one local software-rendered host and this bounded correctness fixture.
+
+Independent readback verified the embedded ASAR, all 128 original
+archives, 512 pinned ZIP members, all 128 decoded WebPs, six viewport
+samples and the repaired cache. It confirmed the 128 indexed identities
+and digests, all 30 SQLite migrations, SQLite integrity and foreign
+keys, and physical exit of all 20 recorded PID and start-time pairs.
+
+The focused package, index, preview, workspace, session and Linux
+package-config suite passed all 113 tests. Typecheck, scoped lint,
+formatting and the stock AppImage build passed. Cleanup of the three
+owned runs released 558,952,448 allocated bytes. The reports, six
+viewport images, sampled archives, closed SQLite and cache controls
+remain with the retention receipt.
