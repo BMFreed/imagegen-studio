@@ -230,9 +230,10 @@ environment and remaining limits, and update the current stage and next run.
         compatible CUDA worker and confirmed Add, Undo, Redo, Save
         and cold reopen.
         [NoobAI V on the rebuilt AppImage](./phase-5-pinned-stock-candidate-research.md#noobai-v-on-the-rebuilt-stock-appimage)
-  - [ ] Repeat the EPS interruption and frozen Retry on the rebuilt
-        AppImage. The live EPS job and recovery passed on the previous
-        pinned build.
+  - [x] The rebuilt AppImage recovered the interrupted EPS CUDA job and
+        completed frozen Retry despite edited draft settings. Explicit Add,
+        Save and cold reopen preserved the accepted Raster and provenance.
+        [EPS recovery on the rebuilt AppImage](./phase-5-pinned-stock-candidate-research.md#noobai-eps-interruption-on-the-rebuilt-stock-appimage)
 
 ### Public release
 

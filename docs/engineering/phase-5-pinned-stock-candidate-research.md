@@ -302,3 +302,40 @@ for 123.364 s and reported zero swap. The peak across 18 samples from the
 matched CUDA worker was 7,374 MiB. Reports and closed bodies are under
 `runs/packaged-installed-engine/20261118/trained-noobai-v-r5`. The local
 repeat covers this specific trained recipe and persistence.
+
+### NoobAI EPS interruption on the rebuilt stock AppImage
+
+A byte-identical copy of the rebuilt stock AppImage used the existing
+queue-crash proof layout. Independent package readback matched the embedded
+ASAR, all 42 bundled production members, the separate wallet bootstrap
+and the stock Main entrypoint. The first launch attempt refused the mode
+of two control receipts before opening the AppImage. Restricting their
+permissions left both receipt hashes unchanged.
+
+The current InvokeAI checkout was `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/session_queue/session_queue_default.py::start`
+cancels interrupted items and the current Retry caller in
+`invokeai/app/api/routers/session_queue.py` delegates to
+`retry_items_by_id`, which uses the saved root graph for a fresh execution.
+The run exercises Studio's existing queue recovery and frozen Retry owners.
+
+On RTX 4080 with driver `615.71.09`, the fixture interrupted its own Main
+after observing the NoobAI EPS queue row and CUDA worker. Startup recorded
+one `APP_RESTART` cancellation. Explicit Retry used the frozen inputs after
+draft edits, giving two admissions and one completion in total. The candidate
+PNG matched the previous EPS run byte for byte. Explicit Add and Save
+persisted the Raster and frozen provenance, and the saved archive reopened
+unchanged. The recovery and cold-open lifetimes closed normally. The wrapper
+restored all 112 original AppData entries by identity and bytes.
+
+The successful wrapper ran for 181.630 s with zero reported swap. The
+package and execution receipts are in `runs/current-stock-eps/20261127-r1`
+and `runs/packaged-installed-engine/20261118/trained-noobai-eps-r12`.
+
+Independent readback reconstructed 36 checksummed WAL frames across
+11 commits in memory and recovered the exact running row. Both closed
+databases passed integrity and foreign-key checks and contained the same
+two queue rows and frozen inputs. The crash triplet, both closed databases,
+the saved archives and both frozen target bodies are retained. The audit
+confirmed the exit of 31 scope-witnessed identities. The exact Retry worker
+peaked at 7,320 MiB across 27 matched samples.
