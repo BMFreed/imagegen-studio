@@ -645,7 +645,7 @@ export class ProjectIndexRepository {
   /** Rescan can reconstruct a lost index without the old database or preview cache. */
   async scanWorkspace(
     workspaceId: string,
-    onValidated?: (project: ProjectIndexRecord) => void,
+    onValidated?: (project: ProjectIndexRecord) => Promise<void> | void,
   ): Promise<ProjectIndexRecord[]> {
     const workspace = await this.workspaceById(workspaceId)
     await assertWorkspaceDirectory(workspace.directoryPath)
@@ -683,9 +683,9 @@ export class ProjectIndexRepository {
       ) {
         continue
       }
+      let project: ProjectIndexRecord
       try {
-        const project = await this.indexSaved(filePath, workspaceId, { validatedPngs })
-        onValidated?.(project)
+        project = await this.indexSaved(filePath, workspaceId, { validatedPngs })
       } catch (error) {
         if (error instanceof IgsSchemaError) {
           await this.indexUnhealthy(filePath, workspaceId, error.code)
@@ -708,6 +708,10 @@ export class ProjectIndexRepository {
           // Scope failures and SQLite errors are not evidence of corrupt .igs bytes.
           throw error
         }
+        continue
+      }
+      if (onValidated) {
+        await onValidated(project)
       }
     }
     for (const row of indexedAtStart) {

@@ -1426,3 +1426,93 @@ After the native sessions, audit and count scopes exited, cleanup removed
 only their disposable packages, profiles and diagnostic scratch. It
 released 3,135,930,368 allocated bytes. Each `retention.json` records the
 sample archives, closed index and exact cleanup paths.
+
+## Show verified Projects during the first scan of a single workspace
+
+The multi-workspace initial catalog publishes after the first nonempty
+validated workspace. With only Uncategorized and an empty index, the
+same consumer could only show its cards after the full scan. A Main test
+pauses the 61st archive and requires 60 ordinary selectable summaries and
+an exact preview read. On `cc38a558` it reached the pause with zero initial
+notifications. The candidate passes the same assertion and later returns
+all 62 expected rows. An indexed restart sends only the complete reply.
+
+Read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+The Gallery in `invokeai/frontend/webv2/src/features/gallery/ui/useGalleryData.ts`
+requests the first page at `GALLERY_PAGE_SIZE = 60` from
+`features/gallery/core/paging.ts`, with the bounded gallery data backend
+and `invokeai/app/api/routers/images.py::list_image_dtos` serving the
+scoped page. Invoke's Project Home follows
+`workbench/launchpad/pages/HomePage.tsx` and `workbench/projects/{library,api}.ts`
+to a lightweight SQLite summary list in `invokeai/app/api/routers/projects.py`
+and `project_records_default.py`. External portable archive discovery is a
+Studio responsibility. This change adapts the first-page scope while using
+Studio's existing archive checks and single advisory catalog notification.
+
+`ProjectIndexRepository.scanWorkspace` calls the observer only after an
+archive is indexed and outside the classification of archive errors.
+`ProjectService.listHomeCatalog` publishes once after 60 successful
+validations during an aggregate first Home request with one registered
+workspace and no prior index rows. The existing projection rechecks path
+and fingerprint before showing cards. The Inspector reads the exact saved
+merged image through its existing project-file lock. A failed advisory
+projection leaves discovery running. The final catalog, indexed restart,
+explicit Refresh and multi-workspace discovery retain their existing paths.
+Ordinary Open in the still-scanning folder continues to wait on the workspace
+catalog lock. The focused 85 tests, typecheck, scoped lint and formatting,
+app build and AppImage packaging passed.
+
+### Packaged single-workspace measurements
+
+The control was the retained AppImage built from `4d0cdae60ce30f06bd07974ce4b578d999f1eb6b`,
+with SHA-256 `e0e45842ef0ec5d13372b56f2cd9161b68ea2ec41cdfdf4fc3a9c5b919493425`.
+Between that build and the candidate base `cc38a558`, the runtime source
+paths differ only in tests and test fixtures. The candidate was built with
+the source pins in `source.sha256`. Its AppImage SHA-256 was
+`f46c37572e601ad6c4715c14873bcf6c7467b87382756f5c20919f0280fd7c33`.
+The embedded ASAR matched the package build output byte for byte.
+
+Each run staged 256 Projects with 1,024 distinct Raster PNGs into the only
+workspace, Uncategorized. Each had a fresh index and a second launch using
+its closed index. Tests ran serially on local ext4 under private KDE Wayland
+and software rendering, with 120% CPU, 4 GiB RAM, zero swap and a 300-second
+scope bound. Startup times use the same driver clock from process spawn.
+
+| Fresh Home measurement                 | Stock R22 | Candidate with preview R23 | Candidate without click R24 |
+| -------------------------------------- | --------: | -------------------------: | -------------------------: |
+| First selectable card                  |   19.78 s |                    17.16 s |                     6.98 s |
+| Cards when selection became possible   |       256 |                         60 |                         60 |
+| Exact selected preview ready           |         — |                    19.17 s |                          — |
+| All 256 cards ready                    |   19.88 s |                    33.67 s |                    19.90 s |
+
+R23 decoded the selected 1,024×1,024 preview with 60 cards visible. R24 reused
+the exact R23 AppImage with no click during discovery. The slower full list
+observed in R23 did not repeat in R24. Scope peak memory ranged from 2.86 to
+3.11 GiB with zero OOM events. Each indexed restart showed all 256 cards at
+its first selectable-card observation. Restart times varied from 6.68 to 19.93 seconds.
+The new path only applies to an empty index, and these samples establish no
+indexed-restart speed change. All six lifetimes exited normally.
+
+Closed readback rehashed all Projects and 2,304 ZIP members per run. It
+verified the same archive member bytes across R22–R24, including the
+merged previews and Raster PNGs. ZIP headers reflect each staging time.
+Every `.igs` kept its exact file bytes within its own run. Each closed
+SQLite store contained the 256 expected ready rows and matching archive
+validation digests. SQLite integrity and foreign key checks passed.
+
+The first setup attempt failed the harness's run-directory naming guard
+before launching an AppImage. R21 finished two native lifetimes but failed
+the final source-stability guard when the working checkout changed. The
+reported control is the separate R22 replay on stable sources. The result
+qualifies early selection and preview on this single-folder fixture.
+Same-workspace Open and a broader Home performance target remain open.
+
+The reports, timings, filesystem inputs, native exit proofs and retained
+closed SQLite stores are under `runs/packaged-home-scale/20261127-r22`,
+`20261127-r23` and `20261127-r24`. Earlier failure receipts remain under
+`20261127-single-r1` and `20261127-r21`.
+
+The scoped cleanup reclaimed 4,608,913,408 allocated bytes from the five
+attempts before removing a redundant intermediate SQLite copy. The
+retention receipts identify restored evidence and disposed paths. The
+held step-4 AppImage and ASAR remain available.

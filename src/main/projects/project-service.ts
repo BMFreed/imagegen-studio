@@ -305,6 +305,7 @@ interface PendingProjectImport {
 const PROJECT_ID_PATTERN = /^project-v1-[a-f0-9]{64}$/
 const MAX_PENDING_IMPORTS = 16
 const COPY_CHUNK_BYTES = 1024 * 1024
+const HOME_INITIAL_PAGE_SIZE = 60
 
 export interface ProjectServiceOptions {
   /** Primarily a test seam for deterministic autosave and simulated process restart. */
@@ -2304,14 +2305,50 @@ export class ProjectService {
     const sliceLock = workspaceId === undefined && onInitial ? withCatalogLock : undefined
     const scanned = new Map<string, string>()
     const validated = new Map<string, ProjectIndexRecord>()
-    const scan = async (id: string, directoryPath: string) => {
+    let publishInitial = workspaceId === undefined ? onInitial : undefined
+    const publish = async (
+      workspace: ProjectWorkspaceRecord,
+      witnesses: ReadonlyMap<string, ProjectIndexRecord> = validated,
+    ) => {
+      if (!publishInitial) {
+        return
+      }
+      try {
+        const initial = await this.readInitialHomeCatalog(workspace, witnesses)
+        if (initial) {
+          const notify = publishInitial
+          publishInitial = undefined
+          notify(initial)
+        }
+      } catch {
+        // The scoped projection is optional. The final read still reports catalog errors.
+      }
+    }
+    const scan = async (
+      id: string,
+      directoryPath: string,
+      onlyWorkspace?: ProjectWorkspaceRecord,
+    ) => {
       // This witness belongs to the current catalog request. An unavailable folder may recover
       // before the second consumer, and Locate can change the directory between lock slices.
       if (scanned.get(id) === directoryPath) {
         return true
       }
       const completed: ProjectIndexRecord[] = []
-      if (await this.scanWorkspaceIfAvailable(id, (project) => completed.push(project))) {
+      const earlyPage =
+        onlyWorkspace &&
+        publishInitial &&
+        (await this.options.repository.listProjects(id)).length === 0
+          ? onlyWorkspace
+          : undefined
+      const onValidated = (project: ProjectIndexRecord) => {
+        completed.push(project)
+        if (earlyPage && completed.length === HOME_INITIAL_PAGE_SIZE) {
+          const page = new Map(completed.map((record) => [record.localProjectKey, record]))
+          return publish(earlyPage, page)
+        }
+      }
+      if (await this.scanWorkspaceIfAvailable(id, onValidated)) {
         for (const project of completed) {
           validated.set(project.localProjectKey, project)
         }
@@ -2320,25 +2357,9 @@ export class ProjectService {
       }
       return false
     }
-    let publishInitial = workspaceId === undefined ? onInitial : undefined
     const workspaceRecords = await this.scanRegisteredWorkspaces(
       scan,
-      publishInitial &&
-        (async (workspace) => {
-          if (!publishInitial) {
-            return
-          }
-          try {
-            const initial = await this.readInitialHomeCatalog(workspace, validated)
-            if (initial) {
-              const notify = publishInitial
-              publishInitial = undefined
-              notify(initial)
-            }
-          } catch {
-            // The scoped projection is optional. The final read still reports catalog errors.
-          }
-        }),
+      publishInitial && publish,
       sliceLock,
     )
     const finish = async () => {
@@ -5421,7 +5442,11 @@ export class ProjectService {
   }
 
   private async scanRegisteredWorkspaces(
-    scan: (id: string, directoryPath: string) => Promise<boolean>,
+    scan: (
+      id: string,
+      directoryPath: string,
+      onlyWorkspace?: ProjectWorkspaceRecord,
+    ) => Promise<boolean>,
     afterScan?: (workspace: ProjectWorkspaceRecord) => Promise<void>,
     withCatalogLock?: <T>(work: () => Promise<T>) => Promise<T>,
   ): Promise<ProjectWorkspaceRecord[]> {
@@ -5445,10 +5470,11 @@ export class ProjectService {
           return
         }
         const firstDefault = workspace.id === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
+        const onlyWorkspace = afterScan && workspaces.length === 1 ? workspace : undefined
         // The old eager discovery gave a briefly unavailable default folder another chance.
         const scanned =
-          (await scan(workspace.id, workspace.directoryPath)) ||
-          (firstDefault && (await scan(workspace.id, workspace.directoryPath)))
+          (await scan(workspace.id, workspace.directoryPath, onlyWorkspace)) ||
+          (firstDefault && (await scan(workspace.id, workspace.directoryPath, onlyWorkspace)))
         if (afterScan && scanned && index + 1 < workspaces.length) {
           await afterScan(workspace)
         }
@@ -5460,7 +5486,7 @@ export class ProjectService {
 
   private scanWorkspaceIfAvailable(
     workspaceId: string,
-    onValidated?: (project: ProjectIndexRecord) => void,
+    onValidated?: (project: ProjectIndexRecord) => Promise<void> | void,
   ): Promise<boolean> {
     const firstDefault = workspaceId === UNCATEGORIZED_WORKSPACE_ID && !this.initialDefaultScan
     const scan = this.options.repository.scanWorkspace(workspaceId, onValidated).then(

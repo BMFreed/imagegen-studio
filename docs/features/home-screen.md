@@ -382,7 +382,9 @@ Switching between `Projects` and a workspace filters the last complete
 Home catalog. Startup recovers pending Project file operations before
 opening Home. The initial catalog request discovers the registered Projects.
 While it runs, Home can show checked projects from the first available
-workspace that completes. Users can select these projects, inspect their
+workspace that completes. When the library has one workspace and an empty
+index, Home can show its first verified page while its scan continues.
+Users can select these projects, inspect their
 saved previews and switch between that workspace and `Projects`. A search
 with zero matches shows loading until the catalog settles. Open can run
 between consecutive workspace scans. It may wait for the workspace

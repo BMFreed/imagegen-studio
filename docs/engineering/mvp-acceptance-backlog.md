@@ -9,8 +9,9 @@ Repair on ext4 with the qualification publisher. The stock Setup path
 requires the production publisher in step 5.
 The two-plinth reference swap failed the same visual gate in Studio and
 installed InvokeAI. Explicit Refresh and indexed restart passed local
-256-project checks. First discovery remains open in step 2. Retained
-update ownership remains open in step 3.
+256-project checks. Early selection and preview also passed with one
+workspace. Complete discovery and same-workspace Open remain open in step 2.
+Retained update ownership remains open in step 3.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
 are complete for their recorded builds and fixtures. Check off a step when
@@ -149,6 +150,12 @@ environment and remaining limits, and update the current stage and next run.
         on the local software Wayland configuration. A broader speed
         target and supported-host coverage remain open.
         [Full-discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-recent-png-checks-throughout-a-large-workspace-scan)
+  - [x] On 256 distinct-layer Projects in one empty workspace index,
+        Home exposed 60 verified cards at 6.98 s without a click, down from
+        19.78 s for the first card on the control. Full discovery in these
+        runs took 19.90 s and 19.88 s respectively. A separate run decoded
+        the selected saved preview while only 60 cards were visible.
+        [Single-workspace first scan](./phase-5-packaged-home-scale-research.md#show-verified-projects-during-the-first-scan-of-a-single-workspace)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

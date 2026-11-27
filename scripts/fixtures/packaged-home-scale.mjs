@@ -843,7 +843,8 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
-  const distinct = profile === 'linked-layered-distinct'
+  const singleDistinct = profile === 'single-layered-distinct'
+  const distinct = singleDistinct || profile === 'linked-layered-distinct'
   const linked = [
     'linked-tiny',
     'linked-raster',
@@ -855,10 +856,10 @@ export async function runPackagedHomeScale({
   const earlyPreview = process.env.IMAGEGEN_HOME_SCALE_EARLY_PREVIEW
   const earlyOpen = process.env.IMAGEGEN_HOME_SCALE_EARLY_OPEN
   assert.ok(
-    linked
-      ? (!distinct && countArgument === '128') || layered256
-      : profile === undefined && ['32', '512'].includes(countArgument),
-    'Use 32 or 512 by default, 128 with linked-tiny, linked-raster or linked-layered, or 256 with either layered profile.',
+    layered256 ||
+      (linked && !distinct && countArgument === '128') ||
+      (profile === undefined && ['32', '512'].includes(countArgument)),
+    'Use 32 or 512 by default, 128 with linked-tiny, linked-raster or linked-layered, or 256 with a layered profile.',
   )
   assert.ok(
     !layered256 || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
@@ -870,8 +871,8 @@ export async function runPackagedHomeScale({
   )
   assert.ok(
     earlyOpen === undefined ||
-      (earlyOpen === '1' && distinct && layered256 && earlyPreview === undefined),
-    'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with the 256-project distinct layered profile and without EARLY_PREVIEW.',
+      (earlyOpen === '1' && linked && distinct && layered256 && earlyPreview === undefined),
+    'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with linked-layered-distinct and without EARLY_PREVIEW.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -932,7 +933,7 @@ export async function runPackagedHomeScale({
     preview,
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
     ...(distinct && { distinctRasterPngCount: projectCount * 4, rasterSeed: distinctRasterSeed }),
-    ...(linked && {
+    ...((linked || singleDistinct) && {
       ...(!distinct && {
         layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
       }),
