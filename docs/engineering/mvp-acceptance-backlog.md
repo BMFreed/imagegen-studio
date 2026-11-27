@@ -216,6 +216,12 @@ environment and remaining limits, and update the current stage and next run.
         path using only the local target. The copy reopened the exact
         Project and the original stage and backup stayed intact.
         [Recovery without a newer release](./phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
+  - [x] During the real KDE Save dialog, a same-byte replacement of the
+        current AppImage triggered a stale refusal. It preserved the stage
+        and the open draft. After explicit Project Save and normal exit,
+        the replaced AppImage reported an unverified target and reopened
+        the exact saved revision.
+        [Current AppImage changed during Save](./phase-5-packaged-recovery-kde-chooser-research.md#current-appimage-replaced-while-kde-save-is-open)
   - [x] After normal exit and physical readback of the controlled
         AppImage processes, the ext4 fixture archived the dedicated
         original folder with its image, stage, backup and lock intact.

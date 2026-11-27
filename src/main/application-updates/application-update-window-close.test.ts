@@ -792,10 +792,12 @@ test('an intervening canceled ordinary Close invalidates Install preflight and d
 test('actual Main drains admitted catalog work, refuses queued/new admission and then snapshots its tab', async () => {
   const held = deferred()
   const f = fixture({ choice: 2 })
+  // Finish Import can attach a tab under Main's generic catalog lock. Open takes it in ProjectService.
+  const channel = ipcChannels.projects.finishImport
   let admitted = false
   let entries = 0
   f.context.registerControlledProject(
-    ipcChannels.projects.open,
+    channel,
     () => true,
     async () => {
       entries++
@@ -805,12 +807,12 @@ test('actual Main drains admitted catalog work, refuses queued/new admission and
       return null
     },
   )
-  const first = f.invokeProject(ipcChannels.projects.open)
+  const first = f.invokeProject(channel)
   await f.until(() => admitted)
-  const queued = f.invokeProject(ipcChannels.projects.open)
+  const queued = f.invokeProject(channel)
   await f.request()
   assert.equal(f.stats().databaseClosed, false)
-  assert.equal(((await f.invokeProject(ipcChannels.projects.open)) as { ok: boolean }).ok, false)
+  assert.equal(((await f.invokeProject(channel)) as { ok: boolean }).ok, false)
   held.resolve()
   assert.equal(((await first) as { ok: boolean }).ok, true)
   assert.equal(((await queued) as { ok: boolean }).ok, false)

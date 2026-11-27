@@ -235,3 +235,74 @@ was 1,907,216,384 bytes.
 Cleanup removed 2,278,641,664 allocated bytes from the two private payload
 and scratch pairs. The receipt verifies 71 remaining files, including exact
 copies of the four stage members and the lock from each branch.
+
+## Current AppImage replaced while KDE Save is open
+
+On Studio base `3090b3bd`, the packaged Updates flow started from an
+activated stage with verified current AppImage A. An explicit Check found
+the same signed version and made one metadata GET to the qualification
+feed. Native Cancel then returned the typed canceled reply.
+
+On the second real KDE SaveFile request, after the portal and chooser were
+identified and before selecting the offered path, a test-owned process
+atomically replaced A with a regular file of the same size, mode and signed
+bytes at a new inode. Main returned
+`APPLICATION_UPDATE_RECOVERY_STALE` and the open Updates dialog showed the
+refusal. The requested destination stayed absent. The application
+directory retained its post-replacement identity, entries and timestamps.
+The journal, authority, notes, previous AppImage and lock retained their
+original file identities and digests. The feed still showed one metadata
+request, and the app made no relaunch call.
+
+Closing Updates returned to the same dirty Project. Its saved
+`.igs` remained exact until explicit Save. Both AppImage lifetimes exited
+normally. The second launch at the replaced path reported recovery
+required and target unverified, and reopened the exact saved revision.
+The initial window continued to show its captured verified startup state
+until exit.
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7` at
+`invokeai/app/services/model_install/install_staging_ledger.py` and
+`model_install_default.py::start`, plus `invokeai/app/util/no_replace.py`.
+Invoke rechecks the staging tree under its claim and retains ambiguous
+recovery data. Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce` uses
+`quitAndInstall` via `src/main/main-process-manager.ts` and
+`src/main/updater.ts`. The new fixture exercises Studio's existing
+post-dialog signed source checks. Global ownership of legacy writers
+remains open.
+
+R1 is under `runs/packaged-recovery-action/20261128-stale-r1`. Run the
+two-release `--kde-save` preparer with the existing private KDE wrapper,
+then select `--kde-save-current-stale`. The wrapper forces software
+rendering and the mode starts Electron with `--disable-gpu`.
+
+Independent readback verified both signed AppImage and embedded ASAR
+bodies, both D-Bus pairs, the two closed SQLite files with all 30
+migrations, and the Project and stage bytes. The replacement ctime
+fell between the second KDE SaveFile request and its successful reply.
+All 18 recorded PID and start-time identities had exited.
+
+The first desktop update matrix exposed a stale window-close fixture.
+Since `2609c9c0`, Open acquires or borrows the catalog lock in
+`ProjectService.openFromHome`. The fixture registered a bare callback
+on Open, so its queued call bypassed the lock. It now uses Finish Import
+to exercise the generic Main catalog lock and keeps the same close and
+dirty-tab assertions. The separate workspace test still exercises the
+real Open lock through reconciliation. Rechecked Invoke's Project read in
+`invokeai/app/api/routers/projects.py` and
+`services/project_records/project_records_default.py::get`. Invoke uses
+a database snapshot for that read and drains worker activity before
+disposal through `api/dependencies.py::shutdown`,
+`services/invoker.py::stop` and
+`services/session_processor/session_processor_default.py::stop`.
+
+The combined application-update and workspace suite passed 665 tests
+with the existing unsupported-platform skip. An isolated test copy that
+bypassed the real catalog lock for Finish Import failed at the queued
+request assertion. The original and restored copies passed. Typecheck,
+scoped ESLint, formatting and the AppImage build passed.
+
+Cleanup released 1,262,080,000 allocated bytes after physical exit and
+independent readback. The retained files include both closed SQLite
+copies, both Project revisions, native D-Bus and IPC traces, and exact
+copies of the stage metadata, backup and lock.

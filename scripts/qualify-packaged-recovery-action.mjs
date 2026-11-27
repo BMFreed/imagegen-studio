@@ -45,6 +45,7 @@ assert.ok(
           '--kde-save',
           '--kde-save-after-replace',
           '--kde-save-current',
+          '--kde-save-current-stale',
           '--kde-save-default',
           '--kde-save-occupied',
         ].includes(rest[0]))),
@@ -56,7 +57,8 @@ const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
 const kdeRetireMixed = rest[0] === '--kde-retire-mixed-current'
 const kdeRetireCurrent = rest[0] === '--kde-retire-current' || kdeRetireMixed
-const kdeSaveCurrent = rest[0] === '--kde-save-current' || kdeRetireCurrent
+const kdeSaveCurrentStale = rest[0] === '--kde-save-current-stale'
+const kdeSaveCurrent = rest[0] === '--kde-save-current' || kdeSaveCurrentStale || kdeRetireCurrent
 const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
 const kdeSaveDefault =
   rest[0] === '--kde-save-default' ||
@@ -952,7 +954,8 @@ async function launch(filename, version, suffix = '') {
   const stdout = await fs.open(path.join(run, `${logName}.stdout`), 'wx', 0o600)
   const stderr = await fs.open(stderrPath, 'wx', 0o600)
   try {
-    state.child = spawn(filename, [], { cwd, env, stdio: ['ignore', stdout.fd, stderr.fd] })
+    const args = kdeSaveCurrentStale ? ['--disable-gpu'] : []
+    state.child = spawn(filename, args, { cwd, env, stdio: ['ignore', stdout.fd, stderr.fd] })
     state.exit = once(state.child, 'close')
     // Capture failure in the bounded poll below rather than as an unhandled rejection.
     void state.exit.then(
@@ -2018,6 +2021,171 @@ const report = {
   ...(kdeSave && !kdeLateStage ? { kdeSave: { portal: [], useDefaultName: kdeSaveDefault } } : {}),
   ...(installedRuntime ? { installedRuntime } : {}),
 }
+
+const staleDraft = 'Owned draft held during the current AppImage recovery refusal'
+async function exerciseStaleCurrentRecovery(old, updates, save, project, checked, startupBefore) {
+  const { page } = old
+  const projectBefore = await fileWitness(project.filename)
+  assert.equal(projectBefore.sha256, project.sha256)
+  const beforeArchive = await readIgsPackage(project.filename)
+  const originalEvents = await events()
+  const originalRequests = structuredClone(requests)
+  const stage = await directoryWitness(retainedDirectory)
+  const originalNames = (await fs.readdir(applicationDir)).sort()
+  const menu = {
+    state: old,
+    trigger: save,
+    windowTitle: 'Save Recovery AppImage',
+    version: recoveryVersion,
+  }
+  report.kdeSave.portal.push(await driveKdeSaveChooser({ ...menu, destination: null }))
+  const canceled = await nativeEvent('recovery-response', old.version)
+  assert.equal(canceled.pid, old.pid)
+  assert.deepEqual(canceled.result, { ok: true, value: { status: 'canceled' } })
+  await expect(save).toBeEnabled()
+  assert.deepEqual(await retainedState(), retained)
+  assert.deepEqual((await fs.readdir(applicationDir)).sort(), originalNames)
+
+  const replacementPath = path.join(root, 'same-body-replacement.AppImage')
+  await fs.copyFile(a.filename, replacementPath, constants.COPYFILE_EXCL)
+  await fs.chmod(replacementPath, retained.image.mode)
+  const candidate = await fileWitness(replacementPath)
+  for (const key of ['dev', 'mode', 'sha256', 'sizeBytes']) {
+    assert.equal(candidate[key], retained.image[key])
+  }
+  assert.notEqual(candidate.ino, retained.image.ino)
+  const publicationDirectory = async () => {
+    const identity = await directoryWitness(applicationDir)
+    const entry = await fs.lstat(applicationDir, { bigint: true })
+    assert.equal(String(entry.ino), identity.ino)
+    return {
+      ...identity,
+      ctime: String(entry.ctimeNs),
+      mtime: String(entry.mtimeNs),
+      names: (await fs.readdir(applicationDir)).sort(),
+    }
+  }
+  let replacement
+  let directoryAfterReplacement
+  report.kdeSave.portal.push(
+    await driveKdeSaveChooser({
+      ...menu,
+      destination: newPath,
+      acceptDefault: true,
+      onPresented: async () => {
+        assert.deepEqual(await retainedState(), retained)
+        assert.deepEqual(await fileWitness(replacementPath), candidate)
+        assert.equal((await proc(old.pid)).start, old.start)
+        await execute('/usr/bin/mv', ['--no-copy', '-f', '-T', '--', replacementPath, original], {
+          timeout: 10_000,
+        })
+        replacement = await fileWitness(original)
+        assert.deepEqual(replacement, { ...candidate, ctime: replacement.ctime })
+        directoryAfterReplacement = await publicationDirectory()
+        assert.deepEqual(directoryAfterReplacement.names, originalNames)
+      },
+    }),
+  )
+  assert.ok(replacement && directoryAfterReplacement)
+  const message = 'The recovery request changed. Open Updates and try again.'
+  await expect(updates.getByText(message, { exact: true })).toBeVisible()
+  await expect(updates.getByText('Recovery AppImage saved', { exact: true })).toBeHidden()
+  const refused = {
+    name: 'recovery-response',
+    pid: old.pid,
+    version: old.version,
+    result: { ok: false, error: { code: 'APPLICATION_UPDATE_RECOVERY_STALE', message } },
+  }
+  assert.deepEqual(await events(), [...originalEvents, canceled, refused])
+  assert.deepEqual(await call(page, 'applicationUpdates', 'getRecoveryStatus'), startupBefore)
+  assert.deepEqual(await call(page, 'applicationUpdates', 'getStatus'), checked)
+  assert.equal((await proc(old.pid)).start, old.start)
+  const assertRetained = async () => {
+    assert.deepEqual(await retainedState(), { ...retained, image: replacement })
+    assert.deepEqual(await directoryWitness(retainedDirectory), stage)
+    assert.deepEqual(await publicationDirectory(), directoryAfterReplacement)
+    assert.deepEqual(requests, originalRequests)
+    await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
+  }
+  await assertRetained()
+  await page.screenshot({ path: path.join(run, 'stale-current-recovery-refusal.png') })
+  await updates.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(projectTab(page)).toBeVisible()
+  const { tab: dirty } = await call(page, 'projects', 'open', project.id)
+  assert.equal(dirty.dirty, true)
+  assert.equal(dirty.generationDraft.positivePrompt.text, staleDraft)
+  assert.deepEqual(await fileWitness(project.filename), projectBefore)
+  await fs.copyFile(
+    project.filename,
+    path.join(run, 'stale-before-save.igs'),
+    constants.COPYFILE_EXCL,
+  )
+  await page.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect
+    .poll(async () => (await call(page, 'projects', 'open', project.id)).tab.dirty)
+    .toBe(false)
+  const saved = await readIgsPackage(project.filename)
+  const documentRevision = saved.project.documentRevision
+  assert.notEqual(documentRevision, beforeArchive.project.documentRevision)
+  assert.deepEqual(saved.project, {
+    ...beforeArchive.project,
+    documentRevision,
+    generationDraft: {
+      ...beforeArchive.project.generationDraft,
+      positivePrompt: { ...beforeArchive.project.generationDraft.positivePrompt, text: staleDraft },
+    },
+  })
+  const projectAfter = await fileWitness(project.filename)
+  await closeNormally(old)
+  await assertRetained()
+  const afterSave = await retainClosedDatabase('stale-after-save.sqlite')
+
+  offered = null
+  const cold = await launch(original, old.version, '-after-replacement')
+  const startupAfter = await call(cold.page, 'applicationUpdates', 'getRecoveryStatus')
+  assert.deepEqual(startupAfter, {
+    status: 'required',
+    target: 'unverified',
+    runtime: 'unverified',
+  })
+  await cold.page.getByRole('button', { name: `Open ${title}`, exact: true }).click()
+  await expect(projectTab(cold.page)).toBeVisible()
+  const { tab: reopened } = await call(cold.page, 'projects', 'open', project.id)
+  assert.equal(reopened.dirty, false)
+  assert.equal(reopened.documentId, saved.project.documentId)
+  assert.equal(reopened.documentRevision, documentRevision)
+  assert.equal(reopened.generationDraft.positivePrompt.text, staleDraft)
+  await closeNormally(cold)
+  const afterReopen = await retainClosedDatabase('stale-after-reopen.sqlite')
+  assert.deepEqual(await fileWitness(project.filename), projectAfter)
+  await fs.copyFile(
+    project.filename,
+    path.join(run, 'stale-after-reopen.igs'),
+    constants.COPYFILE_EXCL,
+  )
+  await assertRetained()
+  assert.equal((await events()).filter((event) => event.name === 'relaunch').length, 0)
+  for (const [index, release] of releases.entries()) {
+    assert.deepEqual(await fileWitness(release.filename), packaged[index])
+  }
+  return {
+    afterReopen,
+    afterSave,
+    canceled,
+    candidate,
+    directoryAfterReplacement,
+    documentRevision,
+    projectAfter,
+    projectBefore,
+    projectId: project.id,
+    refused,
+    replacement,
+    stage,
+    startupAfter,
+    startupBefore,
+  }
+}
+
 async function exerciseRecoveryAction() {
   const old = await launch(original, '0.1.0')
   const first = old.page
@@ -2057,6 +2225,7 @@ async function exerciseRecoveryAction() {
     assert.equal(summaries[0].previewStatus, 'rendered')
     assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
   }
+  if (kdeSaveCurrentStale) await editPositivePrompt(first, projectId, staleDraft)
   offered = recoveryRelease
   const updates = await openUpdates(first, kdeSaveCurrent)
   const save = updates.getByRole('button', { name: 'Save recovery AppImage', exact: true })
@@ -2103,6 +2272,18 @@ async function exerciseRecoveryAction() {
   } else {
     assert.equal(checked.availableVersion, recoveryVersion)
     assert.equal(checked.verification, 'signed-release')
+  }
+  if (kdeSaveCurrentStale) {
+    report.currentRecoveryStale = await exerciseStaleCurrentRecovery(
+      old,
+      updates,
+      save,
+      { filename: project, id: projectId, sha256: projectSha },
+      checked,
+      recovery,
+    )
+    report.outcome = 'PASS'
+    return
   }
   const downloadRequests = requests.length
   const occupied = kdeSaveOccupied
@@ -2437,7 +2618,7 @@ try {
       normalCode,
       pid,
       scopeExit,
-      ...(kdeRetireCurrent || kdeLateStage ? { start } : {}),
+      ...(kdeRetireCurrent || kdeLateStage || kdeSaveCurrentStale ? { start } : {}),
       version,
     }),
   )
