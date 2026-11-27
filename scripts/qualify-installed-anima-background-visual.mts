@@ -78,6 +78,11 @@ const countertopScene = {
 } as const
 const scenePrompts = {
   'countertop-gap-closed': countertopScene,
+  'countertop-global-subjects': {
+    ...countertopScene,
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, even lighting',
+  },
   'countertop-scene': countertopScene,
   'countertop-subject-weight': {
     globalPositive:

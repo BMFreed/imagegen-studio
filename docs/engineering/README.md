@@ -70,6 +70,11 @@ The [matched original Invoke source comparison](./phase-4-anima-countertop-gap-c
 repeated the seed-123 outcome. A gap preserved the two subjects on their
 assigned sides. Touching masks left a centered mug without a recognizable apple.
 
+The [global subject trial](./phase-4-anima-countertop-global-subjects-research.md)
+retained both subjects in all six frames and passed three of four regional
+placements. Both Studio and the matched current Invoke denoiser put the
+apple inside the mug in the seed-124 swap. The two-seed gate stays open.
+
 The [Smart Inpaint tabletop trial](./phase-4-anima-smart-regional-public-research.md#installed-tabletop-insertion-with-a-frozen-smart-mask)
 preserved all 179,368 pixels outside the edit contribution in each of three
 installed images. The ordinary control passed both blind reviews. The regional

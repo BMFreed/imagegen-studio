@@ -98,6 +98,11 @@ const COUNTERTOP_SCENE = {
 } as const
 const INSTALLED_VISUAL_SCENES = {
   'countertop-gap-closed': COUNTERTOP_SCENE,
+  'countertop-global-subjects': {
+    ...COUNTERTOP_SCENE,
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, even lighting',
+  },
   'countertop-scene': COUNTERTOP_SCENE,
   'countertop-subject-weight': {
     globalPositive:

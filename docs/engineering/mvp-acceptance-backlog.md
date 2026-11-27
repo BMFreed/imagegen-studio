@@ -27,6 +27,11 @@ environment and remaining limits, and update the current stage and next run.
       no-region controls and record human verdicts.
       [Anima visual results](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
       · [Illustrious visual results](./phase-4-regional-reference-placement-research.md)
+  - [x] Named both subjects in the Anima tabletop global positive. Both
+        ordinary controls and three regional assignments passed. The
+        seed-124 swap centered the apple inside the mug in Studio and
+        in a matched run of the current Invoke denoiser.
+        [Global subject and Invoke comparison](./phase-4-anima-countertop-global-subjects-research.md)
   - [x] Checked responsiveness to the Anima apple negative across the full
         image. The apple remained recognizable with the image-wide phrase
         and both earlier local assignments. The local suppression gate
@@ -452,6 +457,12 @@ entries record the state at their checkpoint.
    passed, and the swapped touching-mask case lost the recognizable apple.
    Compiled prompts and token-grid permissions agreed across the measured paths.
    [Current Invoke comparison](./phase-4-anima-countertop-gap-closed-research.md#matched-current-invokeai-source-comparison)
+   Naming both subjects in the global positive preserved the apple and
+   mug in all six frames and increased correct opposing assignments from
+   two to three out of four. The seed-124 swap put the apple inside the
+   mug near the center. The matched current Invoke denoiser passed the
+   ordinary and assigned cases and repeated the same swapped result.
+   [Anima global subjects](./phase-4-anima-countertop-global-subjects-research.md)
    A frozen Smart Inpaint follow-up completed three installed CUDA requests.
    Exact compositing preserved all 179,368 zero-contribution pixels in each
    result. Both blind readers passed the ordinary control. The assigned mug
