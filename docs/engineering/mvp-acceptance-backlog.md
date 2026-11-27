@@ -9,8 +9,8 @@ Repair on ext4 with the qualification publisher. The stock Setup path
 requires the production publisher in step 5.
 The two-plinth reference swap failed the same visual gate in Studio and
 installed InvokeAI. Explicit Refresh and indexed restart passed local
-256-project checks. Early selection and preview also passed with one
-workspace. Complete discovery and same-workspace Open remain open in step 2.
+256-project checks. Early selection, preview and Open also passed with
+one workspace. Broader complete-discovery performance remains open in step 2.
 Retained update ownership remains open in step 3.
 
 The [verification baseline and bounded packaged generation checks](#ordered-acceptance-work)
@@ -156,6 +156,11 @@ environment and remaining limits, and update the current stage and next run.
         runs took 19.90 s and 19.88 s respectively. A separate run decoded
         the selected saved preview while only 60 cards were visible.
         [Single-workspace first scan](./phase-5-packaged-home-scale-research.md#show-verified-projects-during-the-first-scan-of-a-single-workspace)
+  - [x] In the single-workspace AppImage comparison, ordinary Open
+        reached the exact editor with 74 of 256 rows indexed. The control
+        reached it at 256 rows. Both clicks were issued at 65 rows and the
+        candidate completed discovery and an indexed restart normally.
+        [Same-workspace Open](./phase-5-packaged-home-scale-research.md#open-a-verified-project-during-the-first-scan-of-its-own-workspace)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

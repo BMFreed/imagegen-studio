@@ -48,6 +48,8 @@ export interface ProjectAutosaveOptions {
   debounceMs?: number
   /** Reject an indexed path swapped to another real file before a tab acquires its lease. */
   expectedCanonicalPath?: string
+  /** Require the exact saved package witnessed by early Home discovery. */
+  expectedSavedFingerprint?: string
   /** Inject a fresh registry only when simulating a new main process after a crash. */
   leaseRegistry?: ProjectAutosaveLeaseRegistry
   onAutosaveError?: (error: Error) => void
@@ -258,6 +260,9 @@ export class ProjectAutosaveCoordinator {
           'Inspect and resolve the Project recovery state before editing the saved document.',
         )
       }
+      if (options.expectedSavedFingerprint !== undefined) {
+        session.assertCurrentLocation(session.filePath)
+      }
       return new ProjectAutosaveCoordinator(
         session,
         savedPackage.project,
@@ -324,7 +329,12 @@ export class ProjectAutosaveCoordinator {
     shadow: ProjectShadowStore,
     options: ProjectAutosaveOptions = {},
   ): Promise<ProjectAutosaveCoordinator> {
-    const session = await ProjectSession.open(projectPath, roots, options.expectedCanonicalPath)
+    const session = await ProjectSession.open(
+      projectPath,
+      roots,
+      options.expectedCanonicalPath,
+      options.expectedSavedFingerprint,
+    )
     return await ProjectAutosaveCoordinator.attach(session, roots, shadow, options)
   }
 

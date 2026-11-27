@@ -2074,9 +2074,10 @@ if (!gotInstanceLock) {
           try {
             // An empty launch take does no catalog work. Before the direct handler takes the
             // path there is no yield in Main, so any later arrival will notify the renderer.
-            // An initial catalog request acquires this same lock inside each workspace slice.
+            // Initial discovery and Home Open acquire or borrow the catalog lock in ProjectService.
             const needsCatalogLock =
               catalogOperation &&
+              channel !== ipcChannels.projects.open &&
               (channel !== ipcChannels.projects.takeLaunchImport || launchPaths.hasPending) &&
               (channel !== ipcChannels.projects.listHomeCatalog || args.length !== 2)
             const value = needsCatalogLock
@@ -2772,18 +2773,21 @@ if (!gotInstanceLock) {
           return tab
         },
       )
-      registerProjectHandler(ipcChannels.projects.open, oneProjectId, async (projectId) => {
-        const wasOpen = projectService.getOpenTabs().some((tab) => tab.id === projectId)
-        const result = await projectGenerationRecovery.open(projectId as string)
-        if (result.kind === 'opened') {
-          const warning = await reconcileOpenedProject(result.tab.id, wasOpen)
-          if (warning) {
-            result.tab.storageWarning = [result.tab.storageWarning, warning]
-              .filter(Boolean)
-              .join(' ')
+      registerProjectHandler(ipcChannels.projects.open, oneProjectId, (id) => {
+        const projectId = id as string
+        return projectService.openFromHome(projectId, withWorkspaceCatalogLock, async (read) => {
+          const wasOpen = projectService.getOpenTabs().some((tab) => tab.id === projectId)
+          const result = await projectGenerationGate.run(projectId, read)
+          if (result?.kind === 'opened') {
+            const warning = await reconcileOpenedProject(result.tab.id, wasOpen)
+            if (warning) {
+              result.tab.storageWarning = [result.tab.storageWarning, warning]
+                .filter(Boolean)
+                .join(' ')
+            }
           }
-        }
-        return result
+          return result
+        })
       })
       registerProjectHandler(
         ipcChannels.projects.resolveRecovery,

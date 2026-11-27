@@ -333,6 +333,11 @@ export interface ProjectServiceOptions {
   shadow: ProjectShadowStore
 }
 
+interface InitialHomeOpen {
+  opening?: { projectId: string; result: Promise<ProjectOpenResult | null> }
+  projects: Map<string, ProjectIndexRecord>
+}
+
 export class ProjectServiceError extends Error {
   constructor(
     readonly code:
@@ -384,6 +389,7 @@ export class ProjectServiceError extends Error {
  */
 export class ProjectService {
   private initialDefaultScan: Promise<boolean> | undefined
+  private initialHomeOpen: InitialHomeOpen | undefined
   private initialization: Promise<void> | undefined
   private readonly liveRelocations = new Map<
     string,
@@ -2309,6 +2315,7 @@ export class ProjectService {
     const publish = async (
       workspace: ProjectWorkspaceRecord,
       witnesses: ReadonlyMap<string, ProjectIndexRecord> = validated,
+      earlyOpen?: InitialHomeOpen,
     ) => {
       if (!publishInitial) {
         return
@@ -2318,6 +2325,15 @@ export class ProjectService {
         if (initial) {
           const notify = publishInitial
           publishInitial = undefined
+          if (earlyOpen) {
+            for (const card of initial.projects) {
+              const witness = witnesses.get(card.id)
+              if (witness && !card.pendingMove && !card.pendingRename) {
+                earlyOpen.projects.set(card.id, witness)
+              }
+            }
+            this.initialHomeOpen = earlyOpen
+          }
           notify(initial)
         }
       } catch {
@@ -2341,21 +2357,34 @@ export class ProjectService {
         (await this.options.repository.listProjects(id)).length === 0
           ? onlyWorkspace
           : undefined
+      const earlyOpen: InitialHomeOpen | undefined =
+        earlyPage && sliceLock ? { projects: new Map() } : undefined
       const onValidated = (project: ProjectIndexRecord) => {
         completed.push(project)
         if (earlyPage && completed.length === HOME_INITIAL_PAGE_SIZE) {
           const page = new Map(completed.map((record) => [record.localProjectKey, record]))
-          return publish(earlyPage, page)
+          return publish(earlyPage, page, earlyOpen)
         }
       }
-      if (await this.scanWorkspaceIfAvailable(id, onValidated)) {
-        for (const project of completed) {
-          validated.set(project.localProjectKey, project)
+      try {
+        if (await this.scanWorkspaceIfAvailable(id, onValidated)) {
+          for (const project of completed) {
+            validated.set(project.localProjectKey, project)
+          }
+          scanned.set(id, directoryPath)
+          return true
         }
-        scanned.set(id, directoryPath)
-        return true
+        return false
+      } finally {
+        if (earlyOpen && this.initialHomeOpen === earlyOpen) {
+          // The scan still owns the catalog lock. Close and lifecycle operations cannot
+          // proceed until the admitted Open, including generation reconciliation, settles.
+          this.initialHomeOpen = undefined
+          if (earlyOpen.opening) {
+            await Promise.allSettled([earlyOpen.opening.result])
+          }
+        }
       }
-      return false
     }
     const workspaceRecords = await this.scanRegisteredWorkspaces(
       scan,
@@ -2824,6 +2853,37 @@ export class ProjectService {
     } finally {
       this.opening.delete(projectId)
     }
+  }
+
+  /** The initial scan can lend its catalog lock to a published, still-current Project. */
+  async openFromHome(
+    projectId: string,
+    withCatalogLock: <T>(work: () => Promise<T>) => Promise<T>,
+    use: <T extends ProjectOpenResult | null>(read: () => Promise<T>) => Promise<T>,
+  ): Promise<ProjectOpenResult> {
+    assertProjectId(projectId)
+    const earlyOpen = this.initialHomeOpen
+    const witness = earlyOpen?.projects.get(projectId)
+    const pending = earlyOpen?.opening
+    if (earlyOpen && witness && (!pending || pending.projectId === projectId)) {
+      // Keep one archive Open in flight while discovery is also reading packages.
+      const opening = pending ?? {
+        projectId,
+        result: use(() => this.openVerifiedHomeProject(witness)),
+      }
+      earlyOpen.opening = opening
+      try {
+        const result = await opening.result
+        if (result) {
+          return result
+        }
+      } finally {
+        if (earlyOpen.opening === opening) {
+          earlyOpen.opening = undefined
+        }
+      }
+    }
+    return await withCatalogLock(() => use(() => this.open(projectId)))
   }
 
   async prepareNormalGenerationContext(
@@ -5043,11 +5103,27 @@ export class ProjectService {
 
   private async openOne(projectId: string): Promise<ProjectOpenResult> {
     const record = await this.requireReadyRecord(projectId, true)
+    return await this.openRecord(record)
+  }
+
+  private async openRecord(record: ProjectIndexRecord): Promise<ProjectOpenResult>
+  private async openRecord(
+    record: ProjectIndexRecord,
+    recheck: () => Promise<boolean>,
+  ): Promise<ProjectOpenResult | null>
+  private async openRecord(
+    record: ProjectIndexRecord,
+    recheck?: () => Promise<boolean>,
+  ): Promise<ProjectOpenResult | null> {
+    const projectId = record.localProjectKey
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
       record.canonicalPath,
       this.options.shadow,
     )
     const temporary = await this.inspectTemporaryRecovery(projectId)
+    if (recheck && !(await recheck())) {
+      return null
+    }
     if (inspection.status !== 'absent' && inspection.status !== 'clean') {
       return {
         kind: 'recovery-required',
@@ -5074,6 +5150,9 @@ export class ProjectService {
       {
         ...this.options.autosaveOptions,
         expectedCanonicalPath: record.canonicalPath,
+        ...(recheck && record.fileFingerprint
+          ? { expectedSavedFingerprint: record.fileFingerprint }
+          : {}),
       },
     )
     this.tabWorkspaceIds.set(projectId, record.workspaceId)
@@ -5084,6 +5163,45 @@ export class ProjectService {
       tab.storageWarning = temporary.reason
     }
     return { kind: 'opened', tab }
+  }
+  private async openVerifiedHomeProject(
+    witness: ProjectIndexRecord,
+  ): Promise<ProjectOpenResult | null> {
+    const record = await this.options.repository.getProject(witness.localProjectKey)
+    if (
+      !record?.fileFingerprint ||
+      record.fileHealth !== 'ready' ||
+      record.workspaceId !== witness.workspaceId ||
+      record.canonicalPath !== witness.canonicalPath ||
+      record.fileFingerprint !== witness.fileFingerprint ||
+      record.documentId !== witness.documentId ||
+      record.documentRevision !== witness.documentRevision
+    ) {
+      return null
+    }
+    const workspace = await this.options.repository.workspaceById(record.workspaceId)
+    if (
+      path.dirname(record.canonicalPath) !== workspace.directoryPath ||
+      (await this.options.repository.workspaceAvailability(workspace)).availability !== 'available'
+    ) {
+      return null
+    }
+    const recheck = () => this.options.repository.matchesSavedFile(record)
+    if (!(await recheck())) {
+      return null
+    }
+    const existing = this.openTabs.get(record.localProjectKey)
+    if (existing) {
+      return { kind: 'opened', tab: this.toTab(record.localProjectKey, existing) }
+    }
+    try {
+      return await this.openRecord(record, recheck)
+    } catch (error) {
+      if (!(await recheck())) {
+        return null
+      }
+      throw error
+    }
   }
 
   private async readInitialHomeCatalog(

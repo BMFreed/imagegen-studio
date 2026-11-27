@@ -386,10 +386,12 @@ workspace that completes. When the library has one workspace and an empty
 index, Home can show its first verified page while its scan continues.
 Users can select these projects, inspect their
 saved previews and switch between that workspace and `Projects`. A search
-with zero matches shows loading until the catalog settles. Open can run
-between consecutive workspace scans. It may wait for the workspace
-currently being scanned. The initial discovery continues after the editor
-becomes usable and supplies the rest of the catalog when the user returns.
+with zero matches shows loading until the catalog settles. Open can use a
+verified card from the first page of a single-workspace scan. A changed file
+uses the ordinary catalog path and gets checked again. With several
+workspaces, Open can run between consecutive scans. Initial discovery can
+continue after the editor becomes usable and supply the rest of the catalog
+when the user returns.
 Refresh and Rescan discover external file changes and rebuild the catalog
 from the saved files. Home can reuse prior validation after checking the
 archive's full SHA-256 against the current validator, including after an

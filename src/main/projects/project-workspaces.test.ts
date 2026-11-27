@@ -16,6 +16,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 
 import { type AppDatabase, openAppDatabase } from '../db/database.js'
 import { readIgsPackage } from './igs-package.js'
@@ -722,85 +723,256 @@ test('Home exposes only verified first-folder Projects and their previews while 
   })
 })
 
-test('Initial Home exposes a verified page while its only workspace is still scanning', async () => {
-  await withWorkspaceFixture(async (fixture) => {
-    const workspace = await fixture.repository.ensureDefaultWorkspace(fixture.dataRoot)
-    const packages = new Map<string, string>()
-    for (let i = 1; i <= 62; i++) {
-      const name = `project-${i.toString().padStart(2, '0')}`
-      const saved = await ProjectSession.create(
-        path.join(workspace.directoryPath, `${name}.igs`),
-        name,
-        fixture.roots,
-      )
-      packages.set(localProjectRecoveryKey(saved.filePath), saved.filePath)
-    }
-
-    const remainingStarted = deferred()
-    const releaseRemaining = deferred()
-    let filesVisited = 0
-    class PausedIndex extends ProjectIndexRepository {
-      override async indexSaved(...args: Parameters<ProjectIndexRepository['indexSaved']>) {
-        if (++filesVisited === 61) {
-          remainingStarted.resolve()
-          await releaseRemaining.promise
-        }
-        return await super.indexSaved(...args)
-      }
-    }
-    const repository = new PausedIndex(fixture.database.db)
-    const service = fixture.makeService(repository)
-    const initial: ProjectHomeCatalog[] = []
-    const withCatalogLock = <T>(work: () => Promise<T>) =>
-      withProjectPathLock(fixture.dataRoot, work)
-    const catalog = service.listHomeCatalog(
-      undefined,
-      (snapshot) => initial.push(snapshot),
-      withCatalogLock,
+async function prepareSingleWorkspaceDiscovery(fixture: WorkspaceFixture) {
+  const workspace = await fixture.repository.ensureDefaultWorkspace(fixture.dataRoot)
+  const packages = new Map<string, string>()
+  for (let i = 1; i <= 62; i++) {
+    const name = `project-${i.toString().padStart(2, '0')}`
+    const saved = await ProjectSession.create(
+      path.join(workspace.directoryPath, `${name}.igs`),
+      name,
+      fixture.roots,
     )
-    try {
-      await Promise.race([
-        remainingStarted.promise,
-        catalog.then(() => assert.fail('The remaining Projects should still be paused.')),
-      ])
-      assert.equal(initial.length, 1)
-      assert.deepEqual(
-        initial[0].workspaces.map(({ id, projectCount }) => [id, projectCount]),
-        [[workspace.id, 60]],
-      )
-      assert.equal(initial[0].projects.length, 60)
-      assert.ok(
-        initial[0].projects.every(({ health, id }) => packages.has(id) && health === 'ready'),
-      )
-      const project = initial[0].projects[0]
-      assert.ok(project.previewUrl)
-      const resource = parseProjectMergedPreviewImageUrl(project.previewUrl)
-      assert.ok(resource)
-      const preview = await readProjectMergedPreview(resource, repository)
-      assert.equal(preview.status, 200)
-      const archive = await readIgsPackage(packages.get(project.id)!)
-      assert.deepEqual(
-        Buffer.from(await preview.arrayBuffer()),
-        await archive.readMember('preview/merged.png'),
-      )
-    } finally {
-      releaseRemaining.resolve()
-      await catalog
-    }
-    const complete = await catalog
-    assert.equal(initial.length, 1)
-    assert.deepEqual(new Set(complete.projects.map(({ id }) => id)), new Set(packages.keys()))
-    assert.equal(complete.workspaces[0].projectCount, 62)
+    packages.set(localProjectRecoveryKey(saved.filePath), saved.filePath)
+  }
 
-    const restarted = fixture.makeService(repository)
-    const indexedInitial: ProjectHomeCatalog[] = []
-    const indexed = await restarted.listHomeCatalog(undefined, (snapshot) => {
-      indexedInitial.push(snapshot)
+  const remainingStarted = deferred()
+  const releaseRemaining = deferred()
+  const scanBodyFinished = deferred()
+  let filesVisited = 0
+  class PausedIndex extends ProjectIndexRepository {
+    override async indexSaved(...args: Parameters<ProjectIndexRepository['indexSaved']>) {
+      if (++filesVisited === 61) {
+        remainingStarted.resolve()
+        await releaseRemaining.promise
+      }
+      return await super.indexSaved(...args)
+    }
+
+    override async scanWorkspace(...args: Parameters<ProjectIndexRepository['scanWorkspace']>) {
+      const records = await super.scanWorkspace(...args)
+      scanBodyFinished.resolve()
+      return records
+    }
+  }
+  const repository = new PausedIndex(fixture.database.db)
+  const service = fixture.makeService(repository)
+  const initial: ProjectHomeCatalog[] = []
+  const withCatalogLock = <T>(work: () => Promise<T>) => withProjectPathLock(fixture.dataRoot, work)
+  const catalog = service.listHomeCatalog(
+    undefined,
+    (snapshot) => initial.push(snapshot),
+    withCatalogLock,
+  )
+  return {
+    catalog,
+    initial,
+    packages,
+    releaseRemaining,
+    remainingStarted,
+    repository,
+    scanBodyFinished,
+    service,
+    withCatalogLock,
+    workspace,
+  }
+}
+
+test(
+  'Initial Home Open attaches the exact Project while its only workspace is still scanning',
+  { timeout: 10_000 },
+  async () => {
+    await withWorkspaceFixture(async (fixture) => {
+      const {
+        catalog,
+        initial,
+        packages,
+        releaseRemaining,
+        remainingStarted,
+        repository,
+        scanBodyFinished,
+        service,
+        withCatalogLock,
+        workspace,
+      } = await prepareSingleWorkspaceDiscovery(fixture)
+      const reconciliationStarted = deferred()
+      const releaseReconciliation = deferred()
+      const ordinaryOpenQueued = deferred()
+      let opening: ReturnType<typeof service.openFromHome> | undefined
+      let closeDrain: Promise<void> | undefined
+      try {
+        await Promise.race([
+          remainingStarted.promise,
+          catalog.then(() => assert.fail('The remaining Projects should still be paused.')),
+        ])
+        assert.equal(initial.length, 1)
+        assert.deepEqual(
+          initial[0].workspaces.map(({ id, projectCount }) => [id, projectCount]),
+          [[workspace.id, 60]],
+        )
+        assert.equal(initial[0].projects.length, 60)
+        assert.ok(
+          initial[0].projects.every(({ health, id }) => packages.has(id) && health === 'ready'),
+        )
+        const project = initial[0].projects[0]
+        assert.ok(project.previewUrl)
+        const resource = parseProjectMergedPreviewImageUrl(project.previewUrl)
+        assert.ok(resource)
+        const preview = await readProjectMergedPreview(resource, repository)
+        assert.equal(preview.status, 200)
+        const filePath = packages.get(project.id)!
+        const before = await readFile(filePath)
+        const archive = await readIgsPackage(filePath)
+        assert.deepEqual(
+          Buffer.from(await preview.arrayBuffer()),
+          await archive.readMember('preview/merged.png'),
+        )
+
+        opening = service.openFromHome(
+          project.id,
+          (work) => {
+            ordinaryOpenQueued.resolve()
+            return withCatalogLock(work)
+          },
+          async (read) => {
+            const result = await read()
+            assert.ok(result?.kind === 'opened')
+            assert.deepEqual(
+              [result.tab.id, result.tab.documentId, result.tab.documentRevision],
+              [project.id, archive.project.documentId, archive.project.documentRevision],
+            )
+            reconciliationStarted.resolve()
+            await releaseReconciliation.promise
+            return result
+          },
+        )
+        await Promise.race([
+          reconciliationStarted.promise,
+          opening.then(() => assert.fail('Open settled before reconciliation was released.')),
+          ordinaryOpenQueued.promise.then(() =>
+            assert.fail('Verified Open queued behind discovery.'),
+          ),
+        ])
+        assert.equal((await repository.listProjects(workspace.id)).length, 60)
+        assert.equal(service.getOpenTabs()[0]?.id, project.id)
+
+        // Main drains the catalog lock before snapshotting tabs for native Close.
+        let drained = false
+        closeDrain = withCatalogLock(async () => {
+          drained = true
+          assert.equal(service.getOpenTabs()[0]?.id, project.id)
+        })
+        releaseRemaining.resolve()
+        await Promise.race([
+          scanBodyFinished.promise,
+          catalog.then(() => assert.fail('The catalog must wait for Open reconciliation.')),
+        ])
+        await setImmediate()
+        assert.equal(drained, false, 'Close must wait for Open reconciliation after scanning ends.')
+        releaseReconciliation.resolve()
+        assert.equal((await opening).kind, 'opened')
+        await closeDrain
+        assert.equal(drained, true)
+        await service.close(project.id)
+        assert.deepEqual(await readFile(filePath), before)
+      } finally {
+        releaseRemaining.resolve()
+        releaseReconciliation.resolve()
+        await Promise.allSettled([catalog, opening, closeDrain])
+      }
+      const complete = await catalog
+      assert.equal(initial.length, 1)
+      assert.deepEqual(new Set(complete.projects.map(({ id }) => id)), new Set(packages.keys()))
+      assert.equal(complete.workspaces[0].projectCount, 62)
+
+      const restarted = fixture.makeService(repository)
+      const indexedInitial: ProjectHomeCatalog[] = []
+      const indexed = await restarted.listHomeCatalog(undefined, (snapshot) => {
+        indexedInitial.push(snapshot)
+      })
+      assert.deepEqual(indexedInitial, [])
+      assert.deepEqual(indexed, complete)
     })
-    assert.deepEqual(indexedInitial, [])
-    assert.deepEqual(indexed, complete)
-  })
-})
+  },
+)
+
+test(
+  'Initial Home Open queues the ordinary rescan when a published Project changed',
+  { timeout: 10_000 },
+  async () => {
+    await withWorkspaceFixture(async (fixture) => {
+      const {
+        catalog,
+        initial,
+        packages,
+        releaseRemaining,
+        remainingStarted,
+        repository,
+        service,
+        withCatalogLock,
+      } = await prepareSingleWorkspaceDiscovery(fixture)
+      const ordinaryOpenQueued = deferred()
+      let opening: ReturnType<typeof service.openFromHome> | undefined
+      try {
+        await Promise.race([
+          remainingStarted.promise,
+          catalog.then(() => assert.fail('The remaining Projects should still be paused.')),
+        ])
+        const project = initial[0].projects[0]
+        const filePath = packages.get(project.id)!
+        const saved = await ProjectSession.open(filePath, fixture.roots)
+        const witness = await repository.getProject(project.id)
+        assert.ok(witness)
+        saved.applyDocument({ ...saved.document, title: 'Changed during discovery' })
+        assert.equal((await saved.save()).reloadRequired, false)
+        assert.notEqual(saved.document.documentRevision, witness.documentRevision)
+        assert.equal(await repository.matchesSavedFile(witness), false)
+        const changed = await readFile(filePath)
+
+        opening = service.openFromHome(
+          project.id,
+          (work) => {
+            ordinaryOpenQueued.resolve()
+            return withCatalogLock(work)
+          },
+          async (read) => await read(),
+        )
+        await Promise.race([
+          ordinaryOpenQueued.promise,
+          opening.then(() => assert.fail('A changed Project opened under its stale witness.')),
+        ])
+        assert.deepEqual(service.getOpenTabs(), [])
+        assert.equal(
+          (await repository.getProject(project.id))?.documentRevision,
+          witness.documentRevision,
+        )
+        releaseRemaining.resolve()
+
+        const result = await opening
+        assert.equal(result.kind, 'opened')
+        assert.deepEqual(
+          [result.tab.id, result.tab.title, result.tab.documentId, result.tab.documentRevision],
+          [
+            project.id,
+            'Changed during discovery',
+            saved.document.documentId,
+            saved.document.documentRevision,
+          ],
+        )
+        assert.equal(
+          (await repository.getProject(project.id))?.documentRevision,
+          saved.document.documentRevision,
+        )
+        await service.close(project.id)
+        assert.deepEqual(await readFile(filePath), changed)
+        assert.equal((await catalog).projects.length, 62)
+      } finally {
+        releaseRemaining.resolve()
+        await Promise.allSettled([catalog, opening])
+      }
+    })
+  },
+)
 
 test('Open discovers an unindexed default Project before the first Home catalog', async () => {
   await withWorkspaceFixture(async (fixture) => {

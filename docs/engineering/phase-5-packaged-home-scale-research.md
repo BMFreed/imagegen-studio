@@ -1505,7 +1505,8 @@ before launching an AppImage. R21 finished two native lifetimes but failed
 the final source-stability guard when the working checkout changed. The
 reported control is the separate R22 replay on stable sources. The result
 qualifies early selection and preview on this single-folder fixture.
-Same-workspace Open and a broader Home performance target remain open.
+The follow-up below qualifies same-workspace Open. A broader Home
+performance target remains open.
 
 The reports, timings, filesystem inputs, native exit proofs and retained
 closed SQLite stores are under `runs/packaged-home-scale/20261127-r22`,
@@ -1516,3 +1517,88 @@ The scoped cleanup reclaimed 4,608,913,408 allocated bytes from the five
 attempts before removing a redundant intermediate SQLite copy. The
 retention receipts identify restored evidence and disposed paths. The
 held step-4 AppImage and ASAR remain available.
+
+## Open a verified Project during the first scan of its own workspace
+
+The 60-card startup page made selection and the Inspector usable before a
+single-folder scan finished. An ordinary Open still waited at two boundaries.
+Main held the catalog lock through that folder's scan. ProjectService also
+awaited the default discovery promise when opening by ID. The native control
+on `4b4b0cc2` clicked the first card with 65 of 256 rows indexed. The exact
+editor became usable with all 256 rows already indexed. The harness rejected
+that result at the early-Open criterion and closed the AppImage normally.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`. The
+`workbench/projects/useProjectActions.ts` caller starts hydration through
+`durableSyncedPersistence.ts` and fetches one ID in `workbench/projects/api.ts`.
+`invokeai/app/api/routers/projects.py::get_project` calls
+`project_records_default.py::get`, using the current user's document and
+workspace in one read-only transaction via `shared/database/queries/projects.py`.
+Invoke's catalog is backed by its records. It has no external portable `.igs`
+discovery lock. Studio adapts the individual Project read and keeps exclusive
+catalog access for the rest of discovery and lifecycle operations.
+
+Main retains authority for the project IDs and package fingerprints that the
+first empty single-workspace scan published. One verified Open can run while
+that scan holds the catalog lock, and concurrent requests for the same ID
+share its reply. Other IDs use the ordinary locked path. The fast path looks
+up the current row, checks workspace and exact file identity and runs the
+usual recovery inspection. The session checks the witnessed fingerprint on
+open and again at attachment after shadow inspection. A changed package falls
+through to normal locked Open and rescan. The scan stops admitting early
+requests before it settles the admitted Open, including the generation
+reconciliation, and releases the lock. Native close still drains that lock
+before snapshotting tabs. The IPC request still carries only the Project ID.
+
+The deterministic service tests pause the 61st archive, open the exact saved
+revision while only 60 rows are indexed and hold the post-open consumer while
+the close barrier waits. A second test changes the saved file after publication
+and verifies the ordinary path opens its new revision after discovery. The
+coordinator test atomically replaces the package during shadow inspection and
+verifies refusal and lease release before opening the replacement. These tests
+kept the saved package bytes exact. The 152 focused tests, typecheck, scoped
+lint and format checks, app build and AppImage packaging passed.
+The post-inspection fingerprint guard was also removed in an isolated source
+copy. The replacement test reached its real attach consumer and failed with
+`Missing expected rejection`. Restoring the guard passed the same test. The
+working checkout retained its original source hash throughout.
+
+### Native same-workspace comparison
+
+The control and candidate were rebuilt from base `4b4b0cc2`. The same native
+fixture staged 256 Projects with 1,024 distinct Raster PNGs into Uncategorized.
+Both AppImages ran in private software-rendered KDE Wayland on ext4 with a
+120% CPU quota, 4 GiB RAM, zero swap and a 300-second scope deadline. The
+control AppImage SHA-256 was
+`db45439bd59c4103112a3982a61b18b3c85ba4ba7085f96b3d990fe4a75d1900`.
+The candidate AppImage SHA-256 was
+`c83832beb78f174a3c676ce23e03d46fb768003211d23c5bfa7136b7ba7891ea`.
+
+| First-index Open observation                     | Control R25 | Candidate R26 |
+| ------------------------------------------------ | ----------: | ------------: |
+| Visible cards when invoking ordinary Open         |          60 |            60 |
+| SQLite rows immediately before the click          |          65 |            65 |
+| Click to exact usable editor                      |     13.29 s |        1.81 s |
+| SQLite rows sampled when the editor was ready     |         256 |            74 |
+| Time from launch to exact usable editor           |     20.20 s |        8.58 s |
+
+The candidate showed the expected selected tab, ready Canvas and enabled
+Save for the exact document and revision. The still-running scan reached
+all 256 rows at 15.52 seconds from launch. The indexed restart displayed
+all 256 cards at 6.69 seconds. No Save was issued. These are single samples
+on the local software-rendered host. Complete discovery performance and
+supported-host coverage remain open.
+
+Closed readback checked both embedded ASARs, all 512 original archive hashes
+and 4,608 ZIP entries, and both closed SQLite stores with the exact 256 ready
+rows and only the selected Project recorded as opened. The control and
+candidate member bytes matched across the two corpora. Both candidate
+lifetimes and the expected control failure exited normally. Peak group RAM
+was 2.44 GiB on the control and 3.01 GiB on the candidate. Both scopes had
+zero OOM events.
+
+The native observations, build and source receipts, closed SQLite states and
+mutation logs remain in `runs/packaged-home-scale/20261127-r25` and
+`20261127-r26`. After physical process exit and retained byte verification,
+cleanup released 3,113,250,816 allocated bytes. The test AppImages and raw
+profiles were removed from these two runs.

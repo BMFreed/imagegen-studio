@@ -463,7 +463,7 @@ async function measureEarlyPreview(card, preview, file, total, spawnAt) {
   }
 }
 
-async function measureEarlyOpen(state, root, files, database, launchStart) {
+async function measureEarlyOpen(state, root, files, database, launchStart, singleWorkspace) {
   const { page } = state
   const spawnAt = state.spawnedAt ?? launchStart
   const [file] = files
@@ -479,6 +479,15 @@ async function measureEarlyOpen(state, root, files, database, launchStart) {
   )
   assert.equal(projectId, file.id)
   assert.ok(partialGridCardCount > 0 && partialGridCardCount < files.length)
+  if (singleWorkspace) {
+    assert.equal(partialGridCardCount, 60)
+  }
+  const beforeClick = singleWorkspace
+    ? {
+        indexedProjectsBeforeClick: indexSnapshot(database).projects.length,
+        indexSampleBeforeClickSinceSpawnMs: performance.now() - spawnAt,
+      }
+    : undefined
   const clickAt = performance.now()
   await open.click()
 
@@ -501,6 +510,7 @@ async function measureEarlyOpen(state, root, files, database, launchStart) {
     documentId: file.documentId,
     documentRevision: file.revision,
     partialGridCardCount,
+    ...beforeClick,
     clickSinceSpawnMs: clickAt - spawnAt,
     editorReadySinceSpawnMs: editorReadyAt - spawnAt,
     indexSampleSinceSpawnMs: indexSampleAt - spawnAt,
@@ -508,6 +518,14 @@ async function measureEarlyOpen(state, root, files, database, launchStart) {
     startBoundary: state.spawnedAt === undefined ? 'launch call' : 'before spawn',
   }
   await writeJson(root, 'early-open-observation.json', observed)
+  if (beforeClick) {
+    const { indexedProjectsBeforeClick } = beforeClick
+    assert.ok(
+      indexedProjectsBeforeClick >= partialGridCardCount &&
+        indexedProjectsBeforeClick < files.length,
+      `Expected Open click during the Home scan: found ${indexedProjectsBeforeClick} of ${files.length} rows before clicking.`,
+    )
+  }
   assert.ok(
     projects.length < files.length,
     `Expected Project editor before the full Home index: found ${projects.length} of ${files.length} rows.`,
@@ -871,8 +889,8 @@ export async function runPackagedHomeScale({
   )
   assert.ok(
     earlyOpen === undefined ||
-      (earlyOpen === '1' && linked && distinct && layered256 && earlyPreview === undefined),
-    'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with linked-layered-distinct and without EARLY_PREVIEW.',
+      (earlyOpen === '1' && distinct && layered256 && earlyPreview === undefined),
+    'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with the 256-project distinct layered profiles and without EARLY_PREVIEW.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
@@ -952,7 +970,7 @@ export async function runPackagedHomeScale({
     let measured
     try {
       measured = openDuringDiscovery
-        ? await measureEarlyOpen(state, root, files, database, launchStart)
+        ? await measureEarlyOpen(state, root, files, database, launchStart, singleDistinct)
         : await measureHome(
             state,
             root,

@@ -165,6 +165,7 @@ export class ProjectSession {
     filePath: string,
     roots: ProjectSessionRoots,
     expectedCanonicalPath?: string,
+    expectedSavedFingerprint?: string,
   ): Promise<ProjectSession> {
     const canonicalPath = await canonicalProjectPath(filePath)
     if (expectedCanonicalPath && canonicalPath !== expectedCanonicalPath) {
@@ -174,6 +175,12 @@ export class ProjectSession {
       )
     }
     const before = await fileFingerprint(canonicalPath)
+    if (expectedSavedFingerprint !== undefined && before !== expectedSavedFingerprint) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The Project changed after its Home card was verified.',
+      )
+    }
     const initial = await readIgsPackage(canonicalPath)
     const after = await fileFingerprint(canonicalPath)
     if (before !== after) {

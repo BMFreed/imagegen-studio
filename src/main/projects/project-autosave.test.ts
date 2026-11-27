@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
+  lstat,
   mkdtemp,
   readdir,
   readFile,
@@ -109,6 +110,45 @@ function deferred(): { promise: Promise<void>; release: () => void } {
   })
   return { promise, release }
 }
+
+test('Open refuses a witnessed saved Project replaced during recovery inspection', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const stat = await lstat(projectPath, { bigint: true })
+    const expectedSavedFingerprint = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
+    const replacement = await ProjectSession.create(
+      path.join(directory, 'replacement.igs'),
+      'Replacement',
+      roots,
+    )
+    const replacementBytes = await readFile(replacement.filePath)
+    class ReplacingShadow extends ProjectShadowStore {
+      override async inspect(...args: Parameters<ProjectShadowStore['inspect']>) {
+        const result = await super.inspect(...args)
+        await rename(replacement.filePath, projectPath)
+        return result
+      }
+    }
+    const leases = new ProjectAutosaveLeaseRegistry()
+    await assert.rejects(
+      ProjectAutosaveCoordinator.open(
+        projectPath,
+        roots,
+        new ReplacingShadow(path.join(directory, 'app-data', 'autosave')),
+        { expectedSavedFingerprint, leaseRegistry: leases },
+      ),
+      { code: 'PROJECT_EXTERNAL_CHANGE' },
+    )
+    const reopened = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    try {
+      assert.equal(reopened.document.documentRevision, replacement.document.documentRevision)
+      assert.deepEqual(await readFile(projectPath), replacementBytes)
+    } finally {
+      await reopened.close()
+    }
+  })
+})
 
 async function bindMovedProject(
   database: ReturnType<typeof openAppDatabase>,
