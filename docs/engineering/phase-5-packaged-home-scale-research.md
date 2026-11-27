@@ -1704,3 +1704,31 @@ SQLite integrity and foreign keys. The compact reports and closed database
 copies are retained with the physical exit receipts. Cleanup of the disposable
 AppImage, profiles, fixture archive bodies and source scratch reclaimed
 2,904,776,704 allocated bytes.
+
+### Unreadable derived thumbnail entries
+
+On base `f6f74fef`, the Main thumbnail request opened the derived cache
+before checking the opened descriptor type. An owned Linux test placed a
+FIFO without a writer there. The request waited at open with the Project
+path lock held. The test reported the stalled response and then opened a
+temporary writer to let the original request and fixture teardown finish.
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`gallery/gallery_default.py::_to_item` makes the thumbnail URL.
+`invokeai/app/api/routers/images.py::get_image_thumbnail` uses blocking
+open after its read-access and maintenance checks and the path resolution
+in `services/images/images_default.py::get_path` and
+`services/image_files/image_files_disk.py::get_path`. Invoke's recovery
+service treats occupied non-regular paths as unusable and preserves them
+in `services/gallery_maintenance/gallery_maintenance_default.py::_stat`
+and its caller `_regenerate_thumbnails`.
+
+Studio applies that regular-file policy to the opened descriptor. Its
+existing nonblocking open flag from the model preview reader lets a
+Linux FIFO reach the type check without waiting for another process.
+Main falls back to the exact embedded WebP. The regression checks status
+200, exact WebP bytes, the same FIFO inode, no temporary cache output,
+release of the Project path lock and exact original archive bytes.
+The sustained check is the actual Main preview consumer with an owned
+SQLite index and `.igs`. Its receipts are under
+`runs/home-cache-special-file/20261128`.

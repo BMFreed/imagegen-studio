@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import * as yauzl from 'yauzl'
 
 import { openAppDatabase } from '../db/database.js'
@@ -436,6 +449,79 @@ test('a symlinked cache directory is ignored while the verified .igs remains rea
     await rm(directory, { force: true, recursive: true })
   }
 })
+
+test(
+  'a FIFO at the derived thumbnail path cannot block the Project preview',
+  {
+    skip: process.platform !== 'linux',
+  },
+  async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-home-cache-fifo-'))
+    const database = openAppDatabase(directory, migrations)
+    try {
+      const repository = new ProjectIndexRepository(database.db)
+      const workspace = await repository.ensureDefaultWorkspace(directory)
+      const filePath = path.join(workspace.directoryPath, 'Preview Fallback.igs')
+      await ProjectSession.create(filePath, 'Preview Fallback', {
+        placeholdersDir,
+        scratchDir: path.join(directory, 'scratch'),
+      })
+      const record = await repository.indexSaved(filePath, workspace.id)
+      assert.ok(record.thumbnailSha256)
+      const original = await readFile(filePath)
+      const expected = await (await readIgsPackage(filePath)).readMember('preview/thumbnail.webp')
+      const cacheRoot = path.join(directory, 'previews', 'project-thumbnails')
+      const cacheName = `${record.thumbnailSha256}.webp`
+      const cacheFile = path.join(cacheRoot, cacheName)
+      await mkdir(cacheRoot, { recursive: true })
+      execFileSync('mkfifo', [cacheFile])
+      const fifo = await lstat(cacheFile, { bigint: true })
+      assert.ok(fifo.isFIFO())
+
+      const deadline = new AbortController()
+      const thumbnail = readProjectThumbnail(
+        { projectId: record.localProjectKey, thumbnailSha256: record.thumbnailSha256 },
+        repository,
+        cacheRoot,
+      )
+      try {
+        const response = await Promise.race([
+          thumbnail,
+          delay(3000, undefined, { signal: deadline.signal }).then(() => {
+            assert.fail('Thumbnail response is waiting for a writer on the cache FIFO.')
+          }),
+        ])
+        assert.equal(response.status, 200)
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected)
+      } catch (error) {
+        // Let a regressed blocking reader finish before removing its fixture.
+        const unblock = await open(cacheFile, constants.O_RDWR | constants.O_NONBLOCK)
+        try {
+          await thumbnail
+        } finally {
+          await unblock.close()
+        }
+        throw error
+      } finally {
+        deadline.abort()
+      }
+
+      const retained = await lstat(cacheFile, { bigint: true })
+      assert.ok(retained.isFIFO())
+      assert.equal(retained.dev, fifo.dev)
+      assert.equal(retained.ino, fifo.ino)
+      assert.deepEqual(await readdir(cacheRoot), [cacheName])
+      assert.equal(
+        (await repository.indexSaved(filePath, workspace.id)).fileFingerprint,
+        record.fileFingerprint,
+      )
+      assert.deepEqual(await readFile(filePath), original)
+    } finally {
+      await database.close()
+      await rm(directory, { force: true, recursive: true })
+    }
+  },
+)
 
 test('thumbnail rechecks lifecycle under its file lock after a concurrent positive delete commit', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-home-trash-preview-'))

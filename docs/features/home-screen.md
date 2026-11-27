@@ -635,6 +635,8 @@ Preview is for inspection, not editing.
    preview and rebuilds the cache. Home can reuse small thumbnails retained
    during discovery after checking the current Project registration and file
    identity. A miss falls back to the embedded thumbnail in the current `.igs`.
+   A cache entry that is not a regular file is treated as a miss and left in
+   place.
    If an embedded preview is missing, Home shows a damaged-project diagnostic.
 5. User can zoom/pan.
 6. User can open the project or perform project file actions.

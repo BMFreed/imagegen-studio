@@ -84,6 +84,11 @@ const scenePrompts = {
       'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, even lighting',
   },
   'countertop-scene': countertopScene,
+  'countertop-separate-subjects': {
+    ...countertopScene,
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, two separate objects with a clear stretch of empty tabletop between them, even lighting',
+  },
   'countertop-subject-weight': {
     globalPositive:
       'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',
@@ -347,6 +352,17 @@ const weightControl = {
   },
   run: 'anima-background-visual/20261121-r2',
 }
+const separationControl = {
+  pins: {
+    'seed-123-assigned': '83bb4a577394f5f0e4ce5c451ae61a0c75f7680b71f660fffa2e3291e9424894',
+    'seed-123-ordinary': '27e7dd20a2d2bc042c5fe8127d73e1836b88f9cb61a4a8cbd217e5512b45c503',
+    'seed-123-swapped': '5f5b8499661626cad73070891113fc44ac5c78e0b2437a2e4edcaabb0ccfba1e',
+    'seed-124-assigned': 'c9f90ebe0c2439e63d435a6f12847acc6c0417ee62e3b4ec7b089039fd88d632',
+    'seed-124-ordinary': '72eaebcba4616d74d7ab035b1330e06aeaa6a91ddb162061f41e66d443af993a',
+    'seed-124-swapped': 'ded323d122419745c5319041028562bb00d43a533331a992a3efbd34642964b6',
+  },
+  run: 'anima-countertop-global-subjects/20261127-r1',
+}
 
 function comparableRequest(request: AnimaWorkerRequest) {
   const { job, requestId: _requestId, ...envelope } = request
@@ -457,6 +473,7 @@ async function main() {
   )
   const scene = sceneName && scenePrompts[sceneName]
   const closedGap = sceneName === 'countertop-gap-closed'
+  const separateSubjects = sceneName === 'countertop-separate-subjects'
   const masks = closedGap ? closedGapMasks : sceneMasks
   const profile = sceneName
     ? `anima-${sceneName}`
@@ -466,7 +483,29 @@ async function main() {
   assert.equal(path.dirname(run), path.join(artifactRoot, 'runs', profile))
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
   assert.equal(await realpath(run), run)
-  const selectedCases = scene ? sceneCases : equalWeight ? cases.slice(2) : cases
+  const start = Date.now()
+  const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
+  assert.ok(bounds.unit.endsWith('.service'))
+  const fixture = JSON.parse((await bytesAt(path.join(run, 'fixture.json'))).toString()) as {
+    contract: FilePin
+  }
+  assert.deepEqual(Object.keys(fixture), ['contract'])
+  assert.equal(fixture.contract.path, path.join(run, 'experiment-contract.json'))
+  await verifyFixtureFile(fixture.contract)
+  const contract = JSON.parse((await bytesAt(fixture.contract.path)).toString())
+  const selectedSeeds = separateSubjects
+    ? sceneSeeds.filter((candidate) => candidate === contract.seeds?.[0])
+    : sceneSeeds
+  if (separateSubjects) {
+    assert.equal(selectedSeeds.length, 1)
+  }
+  const selectedCases = separateSubjects
+    ? sceneCases.filter(({ seed }) => selectedSeeds.includes(seed))
+    : scene
+      ? sceneCases
+      : equalWeight
+        ? cases.slice(2)
+        : cases
   const selectedPositives =
     scene?.regionalPositives ??
     (equalWeight ? { ...regionalPositives, blue: equalBluePositive } : regionalPositives)
@@ -485,16 +524,6 @@ async function main() {
     : globalCompiled
   const write = (name: string, value: unknown) => writeJson(name, value, run)
 
-  const start = Date.now()
-  const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
-  assert.ok(bounds.unit.endsWith('.service'))
-  const fixture = JSON.parse((await bytesAt(path.join(run, 'fixture.json'))).toString()) as {
-    contract: FilePin
-  }
-  assert.deepEqual(Object.keys(fixture), ['contract'])
-  assert.equal(fixture.contract.path, path.join(run, 'experiment-contract.json'))
-  await verifyFixtureFile(fixture.contract)
-  const contract = JSON.parse((await bytesAt(fixture.contract.path)).toString())
   const applicationRevision = revision(repository)
   const invokeRevision = revision(invoke)
   assert.deepEqual(
@@ -521,7 +550,7 @@ async function main() {
       selectedGlobalPositive,
       globalNegative,
       selectedPositives,
-      scene ? sceneSeeds : seed,
+      scene ? selectedSeeds : seed,
       sampling,
       selectedCases,
     ],
@@ -529,6 +558,9 @@ async function main() {
   if (scene) {
     assert.deepEqual(contract.regionalMasks, masks)
     assert.equal(contract.compositionProfile, ANIMA_REGIONAL_COMPOSITION_PROFILE)
+  }
+  if (separateSubjects) {
+    assert.equal(contract.priorExperiment, path.join(artifactRoot, 'runs', separationControl.run))
   }
   if (equalWeight) {
     assert.deepEqual(contract.comparison, weightControl)
@@ -809,6 +841,53 @@ async function main() {
                       coverage: regional[index].coverage,
                     }),
                   )
+                  if (separateSubjects) {
+                    const { label } = testCase
+                    const expectedSha = Object.entries(separationControl.pins).find(
+                      ([controlLabel]) => controlLabel === label,
+                    )?.[1]
+                    assert.ok(expectedSha)
+                    const controlBytes = await bytesAt(
+                      path.join(
+                        artifactRoot,
+                        'runs',
+                        separationControl.run,
+                        `${label}.request.json`,
+                      ),
+                    )
+                    assert.equal(sha(controlBytes), expectedSha)
+                    const control = JSON.parse(controlBytes.toString()) as {
+                      case: typeof testCase
+                      compiledPrompts: unknown[]
+                      compositionProfile: string | null
+                      regions: unknown
+                      request: AnimaWorkerRequest
+                      sampledSupport: unknown
+                    }
+                    assert.deepEqual(control.case, testCase)
+                    assert.equal(
+                      control.compositionProfile,
+                      regions.length ? ANIMA_REGIONAL_COMPOSITION_PROFILE : null,
+                    )
+                    assert.deepEqual(control.regions, regions)
+                    assert.deepEqual(control.sampledSupport, support)
+                    assert.deepEqual(control.compiledPrompts.slice(1), compiledPrompts.slice(1))
+                    assert.equal(control.request.type, 'generate-anima-txt2img')
+                    assert.notDeepEqual(control.request.job.prompts.positive, job.prompts.positive)
+                    assert.deepEqual(
+                      comparableRequest({
+                        ...control.request,
+                        job: {
+                          ...control.request.job,
+                          prompts: {
+                            ...control.request.job.prompts,
+                            positive: job.prompts.positive,
+                          },
+                        },
+                      }),
+                      stableJob,
+                    )
+                  }
                   if (equalWeight) {
                     assert.ok(
                       testCase.label === 'inset-assigned' || testCase.label === 'inset-swapped',

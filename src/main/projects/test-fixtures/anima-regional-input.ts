@@ -104,6 +104,11 @@ const INSTALLED_VISUAL_SCENES = {
       'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, even lighting',
   },
   'countertop-scene': COUNTERTOP_SCENE,
+  'countertop-separate-subjects': {
+    ...COUNTERTOP_SCENE,
+    globalPositive:
+      'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, one red apple and one blue ceramic mug, two separate objects with a clear stretch of empty tabletop between them, even lighting',
+  },
   'countertop-subject-weight': {
     globalPositive:
       'anime still life illustration, front view, medium wide shot, continuous pale wooden tabletop in front of a plain light blue wall, open display space, even lighting',

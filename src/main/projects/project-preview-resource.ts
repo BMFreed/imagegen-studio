@@ -327,7 +327,8 @@ async function safeCacheDirectory(cacheRoot: string): Promise<string> {
 async function readVerifiedCache(filePath: string, expectedSha256: string): Promise<Buffer | null> {
   let handle
   try {
-    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW)
+    // Inspect the opened node without waiting for a writer if a FIFO occupies the cache path.
+    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     const entry = await handle.stat()
     if (!entry.isFile() || entry.size > thumbnailLimit) {
       return null

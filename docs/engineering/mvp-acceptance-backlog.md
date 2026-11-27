@@ -33,6 +33,11 @@ environment and remaining limits, and update the current stage and next run.
         seed-124 swap centered the apple inside the mug in Studio and
         in a matched run of the current Invoke denoiser.
         [Global subject and Invoke comparison](./phase-4-anima-countertop-global-subjects-research.md)
+  - [x] With an explicit tabletop gap in the Anima global positive, both
+        ordinary controls and all four opposite-side assignments passed
+        blind agent review on seeds 123 and 124. Human acceptance and
+        independent local-negative utility remain open.
+        [Two-seed placement result](./phase-4-anima-countertop-separation-research.md)
   - [x] Ran ordinary Smart Inpaint on official Illustrious XL v0.1 and
         the matched installed InvokeAI graph. Both preserved all 163,636
         protected pixels and failed the single grounded apple criterion.
@@ -172,6 +177,10 @@ environment and remaining limits, and update the current stage and next run.
         18.53 s and 19.07 s respectively. Indexed restarts reached it in
         7.33 s and 7.49 s. The supported-host speed target remains open.
         [Packaged full catalog](./phase-5-packaged-home-scale-research.md#packaged-complete-discovery-in-one-and-three-workspaces)
+  - [x] A thumbnail request with a FIFO at its derived cache path now
+        returns the exact embedded WebP and releases the Project path lock.
+        The unusual cache entry and the original Project keep their identities.
+        [Main cache fallback](./phase-5-packaged-home-scale-research.md#unreadable-derived-thumbnail-entries)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for
