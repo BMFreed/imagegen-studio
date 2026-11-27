@@ -134,9 +134,9 @@ environment and remaining limits, and update the current stage and next run.
         [Full-discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-recent-png-checks-throughout-a-large-workspace-scan)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
-      that path already passed locally. Define and qualify how to retire the old
-      copy, its stage and backup while accounting for legacy processes that can
-      still write to the same path.
+      that path already passed locally. A dedicated local folder has a
+      manual archive procedure. Retirement for shared paths and general
+      ownership of legacy writers remain open.
       [Update ownership and recovery](./phase-5-application-update-interruption-research.md#interrupted-and-adjacent-paths)
   - [x] Signed D reached Review and preflight after C on the used recovery
         path. Both refused before any close callback and preserved the
@@ -166,6 +166,13 @@ environment and remaining limits, and update the current stage and next run.
         path using only the local target. The copy reopened the exact
         Project and the original stage and backup stayed intact.
         [Recovery without a newer release](./phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
+  - [x] After normal exit and physical readback of the controlled
+        AppImage processes, the ext4 fixture archived the dedicated
+        original folder with its image, stage, backup and lock intact.
+        The verified copy reopened the exact Project from a separate
+        path. A live descriptor control shows why the real operation
+        requires exclusive offline access.
+        [Dedicated folder archive](./phase-5-application-update-interruption-research.md#archive-a-dedicated-old-appimage-folder-after-exit)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery

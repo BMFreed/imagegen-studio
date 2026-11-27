@@ -295,6 +295,81 @@ the same-version Save and the downloaded-release control at 900×620.
 Typecheck, scoped lint and AppImage packaging passed. Independent source
 review found no blocking issue.
 
+## Archive a dedicated old AppImage folder after exit
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/model_install/model_install_default.py::start` calls
+`install_staging_ledger.py::sweep_stale_claims` and
+`remove_dangling_staging`. The ledger checks the specific recorded owner using
+Linux boot identity and process start ticks and preserves recovery-marked
+or uncertain trees. The explicit removal route in `api/routers/model_manager.py`
+calls `orphaned_models_service.py::delete_orphaned_models`, which refuses
+protected data. `invokeai/app/util/no_replace.py::rename_noreplace` provides
+the same-filesystem, no-replace primitive for moving a directory as one unit.
+
+Clean Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce` uses the Electron
+profile lock in `src/main/index.ts`. `src/main/main-process-manager.ts`
+calls `src/main/updater.ts`, which hands off to `quitAndInstall`.
+The pinned `electron-updater` 6.6.2 `out/AppImageUpdater.js::doInstall`
+writes by pathname and does not acquire Studio's writer lock. Neither
+donor excludes all prior AppImage processes with other profiles or
+uncooperating writers. The Invoke database instance lock in
+`shared/database/startup.py` and `database.py` is scoped to an Invoke
+server database.
+
+Studio uses the donor's preserve-on-uncertainty rule. The bounded manual
+procedure requires exclusive access to the local volume outside the
+normal session. A recovered copy must already reopen the Project from a
+different folder. Move the dedicated old folder as one directory to an
+unused sibling name on the same filesystem. This keeps the original
+image, complete stage and stable lock together, with the backup still
+inside the stage. The archived journal retains its original paths.
+Folders shared with user data or unrelated programs stay outside this
+procedure. The application gains no deletion, rollback or retirement
+authority.
+
+A separate owned-process control opened the original directory before
+rename and waited. The parent performed the no-copy, no-replace move
+and observed that the old pathname was gone. The same live PID and
+start identity then used its held directory descriptor to write a marker
+into the archived directory before exiting normally. A successful move
+alone therefore cannot stand in for physical exit or exclusive access.
+
+The opt-in native `--kde-retire-current` scenario used the exact compiled
+Studio application from `db4072b6`, rebuilt as signed qualification
+AppImages on ext4. Updates checked the current version through the local
+feed and KDE saved the verified image in a sibling folder. The original
+and recovered AppImages each closed normally with their recorded process
+identities gone. The driver verified that the dedicated old folder
+contained just the original executable, its stage and the lock.
+
+GNU `mv --no-copy --update=none-fail -T` refused an occupied empty sibling
+and preserved its inode. The same command moved to an unused sibling and
+the driver synced the parent directory. The source path was absent. The
+archived parent and stage kept their inodes, and the original image and
+all stage and lock files matched their previous bytes and identities.
+The third lifetime used the separate verified copy. Updates reported
+recovery clear and the original clean Project revision reopened. After
+normal exit, the archive still matched and the old name was still absent.
+The three lifetimes used extract-and-run, and the fixture controlled all
+launches from the tested paths. Actual rescue boot and ownership of other
+processes on an end-user volume were outside this qualification.
+
+Independent readback checked the two signed packages, 42 compiled file
+hashes bound to the prior audited build, the two real KDE responses,
+both directory inodes and all six archived file witnesses. It verified
+the same Project in three closed SQLite snapshots at 30 migrations and
+the physical exit of 24 recorded processes. It also checked the live
+descriptor control's marker and the controlled writer's exit against
+the kernel. This fixture has one synthetic Project and no installed
+models or runtime.
+
+The 127 focused tests, scoped lint, syntax and formatting checks passed.
+The durable receipts and compact witnesses are in
+`runs/packaged-recovery-action/20261127-retire-r1` under the artifact root.
+Cleanup removed the owned test packages, profiles and scratch after
+physical exit, reclaiming 1,360,523,264 allocated bytes.
+
 ## Guidance after a stage appears during the session
 
 The existing Main stage-veto control proves that a new retained stage

@@ -38,6 +38,7 @@ assert.ok(
           '--install-next',
           '--kde-install-next',
           '--kde-recover-next',
+          '--kde-retire-current',
           '--kde-save',
           '--kde-save-after-replace',
           '--kde-save-current',
@@ -49,7 +50,8 @@ const kdeRecoverNext = rest[0] === '--kde-recover-next'
 const kdeInstallNext = rest[0] === '--kde-install-next' || kdeRecoverNext
 const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
-const kdeSaveCurrent = rest[0] === '--kde-save-current'
+const kdeRetireCurrent = rest[0] === '--kde-retire-current'
+const kdeSaveCurrent = rest[0] === '--kde-save-current' || kdeRetireCurrent
 const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
 const kdeSaveDefault =
   rest[0] === '--kde-save-default' ||
@@ -305,6 +307,7 @@ assert.equal(
 )
 
 const applicationDir = path.join(root, 'Applications')
+const recoveryDir = kdeRetireCurrent ? path.join(root, 'Recovery') : applicationDir
 const profile = path.join(root, 'profile')
 const cwd = path.join(root, 'cwd')
 const data = installedRuntime ? path.dirname(installedRuntime.appData) : path.join(root, 'data')
@@ -312,7 +315,7 @@ const workspace = path.join(data, 'imagegen-studio/workspaces/Uncategorized')
 const original = path.join(applicationDir, 'Original.AppImage')
 const occupiedPath = path.join(applicationDir, 'Occupied.AppImage')
 const newPath = path.join(
-  applicationDir,
+  recoveryDir,
   kdeSaveDefault ? `ImageGen-Studio-${recoveryVersion}-Recovery.appimage` : 'Recovered.AppImage',
 )
 const finalRecoveryPath = path.join(applicationDir, 'ImageGen-Studio-0.4.0-Recovery.appimage')
@@ -334,6 +337,7 @@ const events = async () =>
     .map(JSON.parse)
 for (const folder of [
   applicationDir,
+  ...(kdeRetireCurrent ? [recoveryDir] : []),
   profile,
   cwd,
   ...(installedRuntime ? [] : [data]),
@@ -343,10 +347,10 @@ for (const folder of [
   await fs.mkdir(folder, { mode: 0o700 })
 }
 if (kdeSaveDefault) {
-  assert.match(applicationDir, /^\/[a-zA-Z0-9_/.-]+$/)
+  assert.match(recoveryDir, /^\/[a-zA-Z0-9_/.-]+$/)
   await fs.writeFile(
     path.join(root, 'config/user-dirs.dirs'),
-    `XDG_DOWNLOAD_DIR="${applicationDir}"\n`,
+    `XDG_DOWNLOAD_DIR="${recoveryDir}"\n`,
     { flag: 'wx', mode: 0o600 },
   )
 }
@@ -888,7 +892,13 @@ async function observeStartup(state) {
     'startup',
     state.version,
     undefined,
-    (event) => !kdeSaveCurrent || event.appImage === state.filename,
+    (event) =>
+      !kdeSaveCurrent ||
+      (event.appImage === state.filename &&
+        !lifetimes.some(
+          (previous) =>
+            previous !== state && previous.pid === event.pid && previous.start === event.start,
+        )),
   )
   assert.equal(startup.appImage, state.filename)
   assert.equal(startup.userData, profile)
@@ -906,10 +916,14 @@ async function observeStartup(state) {
     await ownKdeScope(state.pid, state.start)
   }
 }
-async function launch(filename, version) {
+async function launch(filename, version, afterRetirement = false) {
   await removePortFile()
-  const logName =
-    kdeSaveCurrent && filename === newPath ? `native-${version}-saved` : `native-${version}`
+  const label = afterRetirement
+    ? '-after-retirement'
+    : kdeSaveCurrent && filename === newPath
+      ? '-saved'
+      : ''
+  const logName = `native-${version}${label}`
   const stderrPath = path.join(run, `${logName}.stderr`)
   const state = {
     checks: [],
@@ -1047,6 +1061,97 @@ async function retainClosedDatabase(name) {
   assert.equal(await hash(destination), witness.sha256)
   assert.deepEqual(await fileWitness(source), witness)
   return { source, destination, witness }
+}
+
+async function directoryWitness(directory) {
+  assert.equal(await fs.realpath(directory), directory)
+  const entry = await fs.lstat(directory, { bigint: true })
+  assert.ok(entry.isDirectory() && entry.uid === BigInt(process.geteuid()))
+  assert.equal(entry.mode & 0o7777n, 0o700n)
+  return { dev: String(entry.dev), ino: String(entry.ino) }
+}
+
+async function archiveClosedApplications() {
+  // This fixture controls the original pathname and every launch from it. Its exit
+  // receipts are not a scan or exclusion proof for unknown application processes.
+  assert.equal(lifetimes.length, 2)
+  for (const state of lifetimes) {
+    assert.equal(state.normalCode, 0)
+    assert.equal(state.scopeExit?.confirmed, true)
+  }
+  const archived = path.join(root, 'Archived-Applications')
+  const occupied = path.join(root, 'Occupied-Archive')
+  const members = [
+    path.basename(original),
+    path.basename(retainedDirectory),
+    path.basename(retainedDirectory) + '.lock',
+  ].sort()
+  const parent = await directoryWitness(root)
+  const directory = await directoryWitness(applicationDir)
+  const stageDirectory = await directoryWitness(retainedDirectory)
+  assert.equal(directory.dev, parent.dev)
+  assert.equal(stageDirectory.dev, parent.dev)
+  assert.deepEqual((await fs.readdir(applicationDir)).sort(), members)
+  assert.deepEqual(await retainedState(), retained)
+  await fs.mkdir(occupied, { mode: 0o700 })
+  const occupiedBefore = await directoryWitness(occupied)
+  const moved = (destination) =>
+    promisify(execFile)(
+      '/usr/bin/mv',
+      ['--no-copy', '--update=none-fail', '-T', '--', applicationDir, destination],
+      { env: { LC_ALL: 'C' }, timeout: 10_000, maxBuffer: 8192 },
+    )
+  // A plain POSIX rename could replace this empty target. It stays untouched.
+  await assert.rejects(moved(occupied), { code: 1 })
+  assert.deepEqual(await directoryWitness(occupied), occupiedBefore)
+  assert.deepEqual(await fs.readdir(occupied), [])
+  assert.deepEqual(await directoryWitness(applicationDir), directory)
+  assert.deepEqual(await retainedState(), retained)
+  await assert.rejects(fs.lstat(archived), { code: 'ENOENT' })
+  await moved(archived)
+  const parentHandle = await fs.open(
+    root,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  )
+  try {
+    const held = await parentHandle.stat({ bigint: true })
+    assert.equal(String(held.dev), parent.dev)
+    assert.equal(String(held.ino), parent.ino)
+    assert.deepEqual(await directoryWitness(root), parent)
+    await parentHandle.sync()
+  } finally {
+    await parentHandle.close()
+  }
+  const assertArchived = async () => {
+    await assert.rejects(fs.lstat(applicationDir), { code: 'ENOENT' })
+    assert.deepEqual((await fs.readdir(archived)).sort(), members)
+    assert.deepEqual(await directoryWitness(archived), directory)
+    assert.deepEqual(
+      await directoryWitness(path.join(archived, path.basename(retainedDirectory))),
+      stageDirectory,
+    )
+    const state = await retainedState(path.join(archived, path.basename(original)))
+    assert.deepEqual(state, retained)
+    return state
+  }
+  assert.deepEqual(await directoryWitness(occupied), occupiedBefore)
+  assert.deepEqual(await fs.readdir(occupied), [])
+  return {
+    assertArchived,
+    evidence: {
+      source: applicationDir,
+      destination: archived,
+      occupied: { path: occupied, before: occupiedBefore, after: await directoryWitness(occupied) },
+      directory: { before: directory, after: await directoryWitness(archived) },
+      stageDirectory: {
+        before: stageDirectory,
+        after: await directoryWitness(path.join(archived, path.basename(retainedDirectory))),
+      },
+      original,
+      saved: newPath,
+      archivedBeforeReopen: await assertArchived(),
+    },
+  }
 }
 
 async function editPositivePrompt(page, projectId, text) {
@@ -1722,7 +1827,8 @@ try {
   assert.equal(reopened[0].id, projectId)
   await second.getByRole('button', { name: `Open ${title}`, exact: true }).click()
   await expect(projectTab(second)).toBeVisible()
-  assert.equal((await call(second, 'projects', 'open', projectId)).tab.dirty, false)
+  const recoveredTab = (await call(second, 'projects', 'open', projectId)).tab
+  assert.equal(recoveredTab.dirty, false)
   const recoveredRuntime = installedRuntime ? await readInstalledReady(second) : undefined
   let downloadedC
   let installed
@@ -1814,6 +1920,42 @@ try {
     report.kdeSave.retainedAfterReopen = await retainedState()
     assert.deepEqual(report.kdeSave.retainedAfterReopen, retained)
   }
+  if (kdeRetireCurrent) {
+    const { evidence, assertArchived } = await archiveClosedApplications()
+    report.coldRetirement = evidence
+    assert.deepEqual(await fileWitness(newPath), materialized)
+    const cold = await launch(newPath, recoveryVersion, true)
+    const reopenedAfterArchive = await call(cold.page, 'applicationUpdates', 'getRecoveryStatus')
+    assert.deepEqual(reopenedAfterArchive, { status: 'clear' })
+    const entries = await call(cold.page, 'projects', 'list')
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].id, projectId)
+    await cold.page.getByRole('button', { name: `Open ${title}`, exact: true }).click()
+    await expect(projectTab(cold.page)).toBeVisible()
+    const { tab } = await call(cold.page, 'projects', 'open', projectId)
+    assert.equal(tab.id, recoveredTab.id)
+    assert.equal(tab.documentId, recoveredTab.documentId)
+    assert.equal(tab.documentRevision, recoveredTab.documentRevision)
+    assert.equal(tab.dirty, false)
+    await closeNormally(cold)
+    assert.deepEqual(await fileWitness(newPath), materialized)
+    assert.equal(await hash(project), projectSha)
+    const snapshot = path.join(run, 'archived-reopen-closed.igs')
+    await fs.copyFile(project, snapshot, constants.COPYFILE_EXCL)
+    assert.equal(await hash(snapshot), projectSha)
+    Object.assign(evidence, {
+      archivedAfterReopen: await assertArchived(),
+      afterReopen: await retainClosedDatabase('archived-reopen-closed.sqlite'),
+      projectAfterReopen: {
+        destination: snapshot,
+        documentId: tab.documentId,
+        documentRevision: tab.documentRevision,
+        id: tab.id,
+        sha256: projectSha,
+      },
+      recoveryAfterReopen: reopenedAfterArchive,
+    })
+  }
   assert.equal(
     (await events()).filter((event) => event.name === 'relaunch').length,
     installNext ? 1 : 0,
@@ -1878,6 +2020,7 @@ try {
       normalCode,
       pid,
       scopeExit,
+      start,
       version,
     }) => ({
       aggregateMemoryLimit,
@@ -1887,6 +2030,7 @@ try {
       normalCode,
       pid,
       scopeExit,
+      ...(kdeRetireCurrent ? { start } : {}),
       version,
     }),
   )

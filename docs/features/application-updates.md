@@ -593,6 +593,34 @@ test JSON/footer and unit journal are retained. See the linked research for sour
 pins, controlled native ports, full/focused visual evidence and retention receipts.
 This does not close recovery mutation or shipping acceptance.
 
+### Manually archive a dedicated old AppImage folder
+
+Use this procedure when the old AppImage has a dedicated local folder that
+contains only that image and its update-recovery files. The verified copy
+must already be working from a different folder.
+
+1. Open the verified copy, confirm Updates reports recovery clear, and
+   reopen an existing Project. Save work and close all Studio sessions
+   normally.
+2. Archive the old folder from an offline environment with exclusive
+   access to that local volume, such as a separate Linux rescue boot
+   where Studio cannot start. An empty window list or a free updater lock
+   alone cannot establish that older processes have stopped writing.
+3. Rename the whole old folder to a new, unused name in the same parent
+   on the same filesystem. If the new name is occupied, retain both
+   folders and choose another unused name. Keep the hidden update stage,
+   its backup, and the lock together with the old image.
+4. After returning to the normal session, start the verified copy outside
+   the archive and reopen the Project. Point any old shortcuts to that
+   copy and leave the former folder name unused.
+
+Leave a shared folder in place if it also contains Projects, application
+data, the runtime, models or other applications. Use the verified copy from
+its own path. Keep the archive for recovery evidence. Its journal still
+refers to the original absolute paths. Studio preserves these files and
+has no automatic retirement action.
+[Dedicated folder recovery qualification](../engineering/phase-5-application-update-interruption-research.md#archive-a-dedicated-old-appimage-folder-after-exit)
+
 ### Historical state compatibility checkpoint
 
 [Historical29→30](../engineering/phase-5-application-state-upgrade-research.md) now
