@@ -339,3 +339,65 @@ two queue rows and frozen inputs. The crash triplet, both closed databases,
 the saved archives and both frozen target bodies are retained. The audit
 confirmed the exit of 31 scope-witnessed identities. The exact Retry worker
 peaked at 7,320 MiB across 27 matched samples.
+
+### Setup and Repair with the rebuilt candidate on ext4
+
+The fresh Setup qualifier used the rebuilt stock build's 42 production
+members, wallet helper and native SQLite bytes. Independent raw package
+readback matched both ASARs and the qualification-only Main entrypoint.
+The loopback publisher used the retained signed metadata, runtime ZIP
+and LaMa. The current InvokeAI source was
+`64ff2c600f04d220e470fdaeec570bd402af42a7` and Invoke Launcher was
+`c267bdb439519216b277a7a8c6ad408b9d79efce`. The consulted callers were
+`invokeai/app/run_app.py` and `invokeai/app/util/startup_utils.py` for
+CUDA/cuDNN startup, and Launcher `src/renderer/features/InstallFlow/state.ts`
+and `src/main/install-manager.ts` for explicit Install and Repair.
+
+The clean profile passed Setup, a cold Ready check, explicit Repair
+after parking LaMa and a second cold Ready check. Both operations
+verified 4,607 archive entries. Repair reused the ZIP, downloaded
+LaMa again and published a distinct runtime ID while retaining the first
+slot. The ext4 measurements were:
+
+| Action | Free bytes at consent | Free bytes after publication |
+| ------ | --------------------: | ---------------------------: |
+| Setup  |        52,260,839,424 |               30,424,121,344 |
+| Repair |        30,579,236,864 |               12,210,212,864 |
+
+All four AppImage lifetimes closed normally. The wrapper ran 326.819 s
+with zero swap. The report and compact evidence are under
+`runs/packaged-runtime-setup/20261127-r1`. Production distribution
+still requires the publisher recorded in checklist step 5.
+
+The independent runtime audit matched both slot identities, all 146
+worker bodies, both LaMa copies and the completed journal's current
+and previous pointer bytes. It verified immutable SQLite and all 30
+migrations, 37 absent process identities and four exited native scopes.
+Retention preserved the tested AppImage, database, pointers, provenance
+and worker logs. Releasing the isolated slots and scratch reclaimed
+40,884,727,808 uniquely allocated bytes.
+
+### Exact model relink on the rebuilt stock AppImage
+
+The exact `4d0cdae6` stock executable repeated the software X11 relink
+scenario. The fixture verified all three model bodies in place. It set
+Cyberfalafel v1.1 as Default separately from the portable project's exact
+Cyberfalafel v1.2 link and its V-prediction override. Link changed the two
+local draft IDs. Explicit Save and cold reopen preserved the accepted
+Raster and frozen provenance. All four lifetimes closed normally.
+
+The current InvokeAI checkout was `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+The metadata caller in
+`invokeai/frontend/webv1/src/features/metadata/parsing.tsx` uses the hash
+lookup in `invokeai/frontend/webv1/src/services/api/endpoints/models.ts`.
+The route in `invokeai/app/api/routers/model_manager.py` calls
+`invokeai/app/services/model_records/model_records_sql.py` and
+`invokeai/app/services/shared/database/queries/models.py`. The existing
+Studio exact provider and digest resolver handled the replay. The native
+report and closed state are in `runs/packaged-noobai-install/20261127-r2`.
+
+Independent readback matched the AppImage and ASAR, closed catalog and
+both saved archives. The derivative previews used the same unavailable
+placeholders as the earlier software X11 replay. The accepted Raster and
+frozen V provenance stayed byte-identical. All 40 recorded process
+identities and the private Xvfb had exited before retention.

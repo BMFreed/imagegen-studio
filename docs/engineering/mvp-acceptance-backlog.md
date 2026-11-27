@@ -188,11 +188,12 @@ environment and remaining limits, and update the current stage and next run.
         retained the old stage. The original lock and neighbors kept
         their identities and the verified copy reopened the exact Project.
         [Shared folder archive](./phase-5-application-update-interruption-research.md#archive-one-old-appimage-from-a-shared-folder)
-- [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
-      with a clean profile and a copy of historical state. Exercise Setup/Repair,
-      SQLite migration and backup, Generate → Add → Save → reopen, queue recovery
-      and frozen Retry, NoobAI EPS/V, exact model relink and incompatible-worker
-      refusal.
+- [x] **4. Qualify the rebuilt local candidate on RTX 4080.** The exact
+      stock AppImage passed SQLite migration and backup, Generate → Add →
+      Save → reopen, queue recovery and frozen Retry, NoobAI EPS/V, exact
+      model relink and incompatible-worker refusal. Setup and Repair
+      passed on ext4 with the matching production assets and the signed
+      qualification publisher. Production delivery remains in step 5.
       [Packaged upgrade and worker Repair](./phase-5-packaged-runtime-protocol-repair-research.md)
   - [x] **Check again** in the open AppImage distinguished the two runtime
         recovery states after confirmed installer exit. Cold launches matched
@@ -211,11 +212,13 @@ environment and remaining limits, and update the current stage and next run.
         Repair and two cold readiness checks on ext4 with the signed
         qualification publisher.
         [Setup and Repair result](./phase-5-pinned-stock-candidate-research.md#candidate-setup-and-repair-on-ext4)
+        [Replay matching the rebuilt stock](./phase-5-pinned-stock-candidate-research.md#setup-and-repair-with-the-rebuilt-candidate-on-ext4)
   - [x] The stock AppImage linked the exact Cyberfalafel v1.2 file with
         v1.1 as Default and preserved the accepted Raster and provenance
         through explicit Save and cold reopen.
         [Exact model relink](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-on-the-stock-candidate)
         [Independent replay on 8a8af921](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-replay-on-8a8af921)
+        [Replay on the rebuilt stock](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-on-the-rebuilt-stock-appimage)
   - [x] The rebuilt AppImage migrated a seeded DB29 profile twice, including
         after manually copying the chosen backup. The saved Project and the
         displaced database with its committed WAL survived both startups.
