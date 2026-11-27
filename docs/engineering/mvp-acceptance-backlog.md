@@ -32,6 +32,10 @@ environment and remaining limits, and update the current stage and next run.
         seed-124 swap centered the apple inside the mug in Studio and
         in a matched run of the current Invoke denoiser.
         [Global subject and Invoke comparison](./phase-4-anima-countertop-global-subjects-research.md)
+  - [x] Ran ordinary Smart Inpaint on official Illustrious XL v0.1 and
+        the matched installed InvokeAI graph. Both preserved all 163,636
+        protected pixels and failed the single grounded apple criterion.
+        [Smart Inpaint tabletop comparison](./phase-4-illustrious-smart-tabletop-research.md)
   - [x] Checked responsiveness to the Anima apple negative across the full
         image. The apple remained recognizable with the image-wide phrase
         and both earlier local assignments. The local suppression gate
@@ -481,6 +485,11 @@ entries record the state at their checkpoint.
    The connected ordinary control kept both subjects. This one-variable
    trial leaves regional placement open on the scene.
    [Connected Smart edit](./phase-4-anima-smart-regional-public-research.md#connected-smart-edit-with-the-same-regional-masks)
+   An ordinary Smart Inpaint control using official Illustrious XL v0.1
+   preserved all 163,636 zero-contribution pixels. Studio and installed
+   InvokeAI produced byte-identical contribution masks. Both outputs
+   failed the one-apple insertion criterion and showed a visible join.
+   [Illustrious Smart Inpaint control](./phase-4-illustrious-smart-tabletop-research.md)
    The red-apple IMG follow-up has a frozen baseline, a treatment over
    the apple and a spatial control over the mug. CPU preparation verified
    exact decoded source pixels and local negative owners. Three installed

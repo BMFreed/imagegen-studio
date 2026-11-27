@@ -87,6 +87,13 @@ The [connected Smart mask](./phase-4-anima-smart-regional-public-research.md#con
 preserved all 163,636 zero-contribution source pixels and kept the table
 edge continuous. Both regional frames produced a single centered mug.
 
+## Ordinary Illustrious Smart Inpaint on a tabletop
+
+The [ordinary Illustrious tabletop edit](./phase-4-illustrious-smart-tabletop-research.md)
+used the official XL v0.1 checkpoint. Studio and installed InvokeAI kept
+all 163,636 protected pixels and produced identical contribution masks.
+Neither produced a recognizable apple grounded on the tabletop.
+
 ## Startup recovery of committed Project deletion
 
 [Packaged Trash recovery](./phase-5-packaged-project-trash-recovery-research.md)
