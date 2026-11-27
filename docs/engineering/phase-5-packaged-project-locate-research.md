@@ -143,3 +143,21 @@ Locate Folder. The controlled regression passed at 900×620 with visible
 focus. A second cancellation also preserved focus when it had already moved
 to the File menu. All eight Home catalog tests passed. The RED and GREEN
 logs and screenshots are in `runs/current-stock-mvp/20261127/browser-focus`.
+
+The rebuilt stock `4d0cdae60ce30f06bd07974ce4b578d999f1eb6b`
+AppImage, SHA-256
+`e0e45842ef0ec5d13372b56f2cd9161b68ea2ec41cdfdf4fc3a9c5b919493425`,
+repeated the cross-workspace flow in private KDE Wayland. Keyboard Enter
+on the Inspector action triggered the real portal picker. After the native
+Cancel response, the button was enabled, focused and matched `:focus-visible`.
+The 1380×900 screenshot shows the focus outline on the same action.
+The other selection controls and three normal physical closes passed.
+Independent readback matched the screenshot, five KDE responses, the stock
+AppImage and embedded ASAR, three closed SQLite snapshots and the accepted
+Raster bytes. All 30 recorded process identities had exited.
+Both Home browser files passed all 33 tests on the committed renderer.
+The full browser suite was stopped before completion, so this verification
+is limited to Home and the recorded packaged replay.
+Replay with `IMAGEGEN_PORTABLE_LOCATE_INSPECTOR_CANCEL=1` in cross-workspace
+mode. The screenshot, portal traces, report and closed snapshots are in
+`runs/packaged-noobai-locate/20261127-r2`.

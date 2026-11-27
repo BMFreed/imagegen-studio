@@ -224,3 +224,35 @@ exit for all 40 recorded process identities. The 114 focused model
 and Project package tests passed with no failures or skips. The
 scenario qualifies linking, persistence and reopen on the previously
 generated Project.
+
+### Exact model relink replay on 8a8af921
+
+The InvokeAI checkout was clean at
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The replay reread
+the key and hash lookups in
+`invokeai/frontend/webv1/src/features/metadata/parsing.tsx` and their
+caller in `invokeai/frontend/webv1/src/services/api/endpoints/models.ts`.
+The `get_model_records_by_hash` route in
+`invokeai/app/api/routers/model_manager.py` uses `search_by_hash` in
+`invokeai/app/services/model_records/model_records_sql.py`, backed by
+`with_hash` in `invokeai/app/services/shared/database/queries/models.py`.
+The existing Studio exact provider and digest resolver was exercised
+without a behavior change.
+
+The unmodified `8a8af9214f377a70226b8bac583426056aa3c1fb` AppImage
+repeated the Default v1.1 and exact Link v1.2 flow in private software X11.
+The stock proof matched the embedded ASAR and all 43 checked build files.
+The harness checked the original three installed files in place. Across
+four normal launches, Link changed the two local draft IDs, explicit Save
+preserved the accepted Raster and V-prediction provenance, and both the
+project and Default opened with the expected selections on cold restart.
+Save wrote the same unavailable-preview derivatives as the previous X11
+run. This result covers linking and preservation of the accepted layer.
+
+Independent readback matched the archive, frozen provenance, closed catalog,
+source pins and AppImage. It verified physical exit for all 40 recorded
+process identities. The report, original input and exact two output archives
+and SQLite are in `runs/packaged-noobai-install/20261127-r1`. To repeat on a
+fresh build, provide its live package proof and explicitly pin its SHA-256
+with `IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX_PROOF_SHA256`. The historical
+proof remains the default pin.

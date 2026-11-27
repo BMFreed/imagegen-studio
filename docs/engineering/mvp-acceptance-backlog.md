@@ -71,9 +71,9 @@ environment and remaining limits, and update the current stage and next run.
         the sidebar as a modal, keeps Tab inside, and returns focus after Escape.
         Four sampled labels meet 4.5:1 at 900×620.
         [Native Locate and Settings result](./phase-5-packaged-workspace-chooser-research.md#locate-folder-cancellation-and-workspace-settings)
-  - [x] Canceling Locate Project restores visible focus to the Inspector
-        action in Chromium and leaves focus on File if the user already
-        moved it there.
+  - [x] Canceling the real KDE Locate Project chooser returns visible focus
+        to the Inspector action on the rebuilt AppImage. The Chromium
+        regression also preserves focus if the user has moved it to File.
         [Locate Project focus](./phase-5-packaged-project-locate-research.md#keyboard-focus-after-cancel)
   - [x] The stock AppImage located a moved Project in another registered
         workspace through KDE. It preserved the original key, accepted Raster
@@ -214,6 +214,10 @@ environment and remaining limits, and update the current stage and next run.
         v1.1 as Default and preserved the accepted Raster and provenance
         through explicit Save and cold reopen.
         [Exact model relink](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-on-the-stock-candidate)
+        [Independent replay on 8a8af921](./phase-5-pinned-stock-candidate-research.md#exact-model-relink-replay-on-8a8af921)
+  - [ ] Repeat the historical DB29 and real incompatible-worker checks on
+        the rebuilt AppImage. Its protocol-2 worker uses CUDA for startup
+        qualification before sending the incompatible hello.
 
 ### Public release
 
