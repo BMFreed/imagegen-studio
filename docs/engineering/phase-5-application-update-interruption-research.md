@@ -472,3 +472,46 @@ files, including the before/after screenshots. The new text is qualified
 in Chromium against the renderer port. The signed AppImage recovery
 action has a separate
 [native A–D qualification](./phase-5-packaged-recovery-kde-next-update-research.md#a-subsequent-signed-recovery-on-a-fresh-path).
+
+### Prepared stage after Review on the AppImage
+
+The clean InvokeAI checkout was `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/model_install/install_staging_ledger.py` rechecks
+staging under `HeldClaim` before removing it. The current startup lock
+called by `invokeai/app/api/dependencies.py` through
+`invokeai/app/services/shared/database/startup.py` is for server databases.
+The fixture uses Studio's existing participating updater admission and
+staging owner. Legacy-process ownership remains open.
+
+In private KDE Wayland, AppImage A checked for and downloaded signed B
+from the loopback qualification publisher. A had clear startup recovery
+and an eligible Review for one dirty Project. A separate test process
+prepared B through the staging owner after Review, released the
+participating lock and left the journal in `prepared`.
+
+Install and restart refused with the save-and-restart guidance. Refresh
+preview refused again. The same A process and dirty Project stayed open,
+and the source AppImage, downloaded B, stage and saved `.igs` kept their
+identities. Explicit Save then wrote the prompt and a new revision.
+After normal exit, a second A startup reported recovery required with
+both target and runtime unverified. It opened the same Project key at the
+exact saved revision. Both lifetimes then had normal physical exit receipts.
+
+The R3 run is in `runs/packaged-recovery-action/20261127-late-stage-r3`.
+Independent readback verified A and B, 42 embedded files in each, the exact
+prepared journal and signed authority, the two `.igs` files, two closed
+SQLite snapshots and the absence of all 16 recorded process identities.
+The 1380×900 refusal screenshot shows both dismissal and refresh.
+R1 timed out while waiting for the first eligible Review. R2 reached both
+normal exits and failed while comparing archive reader objects that own
+different function instances. R3 compares the project and manifest as well
+as the exact saved file identity. Run with `--kde-late-stage` and the existing
+two-release `--kde-save` qualification package manifest.
+
+The adjacent `--kde-save-default` case used the same signed package bytes
+and current runner. The real KDE chooser canceled once and then saved B
+at the default lowercase spelling. B reopened the same Project after A
+closed, and both lifetimes completed normally. An earlier attempt with
+the generic mixed-case filename stopped because KDE appended another
+`.appimage` suffix. The default-name run is retained in
+`runs/packaged-recovery-action/20261127-late-stage-neighbor-r2`.

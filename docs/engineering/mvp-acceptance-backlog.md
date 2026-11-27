@@ -160,10 +160,11 @@ environment and remaining limits, and update the current stage and next run.
         runtime verification had matched and the cooperating lock was held.
         A fresh inspection demoted both matches and preserved recovery data.
         [Signed runtime ownership control](./phase-5-application-update-interruption-research.md#a-signed-runtime-match-and-an-unleased-writer)
-  - [x] Review and Install now give a save-and-restart path when a stage
-        appears during the session. The renderer checks preserved the
-        download and exercised manual dismissal without a Project close.
-        [Late recovery guidance](./phase-5-application-update-interruption-research.md#guidance-after-a-stage-appears-during-the-session)
+  - [x] A stage prepared after eligible Review caused the AppImage to
+        refuse Install and Refresh with save-and-restart guidance.
+        Manual dismissal preserved the dirty Project and signed download.
+        Explicit Save and cold reopen preserved the new revision.
+        [Native late-stage refusal](./phase-5-application-update-interruption-research.md#prepared-stage-after-review-on-the-appimage)
   - [x] KDE supplied an occupied AppImage path after its overwrite prompt.
         Studio preserved the file and retried with the same signed download
         at a fresh path. Both lifetimes closed normally with the exact
