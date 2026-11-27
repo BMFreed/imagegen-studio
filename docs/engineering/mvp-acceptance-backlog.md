@@ -71,6 +71,14 @@ environment and remaining limits, and update the current stage and next run.
         the sidebar as a modal, keeps Tab inside, and returns focus after Escape.
         Four sampled labels meet 4.5:1 at 900×620.
         [Native Locate and Settings result](./phase-5-packaged-workspace-chooser-research.md#locate-folder-cancellation-and-workspace-settings)
+  - [x] Canceling Locate Project restores visible focus to the Inspector
+        action in Chromium and leaves focus on File if the user already
+        moved it there.
+        [Locate Project focus](./phase-5-packaged-project-locate-research.md#keyboard-focus-after-cancel)
+  - [x] The stock AppImage located a moved Project in another registered
+        workspace through KDE. It preserved the original key, accepted Raster
+        and distinct neighboring revision through close and explicit reopen.
+        [Cross-workspace Locate](./phase-5-packaged-project-locate-research.md#cross-workspace-locate-on-kde-wayland)
   - [x] After a keyboard-confirmed Move to Trash, the AppImage visibly
         focuses Search projects in the current Home view. The closed Project
         and its Trash record survive restart, and the neighboring Project

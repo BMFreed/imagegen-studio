@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, readdir, rename, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -88,6 +88,29 @@ function locationSnapshot(filename) {
   }
 }
 
+async function registerLocateDestination(state, directory) {
+  const { driveKdeDirectoryChooser } = await import('./packaged-kde-chooser.mjs')
+  const home = state.page.getByRole('region', { name: 'Home', exact: true })
+  const dialog = state.page.getByRole('dialog', { name: 'Add Workspace', exact: true })
+  await home.getByRole('button', { name: 'Add Workspace', exact: true }).click()
+  await dialog
+    .getByRole('textbox', { name: 'Workspace name', exact: true })
+    .fill('Locate Destination')
+  const choice = await driveKdeDirectoryChooser({
+    state,
+    source: directory,
+    windowTitle: 'Add Workspace',
+    trigger: dialog.getByRole('button', { name: 'Choose Folder and Add', exact: true }),
+  })
+  await expect(dialog).toHaveCount(0)
+  const navigation = home.getByRole('complementary', { name: 'Workspace navigation' })
+  await expect(
+    navigation.getByRole('button', { name: 'Locate Destination 0', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await navigation.getByRole('button', { name: 'Projects', exact: true }).click()
+  return choice
+}
+
 export async function runPortableLocate({
   root,
   appData,
@@ -99,18 +122,36 @@ export async function runPortableLocate({
   retainOwnStore,
   identity,
 }) {
+  const crossWorkspaceFlag = process.env.IMAGEGEN_PORTABLE_LOCATE_CROSS_WORKSPACE
+  assert.ok(crossWorkspaceFlag === undefined || crossWorkspaceFlag === '1')
+  const crossWorkspace = crossWorkspaceFlag === '1'
+  const inspectorCancel = process.env.IMAGEGEN_PORTABLE_LOCATE_INSPECTOR_CANCEL
+  assert.ok(inspectorCancel === undefined || (crossWorkspace && inspectorCancel === '1'))
+  let expectedPackage
+  if (crossWorkspace) {
+    assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the private KDE directory chooser.')
+    const proof = JSON.parse(
+      await readFile(path.join(path.dirname(root), 'package-proof.json'), 'utf8'),
+    )
+    assert.equal(proof.schemaVersion, 1)
+    assert.ok(proof.package.path.startsWith(ownedRunRoot + path.sep))
+    expectedPackage = proof.package
+  }
   const original = await verifyChooserFixture({
     scenario: 'locate',
     root,
     ownedRunRoot,
     packageBefore,
     identity,
+    expectedPackage,
   })
   const workspace = path.join(appData, 'workspaces/Uncategorized')
   await mkdir(workspace, { recursive: true, mode: 0o700 })
+  const destinationWorkspace = crossWorkspace ? path.join(root, 'Locate Destination') : workspace
+  if (crossWorkspace) await mkdir(destinationWorkspace, { mode: 0o700 })
   const oldPath = path.join(workspace, 'Original NoobAI.igs')
-  const locatedPath = path.join(workspace, 'Located NoobAI.igs')
-  const alternatePath = path.join(workspace, 'Different revision.igs')
+  const locatedPath = path.join(destinationWorkspace, 'Located NoobAI.igs')
+  const alternatePath = path.join(destinationWorkspace, 'Different revision.igs')
   const externalPath = path.join(root, 'External NoobAI.igs')
   const db = path.join(appData, 'database/app.sqlite')
   const id = projectId(oldPath)
@@ -121,11 +162,21 @@ export async function runPortableLocate({
 
   await copyFile(original.path, oldPath, constants.COPYFILE_EXCL)
   const initial = await launch('open-before-external-rename')
-  assert.equal((await readPorts(initial)).projects.value.length, 1)
+  const registration = crossWorkspace
+    ? await registerLocateDestination(initial, destinationWorkspace)
+    : undefined
+  const initialPorts = await readPorts(initial)
+  assert.equal(initialPorts.projects.value.length, 1)
+  const destination = initialPorts.workspaces.value.find(
+    ({ directoryPath }) => directoryPath === destinationWorkspace,
+  )
+  assert.ok(destination)
   const [initialRow] = indexSnapshot(db).projects
   assert.equal(initialRow.id, id)
   assert.equal(initialRow.filename, oldPath)
   assert.equal(initialRow.health, 'ready')
+  assert.equal(initialRow.workspace, 'uncategorized')
+  if (crossWorkspace) assert.notEqual(destination.id, initialRow.workspace)
   const open = (state) =>
     row(state, id).getByRole('button', { name: `Open ${initialRow.title}`, exact: true })
   await open(initial).click()
@@ -168,7 +219,8 @@ export async function runPortableLocate({
       witnesses,
     )
     assert.deepEqual(await identity(alternatePath), alternate)
-    assert.deepEqual((await readdir(workspace)).sort(), [
+    if (crossWorkspace) assert.deepEqual(await readdir(workspace), [])
+    assert.deepEqual((await readdir(destinationWorkspace)).sort(), [
       path.basename(alternatePath),
       path.basename(locatedPath),
     ])
@@ -191,13 +243,19 @@ export async function runPortableLocate({
   assert.equal(find(pending, id).filename, oldPath)
   assert.equal(find(pending, id).documentId, initialRow.documentId)
   assert.equal(find(pending, id).revision, initialRow.revision)
-  assert.deepEqual(find(pending, foundId), { ...initialRow, id: foundId, filename: locatedPath })
+  assert.deepEqual(find(pending, foundId), {
+    ...initialRow,
+    id: foundId,
+    filename: locatedPath,
+    workspace: destination.id,
+  })
   assert.deepEqual(find(pending, alternateId), {
     ...initialRow,
     id: alternateId,
     filename: alternatePath,
     revision: differentRevision,
     bytes: alternate.sizeBytes,
+    workspace: destination.id,
   })
   assert.deepEqual(pending.bindings, [])
   assert.deepEqual(pending.maintenance, before.maintenance)
@@ -229,7 +287,34 @@ export async function runPortableLocate({
     assert.deepEqual(snapshot(), pending)
     await assertFiles()
   }
-  await select()
+  let cancelFocusScreenshot
+  if (inspectorCancel) {
+    const { driveKdeChooser } = await import('./packaged-kde-chooser.mjs')
+    const selection = row(current, id).getByRole('button', {
+      name: `Select ${initialRow.title}`,
+      exact: true,
+    })
+    await selection.press('Enter')
+    await expect(selection).toHaveAttribute('aria-pressed', 'true')
+    const trigger = home
+      .getByRole('complementary', { name: 'Project inspector', exact: true })
+      .getByRole('button', { name: 'Locate Project', exact: true })
+    chooser.push(
+      await driveKdeChooser({
+        state: current,
+        windowTitle: 'Locate Project',
+        trigger,
+        activate: () => trigger.press('Enter'),
+      }),
+    )
+    await expect(trigger).toBeEnabled()
+    cancelFocusScreenshot = path.join(root, 'after-locate-cancel.png')
+    await current.page.screenshot({ path: cancelFocusScreenshot, animations: 'disabled' })
+    await expect(trigger).toBeFocused()
+    assert.equal(await trigger.evaluate((element) => element.matches(':focus-visible')), true)
+  } else {
+    await select()
+  }
   await assertRefused()
   await select(externalPath)
   await assertRefused('Choose a file directly inside a registered workspace.')
@@ -245,7 +330,11 @@ export async function runPortableLocate({
     ...pending,
     projects: pending.projects
       .filter(({ id: key }) => key !== foundId)
-      .map((entry) => (entry.id === id ? { ...initialRow, filename: locatedPath } : entry)),
+      .map((entry) =>
+        entry.id === id
+          ? { ...initialRow, filename: locatedPath, workspace: destination.id }
+          : entry,
+      ),
     accepted: [
       ...before.accepted,
       { ...before.accepted[0], id: alternateId, revision: differentRevision },
@@ -255,10 +344,31 @@ export async function runPortableLocate({
   })
   await assertFiles()
   await closeNormally(current)
-  const afterLocate = await retainOwnStore('after-locate-before-open', path.basename(locatedPath))
+  const afterLocate = await retainOwnStore(
+    'after-locate-before-open',
+    path.basename(locatedPath),
+    destinationWorkspace,
+  )
 
   const restart = await launch('open-after-locate-restart')
-  assert.equal((await readPorts(restart)).projects.value.length, 2)
+  const restartPorts = await readPorts(restart)
+  assert.equal(restartPorts.projects.value.length, 2)
+  if (crossWorkspace) {
+    assert.deepEqual(
+      restartPorts.workspaces.value
+        .map(({ id, directoryPath }) => ({ id, directoryPath }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+      initialPorts.workspaces.value
+        .map(({ id, directoryPath }) => ({ id, directoryPath }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    )
+    const navigation = restart.page.getByRole('complementary', { name: 'Workspace navigation' })
+    await expect(
+      navigation.getByRole('button', { name: 'Uncategorized 0', exact: true }),
+    ).toBeVisible()
+    await navigation.getByRole('button', { name: 'Locate Destination 2', exact: true }).click()
+    await expect(open(restart)).toBeVisible()
+  }
   await expect(row(restart, foundId)).toHaveCount(0)
   await expect(restart.page.getByRole('tab', { name: initialRow.title, exact: true })).toHaveCount(
     0,
@@ -267,7 +377,11 @@ export async function runPortableLocate({
   await open(restart).click()
   await assertOpened(restart, id)
   await closeNormally(restart)
-  const restarted = await retainOwnStore('after-located-open', path.basename(locatedPath))
+  const restarted = await retainOwnStore(
+    'after-located-open',
+    path.basename(locatedPath),
+    destinationWorkspace,
+  )
   const reopened = snapshot()
   assert.ok(reopened.opened[id] > located.opened[id])
   assert.deepEqual(reopened, {
@@ -279,6 +393,8 @@ export async function runPortableLocate({
     saved,
     restarted,
     portableNoobaiLocate: {
+      ...(crossWorkspace && { registration, destination, sourceWorkspaceId: initialRow.workspace }),
+      ...(cancelFocusScreenshot && { cancelFocusScreenshot }),
       chooser,
       original,
       alternate,

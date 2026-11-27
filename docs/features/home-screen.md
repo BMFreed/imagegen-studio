@@ -77,8 +77,8 @@ workspace. Explicit OS selection preserves the original local key and verified
 document recovery; an unused scanned destination row can be replaced by that
 owner. Independent owners and incompatible recovery refuse. Locate does not
 import, open, Add or Save; later recovery uses the ordinary explicit flow.
-Folder Locate has a later finite checkpoint above; broader Home presentation
-remains open.
+Canceling the system chooser returns keyboard focus to the invoking Home control
+if Home is still in the same browse view and focus has not moved elsewhere.
 
 [Missing-file Remove from Home](../engineering/phase-4-home-missing-remove-research.md)
 connects the missing row's menu to an explicit confirmation and guarded Main

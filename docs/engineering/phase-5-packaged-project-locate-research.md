@@ -72,8 +72,8 @@ inputs were outside the fixture mutation.
 The gate establishes the packaged native path within one workspace
 on the GTK portal. The [KDE Wayland follow-up](./phase-5-packaged-kde-chooser-research.md)
 replays the same chooser controls. Retained dirty recovery and nonempty
-queue repointing have separate source-built coverage. Cross-workspace
-native selection and the shipping desktop matrix remain release checks.
+queue repointing have separate source-built coverage. The shipping
+desktop matrix remains a release check.
 
 ## Execution and retained evidence
 
@@ -102,3 +102,44 @@ plus `zip` and `unzip` for the revision control. Set
 `IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE=1` and choose a fresh
 `locate` child under `runs/packaged-noobai-locate/<dated-run>/`
 for `IMAGEGEN_LINUX_PACKAGE_ARTIFACTS`.
+
+## Cross-workspace Locate on KDE Wayland
+
+For this replay, the clean InvokeAI checkout was
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The current
+`invokeai/app/api/routers/image_moves.py` calls the move service in
+`invokeai/app/services/image_moves/image_moves_default.py`. Its
+`_reconcile_destination_subfolder` and `commit_database_updates`
+call the guarded `repoint_image` query in
+`invokeai/app/services/shared/database/queries/image_moves.py`.
+The existing Studio relocation owner was exercised as shipped.
+
+The stock `8a8af9214f377a70226b8bac583426056aa3c1fb` AppImage,
+SHA-256 `8b57a5e50bde8fc0b0818e6b5b7ab8057e5da96dc5f70cb17dbfc42eca4e7cfa`,
+registered a second workspace through a real KDE directory chooser.
+The harness moved the closed default-workspace Project into that workspace.
+Cancel, an exact copy outside the registered folders, and a valid neighbor
+with a different revision preserved the index and accepted Raster. The exact
+file rebound the original key to the destination workspace and removed the
+scanner's unused duplicate. The other revision stayed independently indexed.
+Three normal physical closes completed. A cold explicit Open alone advanced
+the last-opened timestamp.
+
+The independent audit matched the AppImage to its embedded ASAR, six
+source pins, five raw KDE D-Bus responses, the archive and Raster bytes,
+and three closed SQLite snapshots. It confirmed all 27 recorded process
+identities had exited. Evidence is in
+`runs/packaged-noobai-locate/20261127-r1` under the artifact root.
+Enable `IMAGEGEN_PORTABLE_LOCATE_CROSS_WORKSPACE=1` in the private KDE
+launcher and supply the exact `.package` identity in `package-proof.json`
+beside the `locate` directory to replay.
+
+## Keyboard focus after Cancel
+
+On the production Home renderer in Chromium, a held Locate response
+disabled the Inspector action. Returning Cancel re-enabled it but left focus
+on the document body. The renderer now shares the focus-return check from
+Locate Folder. The controlled regression passed at 900×620 with visible
+focus. A second cancellation also preserved focus when it had already moved
+to the File menu. All eight Home catalog tests passed. The RED and GREEN
+logs and screenshots are in `runs/current-stock-mvp/20261127/browser-focus`.

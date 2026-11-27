@@ -50,6 +50,9 @@ const noobaiComponentModes = ['lora', 'embedding', 'vae']
 const noobaiComponentInstall = noobaiComponentModes.includes(noobaiInstall)
 const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
 const noobaiCandidateMatrix = noobaiMatrix === 'candidate'
+const noobaiMatrixProof = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX_PROOF_SHA256
+const noobaiCandidateX11 =
+  noobaiCandidateMatrix && process.env.IMAGEGEN_CHOOSER_X11_PID !== undefined
 const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const portableImport = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_IMPORT
@@ -177,7 +180,7 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    privateDesktop || projectExport || continuityFixture
+    privateDesktop || projectExport || continuityFixture || noobaiCandidateX11
       ? {
           ...options,
           env: {
@@ -313,6 +316,13 @@ assert.ok(
   noobaiInstall === undefined || ['1', 'v', 'v11', ...noobaiComponentModes].includes(noobaiInstall),
 )
 assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1' || noobaiCandidateMatrix)
+if (noobaiMatrixProof !== undefined) {
+  assert.ok(noobaiCandidateMatrix)
+  assert.match(noobaiMatrixProof, /^[0-9a-f]{64}$/)
+}
+if (noobaiCandidateX11) {
+  assert.ok(!kdeChooser && process.env.IMAGEGEN_CHOOSER_SYSTEMD_RUNTIME_DIR)
+}
 assert.equal(
   noobaiCatalog !== undefined,
   noobaiMatrix === '1' || ['v', 'v11'].includes(noobaiInstall),
@@ -848,7 +858,7 @@ if (legacyHarness)
   )
 if (portableChooser)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'))
-if (portableChooser && !kdeChooser)
+if ((portableChooser && !kdeChooser) || noobaiCandidateX11)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'))
 if (kdeChooser)
   sourcePaths.push(
@@ -1421,7 +1431,9 @@ async function launch(name, selectedAppImage = appImage, projectArguments = []) 
       kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
       // Exercise unavailable secure storage by default. The opt-in uses the stock
       // credential providers with the same private KWin and software graphics.
-      ...(softwareRenderer || (kdeChooser && modelInstallHistory) ? ['--disable-gpu'] : []),
+      ...(softwareRenderer || noobaiCandidateX11 || (kdeChooser && modelInstallHistory)
+        ? ['--disable-gpu']
+        : []),
       ...(kdeChooser && modelInstallHistory && !kdeDefaultWallet
         ? ['--disable-features=DbusSecretPortal', '--password-store=basic']
         : []),
@@ -1813,8 +1825,11 @@ async function closeNormally(state) {
   })
 }
 
-async function retainOwnStore(name, filename) {
-  const workspace = path.join(appData, 'workspaces/Uncategorized')
+async function retainOwnStore(
+  name,
+  filename,
+  workspace = path.join(appData, 'workspaces/Uncategorized'),
+) {
   const packages = (await readdir(workspace)).filter((entry) => entry.endsWith('.igs'))
   if (filename === undefined) assert.equal(packages.length, 1)
   else assert.ok(packages.includes(filename))
@@ -1871,7 +1886,10 @@ async function verifyNoobaiStockPackage(output) {
   const proofBytes = await readFile(proofPath)
   const proofSha256 = createHash('sha256').update(proofBytes).digest('hex')
   if (noobaiCandidateMatrix) {
-    assert.equal(proofSha256, '12ae28b84d87ba0b7e177dcb14140b7ff5433e6ce704ab02aa784555f6b6e131')
+    assert.equal(
+      proofSha256,
+      noobaiMatrixProof ?? '12ae28b84d87ba0b7e177dcb14140b7ff5433e6ce704ab02aa784555f6b6e131',
+    )
   }
   const proof = JSON.parse(proofBytes.toString('utf8'))
   assert.equal(proof.mode, 'live')

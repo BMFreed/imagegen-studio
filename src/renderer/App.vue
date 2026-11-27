@@ -4156,6 +4156,31 @@ function canManageMissingProject(project: ProjectSummary) {
   )
 }
 
+function captureHomeChooserReturnFocus(): () => void {
+  const homeIntent = captureHomePresentationIntent()
+  const scope = browseWorkspaceId.value
+  const focused = document.activeElement
+  const trigger = focused instanceof HTMLElement && focused.closest('.home-view') ? focused : null
+  return () => {
+    if (!homeIntent || !trigger) {
+      return
+    }
+    // Home disables the invoking action while the system chooser is open.
+    void nextTick(() => {
+      if (
+        homeOpenIntentCurrent(homeIntent) &&
+        browseWorkspaceId.value === scope &&
+        !pendingProjectAction.value &&
+        document.activeElement === document.body &&
+        trigger.isConnected &&
+        !trigger.matches(':disabled, [aria-disabled="true"]')
+      ) {
+        trigger.focus({ preventScroll: true })
+      }
+    })
+  }
+}
+
 async function locateProject(project: ProjectSummary) {
   const current = projects.value.find(({ id }) => id === project.id)
   if (
@@ -4170,12 +4195,14 @@ async function locateProject(project: ProjectSummary) {
   ) {
     return
   }
+  const returnFocus = captureHomeChooserReturnFocus()
+  let located = false
   queueResultNavigator.cancelProjectOpen()
   const projectId = current.id
   pendingProjectAction.value = { kind: 'locate-project', projectId }
   homeError.value = null
   try {
-    const located = await apiValue(() => projectApi().locateProject(projectId))
+    located = await apiValue(() => projectApi().locateProject(projectId))
     if (located) {
       await refreshProjects()
     }
@@ -4183,6 +4210,9 @@ async function locateProject(project: ProjectSummary) {
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+    if (!located) {
+      returnFocus()
+    }
   }
 }
 
@@ -4502,10 +4532,7 @@ async function locateWorkspace(workspaceId: string) {
   ) {
     return
   }
-  const homeIntent = captureHomePresentationIntent()
-  const scope = browseWorkspaceId.value
-  const focused = document.activeElement
-  const trigger = focused instanceof HTMLElement && focused.closest('.home-view') ? focused : null
+  const returnFocus = captureHomeChooserReturnFocus()
   let located = false
   queueResultNavigator.cancelProjectOpen()
   pendingProjectAction.value = { kind: 'workspace-locate' }
@@ -4519,20 +4546,8 @@ async function locateWorkspace(workspaceId: string) {
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
-    if (!located && homeIntent && trigger) {
-      // While the chooser is open, Home disables the action that had focus.
-      void nextTick(() => {
-        if (
-          homeOpenIntentCurrent(homeIntent) &&
-          browseWorkspaceId.value === scope &&
-          !pendingProjectAction.value &&
-          document.activeElement === document.body &&
-          trigger.isConnected &&
-          !trigger.matches(':disabled, [aria-disabled="true"]')
-        ) {
-          trigger.focus({ preventScroll: true })
-        }
-      })
+    if (!located) {
+      returnFocus()
     }
   }
 }

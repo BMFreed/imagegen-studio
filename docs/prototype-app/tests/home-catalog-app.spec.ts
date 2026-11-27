@@ -17,8 +17,10 @@ type CatalogScenario =
   | 'workspace-navigation'
 
 interface HomeCatalogFixture {
+  cancelPendingLocate: () => void
   catalogScopes: (string | null)[]
   finishPendingCatalog: () => Promise<void>
+  locateProjectIds: string[]
   observeExternalFileChange: () => void
   openedProjectIds: string[]
   publishInitialCatalog: () => Promise<boolean>
@@ -127,7 +129,15 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
       const pending = new Promise<ApiResult<ProjectHomeCatalog>>((resolve) => {
         resolvePending = resolve
       })
+      let cancelLocate: (() => void) | undefined
       const fixture: HomeCatalogFixture = {
+        cancelPendingLocate() {
+          if (!cancelLocate) {
+            throw new Error('The fixture has no pending Locate to cancel.')
+          }
+          cancelLocate()
+          cancelLocate = undefined
+        },
         catalogScopes: [],
         async finishPendingCatalog() {
           // Wait a renderer frame after settling the response so the old continuations can run.
@@ -144,6 +154,7 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           )
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
         },
+        locateProjectIds: [],
         observeExternalFileChange() {
           externalFileChanged = true
         },
@@ -272,6 +283,15 @@ async function mountHome(page: Page, scenario: CatalogScenario) {
           listWorkspaces: async () => {
             requests.workspaces++
             return { error: { code: 'PROJECT_INTERNAL_ERROR', message: workspaceError }, ok: false }
+          },
+          locateProject: async (id: string) => {
+            if (scenario !== 'missing-removal' || id !== missing.id || removed) {
+              throw new Error('The fixture expected Locate of Missing sketch.')
+            }
+            fixture.locateProjectIds.push(id)
+            return await new Promise<ApiResult<boolean>>((resolve) => {
+              cancelLocate = () => resolve({ ok: true, value: false })
+            })
           },
           onBeforeWindowClose: unsubscribe,
           onGenerationChanged: unsubscribe,
@@ -461,6 +481,64 @@ test('production Home opens a checked Project without waiting for the rest of th
   await expect(linked).toBeVisible()
   await expect(refresh).not.toHaveAttribute('aria-busy', 'true')
   expect(await requests(page)).toEqual({ catalog: 1, projects: 0, workspaces: 0 })
+})
+
+test('production Home restores keyboard focus after canceling Locate Project', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  const home = await mountHome(page, 'missing-removal')
+  const workspace = home.getByRole('button', { name: /^Current workspace\s*2$/ })
+  await workspace.press('Enter')
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  const missing = home.getByRole('button', { exact: true, name: 'Select Missing sketch' })
+  await missing.press('Enter')
+  await expect(missing).toHaveAttribute('aria-pressed', 'true')
+  const inspector = home.getByRole('complementary', { exact: true, name: 'Project inspector' })
+  const locate = inspector.getByRole('button', { exact: true, name: 'Locate Project' })
+  const before = await requests(page)
+
+  await locate.press('Enter')
+  await expect(locate).toBeDisabled()
+  expect(
+    await page.evaluate(
+      () => (globalThis as HomeCatalogGlobal).homeCatalogFixture.locateProjectIds,
+    ),
+  ).toEqual([`project-v1-${'b'.repeat(64)}`])
+  await page.evaluate(() =>
+    (globalThis as HomeCatalogGlobal).homeCatalogFixture.cancelPendingLocate(),
+  )
+
+  await expect(locate).toBeEnabled()
+  await expect(missing).toHaveAttribute('aria-pressed', 'true')
+  await expect(inspector.getByRole('alert').filter({ hasText: 'File missing' })).toBeVisible()
+  await expect(workspace).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    home.getByRole('button', { exact: true, name: 'Select Current sketch' }),
+  ).toBeVisible()
+  await expect(page.getByRole('tab')).toHaveCount(1)
+  await expect(page.getByRole('tab', { exact: true, name: 'Home' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  expect(await requests(page)).toEqual(before)
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('after-locate-cancel.png'),
+  })
+  await expect(locate).toBeFocused()
+  expect(await locate.evaluate((button) => button.matches(':focus-visible'))).toBe(true)
+
+  await locate.press('Enter')
+  await expect(locate).toBeDisabled()
+  const fileMenu = page.getByRole('button', { exact: true, name: 'File menu' })
+  await fileMenu.focus()
+  await expect(fileMenu).toBeFocused()
+  await page.evaluate(() =>
+    (globalThis as HomeCatalogGlobal).homeCatalogFixture.cancelPendingLocate(),
+  )
+  await expect(locate).toBeEnabled()
+  await expect(fileMenu).toBeFocused()
 })
 
 test('production Home restores keyboard focus after removing a missing project from its workspace', async ({

@@ -347,7 +347,7 @@ async function observeResponse(monitor, request, selectedPath) {
   return code
 }
 
-export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
+export async function driveKdeChooser({ state, source, windowTitle, trigger, activate }) {
   assert.ok(windowTitle === 'Import Project' || windowTitle === 'Locate Project')
   if (source) {
     assert.equal(await realpath(source), source)
@@ -358,6 +358,7 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
     selectedPath: source,
     windowTitle,
     trigger,
+    activate,
     method: 'OpenFile',
     filter: projectFilter,
   })
