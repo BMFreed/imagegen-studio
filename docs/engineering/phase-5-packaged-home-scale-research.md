@@ -1789,3 +1789,54 @@ formatting and the stock AppImage build passed. Cleanup of the three
 owned runs released 558,952,448 allocated bytes. The reports, six
 viewport images, sampled archives, closed SQLite and cache controls
 remain with the retention receipt.
+
+### Retry the same thumbnail URL after an external replacement
+
+On base `98fc967c`, the `single-thumbnail-refresh` profile exercises a
+replacement while the last card in the 128-Project grid is still lazy.
+The unopened thumbnail has zero natural width and no disk cache entry.
+The fixture atomically replaces that `.igs` with a same-byte copy at the
+same path. It preserves size, SHA-256 and modification time and obtains a
+new inode. A read-only connection to the live SQLite index witnesses the
+older fingerprint until Refresh.
+
+A wheel scroll exposes the card. The old thumbnail URL returns 404,
+the real image error fires and Home shows its folder icon. The cache
+entry is still absent. The user-visible Refresh completes its busy cycle
+and the indexed fingerprint matches the replacement. The same URL then
+returns 200, the screenshot contains the exact expected RGB patch and
+the derived cache matches the embedded WebP. The two AppImage lifetimes
+close normally and preserve all 128 original archive bodies and indexed
+Project records. The replacement keeps its new fingerprint.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/gallery/gallery_default.py::_to_item` supplies the
+thumbnail URL. `invokeai/app/api/routers/images.py::get_image_thumbnail`
+checks read access, resolves the image through
+`services/images/images_default.py::get_path` and reads the WebP.
+`invokeai/frontend/webv2/src/features/gallery/ui/GalleryThumbnail.tsx`
+uses `useGalleryImageRecovery.ts` and `data/imageRecovery.ts` for its
+recovery URL revision. This qualification exercises Studio's existing
+manual catalog Refresh and its stable private URL.
+
+R4 observed the response pair. R5 requires the exact 404, 200 sequence
+and repeats the experiment on the same stock AppImage in a fresh
+profile. Both run on local ext4, private software-rendered KDE Wayland
+and the 1380×900 initial viewport. The existing FIFO and wrong-WebP
+controls also pass during indexed restart. Use
+`IMAGEGEN_HOME_SCALE_FIXTURE=single-thumbnail-refresh`,
+`IMAGEGEN_HOME_SCALE_PROJECTS=128` and `IMAGEGEN_HOME_SCALE_SOFTWARE=1`.
+The receipts are under `runs/packaged-home-scale/20261128-r4` and
+`20261128-r5`.
+
+Independent R5 readback verified the AppImage and embedded ASAR, 128
+exact archives and their 512 pinned members, six viewport samples, the
+404 and 200 responses and the replacement fingerprint in closed SQLite.
+SQLite integrity, foreign keys and 30 migrations passed. Both native
+exits were confirmed across 20 recorded PID and start-time pairs.
+Each focused suite passed all 113 tests. Typecheck, scoped lint,
+formatting and the stock AppImage build passed.
+
+Cleanup released 607,883,264 allocated bytes. The retained evidence
+includes both run reports and viewport images, the sampled Project
+archive and WebP, the final closed SQLite and exact source receipts.

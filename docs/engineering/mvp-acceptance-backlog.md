@@ -186,6 +186,11 @@ environment and remaining limits, and update the current stage and next run.
         the expected pixels even after a FIFO and a wrong valid WebP
         replaced their cache entries before restart.
         [Native lazy thumbnails and cache fallback](./phase-5-packaged-home-scale-research.md#native-rendering-of-distinct-lazy-thumbnails-and-cache-fallback)
+  - [x] An external same-byte replacement of an indexed `.igs` caused the
+        native lazy card to show its folder icon. A manual Refresh updated
+        the index and the same thumbnail URL returned 200 and painted the
+        expected pixels. Both stock AppImage lifetimes closed normally.
+        [Retry after external Project replacement](./phase-5-packaged-home-scale-research.md#retry-the-same-thumbnail-url-after-an-external-replacement)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

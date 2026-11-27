@@ -662,6 +662,17 @@ async function measureHome(
         thumbnailCheck.appData,
         state.name,
         thumbnailCheck.controls,
+        thumbnailCheck.refresh
+          ? () =>
+              measureRefresh(
+                page,
+                home.getByRole('button', { exact: true, name: 'Refresh projects' }),
+                cards,
+                count,
+                root,
+                'stale-thumbnail',
+              )
+          : undefined,
       )
     : undefined
   await nativeInput.resize(900, 620)
@@ -889,7 +900,8 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
-  const cardThumbnails = profile === 'single-thumbnails'
+  const thumbnailRefresh = profile === 'single-thumbnail-refresh'
+  const cardThumbnails = profile === 'single-thumbnails' || thumbnailRefresh
   const singleDistinct = profile === 'single-layered-distinct'
   const distinct = singleDistinct || profile === 'linked-layered-distinct'
   const linked = [
@@ -907,7 +919,7 @@ export async function runPackagedHomeScale({
       (cardThumbnails && countArgument === '128') ||
       (linked && !distinct && countArgument === '128') ||
       (profile === undefined && ['32', '512'].includes(countArgument)),
-    'Use 32 or 512 by default, 128 with a linked or single-thumbnails profile, or 256 with a layered profile.',
+    'Use 32 or 512 by default, 128 with a linked or individual-thumbnail profile, or 256 with a layered profile.',
   )
   assert.ok(
     (!layered256 && !cardThumbnails) || process.env.IMAGEGEN_HOME_SCALE_SOFTWARE === '1',
@@ -1033,7 +1045,13 @@ export async function runPackagedHomeScale({
             canvas,
             layered256,
             earlyPreview === '1' && name === 'first-index',
-            cardThumbnails ? { appData, controls: cacheControls } : undefined,
+            cardThumbnails
+              ? {
+                  appData,
+                  controls: cacheControls,
+                  refresh: thumbnailRefresh && name === 'first-index',
+                }
+              : undefined,
           )
       if (linked && !openDuringDiscovery) {
         measured.navigation = await measureWorkspaceNavigation(state, root, workspaces, files)

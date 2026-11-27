@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstat, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, lstat, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { expect } from '@playwright/test'
+import Database from 'better-sqlite3'
 
 const size = 16
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -105,7 +107,8 @@ function screenshotColors(bytes, { viewportWidth, viewportHeight, x, y }) {
           'image = Image.open(sys.stdin.buffer).convert("RGB")',
           'assert image.size == (width, height), (image.size, width, height)',
           'assert 0 <= x <= width - 3 and 0 <= y <= height - 3, (x, y)',
-          'json.dump(sorted(set(image.crop((x, y, x + 3, y + 3)).getdata())), sys.stdout)',
+          'colors = image.crop((x, y, x + 3, y + 3)).getcolors(9)',
+          'json.dump(sorted(color for _, color in colors), sys.stdout)',
         ].join('\n'),
         String(viewportWidth),
         String(viewportHeight),
@@ -117,8 +120,144 @@ function screenshotColors(bytes, { viewportWidth, viewportHeight, x, y }) {
   )
 }
 
+function indexedThumbnail(appData, id) {
+  const database = new Database(path.join(appData, 'database/app.sqlite'), {
+    fileMustExist: true,
+    readonly: true,
+  })
+  try {
+    return database
+      .prepare(
+        `SELECT canonical_path AS filename, document_id AS documentId, document_revision AS revision,
+              file_fingerprint AS fingerprint, file_health AS health,
+              preview_thumbnail_sha256 AS thumbnailSha256
+       FROM project_index WHERE local_project_key = ?`,
+      )
+      .get(id)
+  } finally {
+    database.close()
+  }
+}
+
+async function archiveIdentity(filename) {
+  assert.equal(await realpath(filename), filename)
+  const info = await lstat(filename, { bigint: true })
+  assert.ok(info.isFile() && info.nlink === 1n && info.uid === BigInt(process.getuid()))
+  return {
+    fingerprint: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`,
+    inode: String(info.ino),
+    size: Number(info.size),
+    sha256: digest(await readFile(filename)),
+  }
+}
+
+async function replaceIndexedArchive(appData, file) {
+  const filename = file.bytes.path
+  assert.equal(path.dirname(filename), path.join(appData, 'workspaces/Uncategorized'))
+  const original = await archiveIdentity(filename)
+  assert.equal(original.sha256, file.bytes.sha256)
+  assert.equal(original.size, file.bytes.sizeBytes)
+  const before = indexedThumbnail(appData, file.id)
+  assert.deepEqual(before, {
+    documentId: file.documentId,
+    filename,
+    fingerprint: original.fingerprint,
+    health: 'ready',
+    revision: file.revision,
+    thumbnailSha256: file.cardThumbnail.sha256,
+  })
+  const pending = path.join(path.dirname(filename), '.thumbnail-refresh-replacement.tmp')
+  await copyFile(filename, pending, constants.COPYFILE_EXCL)
+  execFileSync('/usr/bin/touch', ['-r', filename, '--', pending], { timeout: 5_000 })
+  assert.deepEqual(await archiveIdentity(filename), original)
+  await rename(pending, filename)
+  const replacement = await archiveIdentity(filename)
+  assert.equal(replacement.sha256, original.sha256)
+  assert.equal(replacement.size, original.size)
+  assert.notEqual(replacement.inode, original.inode)
+  assert.deepEqual(indexedThumbnail(appData, file.id), before)
+  return { before, original, replacement }
+}
+
+async function refreshStaleThumbnail({
+  appData,
+  card,
+  file,
+  image,
+  lifetime,
+  page,
+  readView,
+  refreshCatalog,
+  root,
+  sample,
+  scrollEnd,
+}) {
+  const before = await readView()
+  assert.equal(before.complete, false)
+  assert.equal(before.width, 0)
+  const cache = cachePath(appData, file.cardThumbnail.sha256)
+  await assert.rejects(lstat(cache), { code: 'ENOENT' })
+  await image.evaluate((element) => {
+    element.addEventListener(
+      'error',
+      () => {
+        globalThis.__igsThumbnailFailure = element.currentSrc || element.src
+      },
+      { once: true },
+    )
+  })
+  const responses = []
+  const observeResponse = (response) => {
+    if (response.url() === before.source) responses.push(response.status())
+  }
+  page.on('response', observeResponse)
+  try {
+    const changed = await replaceIndexedArchive(appData, file)
+    await scrollEnd()
+    await expect(image).toHaveCount(0)
+    assert.equal(await page.evaluate(() => globalThis.__igsThumbnailFailure), before.source)
+    const placeholder = card.locator('.project-thumbnail svg')
+    await expect(placeholder).toBeVisible()
+    await expect(placeholder).toBeInViewport()
+    await assert.rejects(lstat(cache), { code: 'ENOENT' })
+    assert.deepEqual(indexedThumbnail(appData, file.id), changed.before)
+    const fallback = path.join(root, `${lifetime}-thumbnail-stale-fallback.png`)
+    const fallbackBytes = await page.screenshot({ path: fallback, scale: 'css' })
+    const refresh = await refreshCatalog()
+    const after = indexedThumbnail(appData, file.id)
+    assert.deepEqual(after, { ...changed.before, fingerprint: changed.replacement.fingerprint })
+    await scrollEnd()
+    const end = await sample()
+    assert.equal(end.observed.source, before.source)
+    assert.deepEqual(await archiveIdentity(file.bytes.path), changed.replacement)
+    assert.deepEqual(responses, [404, 200])
+    return {
+      end,
+      observation: {
+        ...changed,
+        after,
+        fallback,
+        fallbackSha256: digest(fallbackBytes),
+        refresh,
+        responses,
+      },
+    }
+  } finally {
+    page.off('response', observeResponse)
+  }
+}
+
 /** Check normal image loading before requesting decode or capturing any screenshot. */
-export async function measureCardThumbnails(page, grid, files, root, appData, lifetime, controls) {
+export async function measureCardThumbnails(
+  page,
+  grid,
+  files,
+  root,
+  appData,
+  lifetime,
+  controls,
+  refreshCatalog,
+) {
   const scroller = page.locator('.browser-content')
   const order = await grid
     .locator('[data-project-id]')
@@ -227,21 +366,41 @@ export async function measureCardThumbnails(page, grid, files, root, appData, li
       [controls.fifo.id, controls.wrongWebp.id],
     )
   }
-  const bounds = await scroller.boundingBox()
-  assert.ok(bounds)
-  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-  await page.mouse.wheel(0, await scroller.evaluate((element) => element.scrollHeight))
-  await expect
-    .poll(
-      async () =>
-        await scroller.evaluate(
-          (element) =>
-            Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
-        ),
-    )
-    .toBe(true)
-  const end = await sample(tail, 'last')
+  const scrollEnd = async () => {
+    const bounds = await scroller.boundingBox()
+    assert.ok(bounds)
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    await page.mouse.wheel(0, await scroller.evaluate((element) => element.scrollHeight))
+    await expect
+      .poll(
+        async () =>
+          await scroller.evaluate(
+            (element) =>
+              Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
+          ),
+      )
+      .toBe(true)
+  }
+  const runTail = async () => {
+    await scrollEnd()
+    return { end: await sample(tail, 'last') }
+  }
+  const { end, observation } = refreshCatalog
+    ? await refreshStaleThumbnail({
+        appData,
+        card: article(tail),
+        file: projects.get(tail),
+        image: img(tail),
+        lifetime,
+        page,
+        readView: () => view(tail),
+        refreshCatalog,
+        root,
+        sample: () => sample(tail, 'last'),
+        scrollEnd,
+      })
+    : await runTail()
   assert.ok(end.observed.scrollTop > before.scrollTop)
   await scroller.evaluate((element) => element.scrollTo(0, 0))
-  return { before, end, front }
+  return { before, end, front, ...(observation && { externalReplacement: observation }) }
 }
