@@ -220,9 +220,19 @@ environment and remaining limits, and update the current stage and next run.
         after manually copying the chosen backup. The saved Project and the
         displaced database with its committed WAL survived both startups.
         [SQLite recovery on the rebuilt AppImage](./phase-5-packaged-sqlite-manual-recovery-research.md#replay-on-the-rebuilt-stock-appimage)
-  - [ ] Repeat the historical DB29 and real incompatible-worker checks on
-        the rebuilt AppImage. Its protocol-2 worker uses CUDA for startup
-        qualification before sending the incompatible hello.
+  - [x] On the rebuilt AppImage, the retained historical DB29 profile
+        migrated after backup. The real installed worker announced an
+        incompatible protocol in isolation. Generate and Retry refused,
+        and the historical Raster and frozen queue inputs survived Save
+        and cold reopen.
+        [Historical refusal on the rebuilt AppImage](./phase-5-pinned-stock-candidate-research.md#historical-refusal-on-the-rebuilt-stock-appimage)
+  - [x] The rebuilt AppImage ran the exact NoobAI V recipe with the
+        compatible CUDA worker and confirmed Add, Undo, Redo, Save
+        and cold reopen.
+        [NoobAI V on the rebuilt AppImage](./phase-5-pinned-stock-candidate-research.md#noobai-v-on-the-rebuilt-stock-appimage)
+  - [ ] Repeat the EPS interruption and frozen Retry on the rebuilt
+        AppImage. The live EPS job and recovery passed on the previous
+        pinned build.
 
 ### Public release
 

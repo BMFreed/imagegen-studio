@@ -256,3 +256,49 @@ and SQLite are in `runs/packaged-noobai-install/20261127-r1`. To repeat on a
 fresh build, provide its live package proof and explicitly pin its SHA-256
 with `IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX_PROOF_SHA256`. The historical
 proof remains the default pin.
+
+### Historical refusal on the rebuilt stock AppImage
+
+The stock AppImage from `4d0cdae60ce30f06bd07974ce4b578d999f1eb6b`
+has SHA-256
+`e0e45842ef0ec5d13372b56f2cd9161b68ea2ec41cdfdf4fc3a9c5b919493425`.
+The historical case restored the retained DB29 and its nonempty Project
+into private writable AppData. The installed worker and runtime were
+borrowed in a private mount namespace. One isolated Python module announced
+protocol 2, and the real incompatible worker ran its CUDA startup probe.
+The host module, runtime pointer and installation journal matched their
+original pinned bytes afterward.
+
+Main wrote the pre-migration DB29 backup before migration 30. Both
+lifetimes refused Generate and the historical Retry with
+`GENERATION_RUNTIME_UNAVAILABLE` and offered Repair. Explicit Save and
+cold reopen kept the saved prompt, historical Raster and frozen queue
+inputs. Both processes closed normally. The wrapper passed in 61.091 s
+with a 1.1 GiB reported service peak and zero swap. Evidence is under
+`runs/packaged-installed-engine/20261118/current-stock-historical-20261127-r1`.
+
+Independent readback matched the AppImage and embedded ASAR, the original
+DB29, online backup and both closed DB30 snapshots. It verified the exact
+frozen input bodies, historical Raster and ICC, saved archive and physical
+exit of 20 recorded identities. The audit used the natively recorded
+refusal and the pinned isolated module. No raw worker hello was retained.
+
+### NoobAI V on the rebuilt stock AppImage
+
+The same rebuilt AppImage ran the compatible installed worker on the RTX
+4080. The rerun used the exact Cyberfalafel file `1147756/2679856/2566634`
+and the same 256×256 three-step Euler V scenario. Fresh InvokeAI source
+`64ff2c600f04d220e470fdaeec570bd402af42a7` was checked at
+`invokeai/app/services/model_install/model_install_default.py::register_path`,
+`invokeai/frontend/webv2/src/features/generation/core/graph.ts` and
+`invokeai/app/invocations/sd/denoise_latents.py`. Those paths cover registration,
+seed wiring and the declared UNet prediction type.
+
+The candidate PNG matched the earlier pinned V run byte for byte. Explicit
+Add, Undo, Redo, Save and reopen passed with frozen V-prediction provenance.
+Both AppImage lifetimes closed normally, and the wrapper restored all 112
+original AppData entries with exact identities and bytes. The service ran
+for 123.364 s and reported zero swap. The peak across 18 samples from the
+matched CUDA worker was 7,374 MiB. Reports and closed bodies are under
+`runs/packaged-installed-engine/20261118/trained-noobai-v-r5`. The local
+repeat covers this specific trained recipe and persistence.
