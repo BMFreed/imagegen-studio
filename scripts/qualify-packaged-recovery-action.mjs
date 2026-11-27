@@ -19,6 +19,7 @@ import { verifyApplicationReleaseAuthority } from '../src/main/application-updat
 import { acquireApplicationUpdateAdmission } from '../src/main/application-updates/application-update-admission.ts'
 import {
   captureApplicationUpdateCurrentSource,
+  inspectRetainedApplicationUpdate,
   stageVerifiedApplicationArtifact,
 } from '../src/main/application-updates/application-update-staging.ts'
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
@@ -39,6 +40,7 @@ assert.ok(
           '--kde-install-next',
           '--kde-recover-next',
           '--kde-retire-current',
+          '--kde-retire-mixed-current',
           '--kde-save',
           '--kde-save-after-replace',
           '--kde-save-current',
@@ -50,7 +52,8 @@ const kdeRecoverNext = rest[0] === '--kde-recover-next'
 const kdeInstallNext = rest[0] === '--kde-install-next' || kdeRecoverNext
 const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
-const kdeRetireCurrent = rest[0] === '--kde-retire-current'
+const kdeRetireMixed = rest[0] === '--kde-retire-mixed-current'
+const kdeRetireCurrent = rest[0] === '--kde-retire-current' || kdeRetireMixed
 const kdeSaveCurrent = rest[0] === '--kde-save-current' || kdeRetireCurrent
 const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
 const kdeSaveDefault =
@@ -442,8 +445,7 @@ async function prepareActivatedStage() {
   }
 }
 
-async function retainedState(filename = original) {
-  const directory = stageFor(filename)
+async function retainedStageFiles(directory) {
   const members = await fs.readdir(directory)
   assert.deepEqual(members.sort(), [
     'journal.json',
@@ -453,8 +455,13 @@ async function retainedState(filename = original) {
   ])
   const files = {}
   for (const name of members) files[name] = await fileWitness(path.join(directory, name))
+  return files
+}
+
+async function retainedState(filename = original) {
+  const directory = stageFor(filename)
   return {
-    ...files,
+    ...(await retainedStageFiles(directory)),
     image: await fileWitness(filename),
     lock: await fileWitness(directory + '.lock'),
   }
@@ -1071,6 +1078,30 @@ async function directoryWitness(directory) {
   return { dev: String(entry.dev), ino: String(entry.ino) }
 }
 
+function moveArchiveEntry(source, destination) {
+  return promisify(execFile)(
+    '/usr/bin/mv',
+    ['--no-copy', '--update=none-fail', '-T', '--', source, destination],
+    { env: { LC_ALL: 'C' }, timeout: 10_000, maxBuffer: 8192 },
+  )
+}
+
+async function syncArchiveDirectory(filename, expected) {
+  const handle = await fs.open(
+    filename,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  )
+  try {
+    const held = await handle.stat({ bigint: true })
+    assert.equal(String(held.dev), expected.dev)
+    assert.equal(String(held.ino), expected.ino)
+    assert.deepEqual(await directoryWitness(filename), expected)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 async function archiveClosedApplications() {
   // This fixture controls the original pathname and every launch from it. Its exit
   // receipts are not a scan or exclusion proof for unknown application processes.
@@ -1095,33 +1126,15 @@ async function archiveClosedApplications() {
   assert.deepEqual(await retainedState(), retained)
   await fs.mkdir(occupied, { mode: 0o700 })
   const occupiedBefore = await directoryWitness(occupied)
-  const moved = (destination) =>
-    promisify(execFile)(
-      '/usr/bin/mv',
-      ['--no-copy', '--update=none-fail', '-T', '--', applicationDir, destination],
-      { env: { LC_ALL: 'C' }, timeout: 10_000, maxBuffer: 8192 },
-    )
   // A plain POSIX rename could replace this empty target. It stays untouched.
-  await assert.rejects(moved(occupied), { code: 1 })
+  await assert.rejects(moveArchiveEntry(applicationDir, occupied), { code: 1 })
   assert.deepEqual(await directoryWitness(occupied), occupiedBefore)
   assert.deepEqual(await fs.readdir(occupied), [])
   assert.deepEqual(await directoryWitness(applicationDir), directory)
   assert.deepEqual(await retainedState(), retained)
   await assert.rejects(fs.lstat(archived), { code: 'ENOENT' })
-  await moved(archived)
-  const parentHandle = await fs.open(
-    root,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  )
-  try {
-    const held = await parentHandle.stat({ bigint: true })
-    assert.equal(String(held.dev), parent.dev)
-    assert.equal(String(held.ino), parent.ino)
-    assert.deepEqual(await directoryWitness(root), parent)
-    await parentHandle.sync()
-  } finally {
-    await parentHandle.close()
-  }
+  await moveArchiveEntry(applicationDir, archived)
+  await syncArchiveDirectory(root, parent)
   const assertArchived = async () => {
     await assert.rejects(fs.lstat(applicationDir), { code: 'ENOENT' })
     assert.deepEqual((await fs.readdir(archived)).sort(), members)
@@ -1149,6 +1162,186 @@ async function archiveClosedApplications() {
       },
       original,
       saved: newPath,
+      archivedBeforeReopen: await assertArchived(),
+    },
+  }
+}
+
+async function prepareMixedNeighbors(project) {
+  const adjacentProject = path.join(applicationDir, 'Adjacent.igs')
+  const neighborImage = path.join(applicationDir, 'Neighbor.AppImage')
+  const neighborStage = stageFor(neighborImage)
+  const neighborLock = neighborStage + '.lock'
+  const marker = path.join(neighborStage, 'neighbor.txt')
+  await fs.copyFile(project, adjacentProject, constants.COPYFILE_EXCL)
+  assert.equal(await hash(adjacentProject), await hash(project))
+  // These are unrelated fixture bytes. No neighbor is registered or launched.
+  await fs.writeFile(neighborImage, 'Unrelated fixture AppImage\n', { flag: 'wx', mode: 0o600 })
+  await fs.mkdir(neighborStage, { mode: 0o700 })
+  await fs.writeFile(marker, 'Unrelated fixture stage\n', { flag: 'wx', mode: 0o600 })
+  await fs.writeFile(neighborLock, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
+  const inspect = async () => {
+    assert.deepEqual(await fs.readdir(neighborStage), ['neighbor.txt'])
+    return {
+      [path.basename(adjacentProject)]: await fileWitness(adjacentProject),
+      [path.basename(neighborImage)]: await fileWitness(neighborImage),
+      [path.basename(neighborStage)]: {
+        directory: await directoryWitness(neighborStage),
+        marker: await fileWitness(marker),
+      },
+      [path.basename(neighborLock)]: await fileWitness(neighborLock),
+    }
+  }
+  return { before: await inspect(), inspect }
+}
+
+async function archiveClosedMixedApplications(neighbors) {
+  // Only the known fixture launches are quiesced here. The documented manual
+  // procedure requires exclusive volume access outside the normal host session.
+  assert.equal(lifetimes.length, 2)
+  for (const state of lifetimes) {
+    assert.equal(state.normalCode, 0)
+    assert.equal(state.scopeExit?.confirmed, true)
+  }
+  const archived = path.join(root, 'Mixed-Archive')
+  const refusals = path.join(root, 'Mixed-Archive-Refusals')
+  const imageName = path.basename(original)
+  const stageName = path.basename(retainedDirectory)
+  const lockPath = retainedDirectory + '.lock'
+  const image = path.join(archived, imageName)
+  const stage = path.join(archived, stageName)
+  const sourceMembers = [path.basename(lockPath), ...Object.keys(neighbors.before)]
+  await fs.mkdir(archived, { mode: 0o700 })
+  await fs.mkdir(refusals, { mode: 0o700 })
+  const parent = await directoryWitness(root)
+  const directory = await directoryWitness(applicationDir)
+  const archiveDirectory = await directoryWitness(archived)
+  const stageDirectory = await directoryWitness(retainedDirectory)
+  const refusalDirectory = await directoryWitness(refusals)
+  for (const entry of [directory, archiveDirectory, stageDirectory, refusalDirectory]) {
+    assert.equal(entry.dev, parent.dev)
+  }
+  const syncArchive = async () => {
+    await syncArchiveDirectory(archived, archiveDirectory)
+    await syncArchiveDirectory(applicationDir, directory)
+    await syncArchiveDirectory(root, parent)
+  }
+  const assertSource = async (additionalNames) => {
+    assert.deepEqual(await directoryWitness(applicationDir), directory)
+    assert.deepEqual(
+      (await fs.readdir(applicationDir)).sort(),
+      [...sourceMembers, ...additionalNames].sort(),
+    )
+    assert.deepEqual(await fileWitness(lockPath), retained.lock)
+    assert.deepEqual(await neighbors.inspect(), neighbors.before)
+  }
+  const assertMovedImage = async () => {
+    const movedImage = await fileWitness(image)
+    // Renaming the file can advance its ctime while preserving the inode and content.
+    assert.deepEqual(movedImage, { ...retained.image, ctime: movedImage.ctime })
+    return movedImage
+  }
+  const assertSplit = async () => {
+    await assertSource([stageName])
+    assert.deepEqual(await directoryWitness(retainedDirectory), stageDirectory)
+    const stageFiles = await retainedStageFiles(retainedDirectory)
+    assert.deepEqual(stageFiles, originalStageFiles)
+    return { image: await assertMovedImage(), stageFiles }
+  }
+
+  await assertSource([imageName, stageName])
+  assert.deepEqual(await retainedState(), retained)
+  const originalStageFiles = await retainedStageFiles(retainedDirectory)
+  await fs.writeFile(image, 'Owned occupied image destination\n', { flag: 'wx', mode: 0o600 })
+  const blockedImage = await fileWitness(image)
+  await assert.rejects(moveArchiveEntry(original, image), { code: 1 })
+  const imageAfterRefusal = await fileWitness(image)
+  assert.deepEqual(imageAfterRefusal, blockedImage)
+  await assertSource([imageName, stageName])
+  assert.deepEqual(await retainedState(), retained)
+  const retainedImageRefusal = path.join(refusals, imageName)
+  await moveArchiveEntry(image, retainedImageRefusal)
+  const imageRefusal = await fileWitness(retainedImageRefusal)
+  assert.deepEqual(imageRefusal, { ...blockedImage, ctime: imageRefusal.ctime })
+
+  await moveArchiveEntry(original, image)
+  await syncArchive()
+  const split = {
+    ...(await assertSplit()),
+    sourceEntries: (await fs.readdir(applicationDir)).sort(),
+    archiveEntries: await fs.readdir(archived),
+    stageDirectory: await directoryWitness(retainedDirectory),
+    lock: await fileWitness(lockPath),
+    neighbors: await neighbors.inspect(),
+    inspection: await inspectRetainedApplicationUpdate({
+      currentAppImage: original,
+      currentVersion: recoveryVersion,
+      readTrust: async () => manifest.trust,
+    }),
+  }
+  assert.deepEqual(split.archiveEntries, [imageName])
+  assert.deepEqual(split.inspection, {
+    status: 'retained',
+    targetAuthentication: 'unverified',
+    runtimeAuthentication: 'unverified',
+  })
+
+  await fs.mkdir(stage, { mode: 0o700 })
+  const blockedStage = await directoryWitness(stage)
+  await assert.rejects(moveArchiveEntry(retainedDirectory, stage), { code: 1 })
+  const stageAfterRefusal = await directoryWitness(stage)
+  assert.deepEqual(stageAfterRefusal, blockedStage)
+  assert.deepEqual(await fs.readdir(stage), [])
+  assert.deepEqual(await assertSplit(), { image: split.image, stageFiles: split.stageFiles })
+  const retainedStageRefusal = path.join(refusals, stageName)
+  await moveArchiveEntry(stage, retainedStageRefusal)
+  assert.deepEqual(await directoryWitness(retainedStageRefusal), blockedStage)
+  assert.deepEqual(await fs.readdir(retainedStageRefusal), [])
+
+  await moveArchiveEntry(retainedDirectory, stage)
+  await syncArchiveDirectory(refusals, refusalDirectory)
+  await syncArchive()
+  const assertArchived = async () => {
+    await assertSource([])
+    assert.deepEqual(await directoryWitness(archived), archiveDirectory)
+    assert.deepEqual((await fs.readdir(archived)).sort(), [imageName, stageName].sort())
+    assert.deepEqual(await directoryWitness(stage), stageDirectory)
+    const stageFiles = await retainedStageFiles(stage)
+    assert.deepEqual(stageFiles, originalStageFiles)
+    const movedImage = await assertMovedImage()
+    assert.deepEqual(movedImage, split.image)
+    assert.deepEqual(await fileWitness(retainedImageRefusal), imageRefusal)
+    assert.deepEqual(await directoryWitness(retainedStageRefusal), blockedStage)
+    assert.deepEqual(await fs.readdir(retainedStageRefusal), [])
+    return { ...stageFiles, image: movedImage, lock: await fileWitness(lockPath) }
+  }
+  return {
+    assertArchived,
+    evidence: {
+      source: applicationDir,
+      destination: archived,
+      original,
+      saved: newPath,
+      lockPath,
+      directory: { before: directory, after: await directoryWitness(applicationDir) },
+      archiveDirectory: { before: archiveDirectory, after: await directoryWitness(archived) },
+      stageDirectory: { before: stageDirectory, after: await directoryWitness(stage) },
+      neighbors: { before: neighbors.before, after: await neighbors.inspect() },
+      occupiedImage: {
+        path: image,
+        before: blockedImage,
+        after: imageAfterRefusal,
+        retainedPath: retainedImageRefusal,
+        retained: imageRefusal,
+      },
+      occupiedStage: {
+        path: stage,
+        before: blockedStage,
+        after: stageAfterRefusal,
+        retainedPath: retainedStageRefusal,
+        retained: await directoryWitness(retainedStageRefusal),
+      },
+      split,
       archivedBeforeReopen: await assertArchived(),
     },
   }
@@ -1658,6 +1851,7 @@ try {
   assert.equal(packages.length, 1)
   const project = path.join(workspace, packages[0])
   const projectSha = await hash(project)
+  const mixedNeighbors = kdeRetireMixed ? await prepareMixedNeighbors(project) : null
   if (installedProject) {
     assert.equal(project, installedProject.filename)
     assert.equal(projectSha, installedRuntime.baselineWitness.sha256)
@@ -1921,8 +2115,14 @@ try {
     assert.deepEqual(report.kdeSave.retainedAfterReopen, retained)
   }
   if (kdeRetireCurrent) {
-    const { evidence, assertArchived } = await archiveClosedApplications()
-    report.coldRetirement = evidence
+    const { evidence, assertArchived } = mixedNeighbors
+      ? await archiveClosedMixedApplications(mixedNeighbors)
+      : await archiveClosedApplications()
+    if (mixedNeighbors) {
+      report.mixedRetirement = evidence
+    } else {
+      report.coldRetirement = evidence
+    }
     assert.deepEqual(await fileWitness(newPath), materialized)
     const cold = await launch(newPath, recoveryVersion, true)
     const reopenedAfterArchive = await call(cold.page, 'applicationUpdates', 'getRecoveryStatus')

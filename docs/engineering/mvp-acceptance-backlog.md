@@ -134,9 +134,9 @@ environment and remaining limits, and update the current stage and next run.
         [Full-discovery comparison](./phase-5-packaged-home-scale-research.md#reuse-recent-png-checks-throughout-a-large-workspace-scan)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
-      that path already passed locally. A dedicated local folder has a
-      manual archive procedure. Retirement for shared paths and general
-      ownership of legacy writers remain open.
+      that path already passed locally. Manual archive procedures for
+      dedicated and shared local folders passed controlled ext4 runs.
+      General ownership of legacy writers during a live session remains open.
       [Update ownership and recovery](./phase-5-application-update-interruption-research.md#interrupted-and-adjacent-paths)
   - [x] Signed D reached Review and preflight after C on the used recovery
         path. Both refused before any close callback and preserved the
@@ -173,6 +173,12 @@ environment and remaining limits, and update the current stage and next run.
         path. A live descriptor control shows why the real operation
         requires exclusive offline access.
         [Dedicated folder archive](./phase-5-application-update-interruption-research.md#archive-a-dedicated-old-appimage-folder-after-exit)
+  - [x] In a shared ext4 folder, the old AppImage and exact stage moved
+        separately after the controlled processes exited. Both occupied
+        destinations refused replacement. Between moves the inspector
+        retained the old stage. The original lock and neighbors kept
+        their identities and the verified copy reopened the exact Project.
+        [Shared folder archive](./phase-5-application-update-interruption-research.md#archive-one-old-appimage-from-a-shared-folder)
 - [ ] **4. Run the final local AppImage on RTX 4080.** Use one pinned build
       with a clean profile and a copy of historical state. Exercise Setup/Repair,
       SQLite migration and backup, Generate → Add → Save → reopen, queue recovery

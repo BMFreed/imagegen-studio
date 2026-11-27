@@ -370,6 +370,69 @@ The durable receipts and compact witnesses are in
 Cleanup removed the owned test packages, profiles and scratch after
 physical exit, reclaiming 1,360,523,264 allocated bytes.
 
+## Archive one old AppImage from a shared folder
+
+At clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`,
+`invokeai/app/api/routers/gallery_maintenance.py::archive_untracked_images`
+calls `services/gallery_maintenance/gallery_maintenance_default.py::execute`,
+`_archive_snapshot_files` and `_archive_file`. The service rechecks the
+identified entries, refuses overwrites, syncs directories and preserves
+uncertain items at the locations where they survived. For a same-filesystem
+move, `invokeai/app/util/no_replace.py::rename_noreplace` wraps
+`renameat2(RENAME_NOREPLACE)`. The model install caller
+`services/model_install/model_install_default.py::_restore_moved_path`
+uses that primitive on each identified entry. Its directory-transfer
+caller keeps recovery data on ambiguous failures.
+
+Clean Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce` still uses the
+profile lock in `src/main/index.ts` and
+`src/main/main-process-manager.ts` calls `src/main/updater.ts` for
+`quitAndInstall`. Neither donor provides an atomic two-entry AppImage/stage
+move or excludes older AppImage writers. Studio's shared-folder procedure
+uses the existing manual offline prerequisite, an exact completed stage
+association, and two separately synced no-replace moves. It moves the old
+executable first. Until that succeeds the stage still guards the original
+path. After it succeeds the original executable is absent and the stage
+still guards the path. The second move archives the stage as a whole with
+the backup inside. The original lock remains in the shared folder with
+the same inode. External legacy ownership, automatic cleanup and a
+rollback from the archived journal remain outside the procedure.
+
+The opt-in `--kde-retire-mixed-current` scenario rebuilt the two signed
+qualification packages from the same 42 compiled file hashes used by
+the dedicated-folder run. The original AppImage and the KDE-saved
+verified copy closed normally before either move. The old parent also
+held an actual unregistered neighboring `.igs` and fixture files for a
+neighboring AppImage, stage and lock.
+
+On ext4, GNU `mv --no-copy --update=none-fail -T` refused an occupied
+image destination before any move and an occupied stage destination
+after the old image had moved. The refusal fixtures were retained
+separately for readback. At the synced split, the old executable was
+absent and its stage and backup remained at their original location.
+The actual retained-stage inspector returned `retained` with an
+unverified target. After the second move, the old stage was absent,
+the archived stage and image retained their inodes and contents, and
+the original lock and neighbors retained their exact identities.
+
+The copy reopened the same clean Project revision in a third normal
+lifetime with recovery clear. The two moves and split were observed in
+a controlled environment with enrolled process exit. These checks do
+not simulate power loss, boot a rescue system, or establish ownership
+of external legacy writers. Release publisher configuration and
+readiness stay separate.
+
+Independent readback verified the two signed packages, 42 compiled file
+hashes, both native KDE responses, the archived inodes and file bytes,
+the retained original lock, the four neighboring entries and both
+occupied destinations. It matched three closed Project and SQLite pairs
+at 30 migrations and checked physical exit of 24 recorded processes.
+The operation order and inspector result came from the native driver.
+The 127 focused tests, scoped lint, syntax and formatting passed.
+Evidence lives under `runs/packaged-recovery-action/20261127-retire-mixed-r1`
+in the artifact root. Cleanup retained the compact proofs and reclaimed
+1,360,580,608 allocated bytes after the native and audit processes exited.
+
 ## Guidance after a stage appears during the session
 
 The existing Main stage-veto control proves that a new retained stage

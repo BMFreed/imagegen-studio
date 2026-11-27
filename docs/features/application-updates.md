@@ -614,12 +614,49 @@ must already be working from a different folder.
    the archive and reopen the Project. Point any old shortcuts to that
    copy and leave the former folder name unused.
 
-Leave a shared folder in place if it also contains Projects, application
-data, the runtime, models or other applications. Use the verified copy from
-its own path. Keep the archive for recovery evidence. Its journal still
-refers to the original absolute paths. Studio preserves these files and
-has no automatic retirement action.
+Keep the archive for recovery evidence. Its journal still refers to the
+original absolute paths. Studio preserves these files and has no automatic
+retirement action.
 [Dedicated folder recovery qualification](../engineering/phase-5-application-update-interruption-research.md#archive-a-dedicated-old-appimage-folder-after-exit)
+
+### Manually archive one old AppImage from a shared folder
+
+When the folder also holds other files, leave the folder and those files
+in place. Start with the same verified copy, normal Project close and
+exclusive offline access to the local volume as above.
+
+1. Identify the exact old AppImage and its completed version-2 stage.
+   The stage name is `.igs-app-update-` followed by the first 16 lowercase
+   hex digits of SHA-256 of the AppImage filename, including the extension
+   and its case. Cross-check the old normal-session pathname in
+   `journal.json` under `current.path`, `schemaVersion` 2 and the
+   completed state (`activated` or `relaunching`). The stage contains `journal.json`,
+   `previous.AppImage`, `release-envelope.json` and `release-notes.json`.
+   Inspect the entries directly on the mounted volume. The AppImage and
+   stage members must be regular files and the stage a real directory.
+   Keep the files in place if an entry is a symlink or mount, the
+   association is uncertain, or the stage is incomplete.
+2. Create a fresh private archive directory on the same filesystem,
+   outside the stage and away from Projects. Sync the archive's parent
+   directory. Use a same-filesystem rename that refuses an occupied
+   destination and any copy fallback. Move the exact old AppImage into
+   the archive first, then sync both parents of the move.
+3. Confirm the old AppImage pathname is absent and the exact stage still
+   exists beside the original lock. Move the whole stage into the same
+   archive and sync both parents again. Leave the file named for the
+   stage plus `.lock` in the shared folder at its original path.
+4. After returning to the normal session, use the separate verified copy
+   and reopen the Project. Keep the old AppImage pathname unused.
+   Preserve the archived files and their original journal as recovery
+   evidence.
+
+If a move is interrupted or a destination is occupied, preserve all files
+at their observed locations. After the first move the old executable is
+in the archive and the stage is still in the shared folder. Resume the
+second move only once that split state and both exact entries are
+confirmed under exclusive offline access. An uncertain result leaves the
+verified copy available for normal use.
+[Shared folder recovery qualification](../engineering/phase-5-application-update-interruption-research.md#archive-one-old-appimage-from-a-shared-folder)
 
 ### Historical state compatibility checkpoint
 
