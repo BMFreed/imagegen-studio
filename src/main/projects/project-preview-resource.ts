@@ -1,6 +1,6 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, realpath } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ProjectIndexRecord, ProjectIndexRepository } from './project-index.js'
@@ -28,7 +28,9 @@ export interface ProjectMergedPreviewResourceRequest extends ProjectThumbnailRes
   fileFingerprintSha256: string
 }
 
-type PreviewRepository = Partial<Pick<ProjectIndexRepository, 'getProjectForPreview'>> &
+type PreviewRepository = Partial<
+  Pick<ProjectIndexRepository, 'getDiscoveredThumbnail' | 'getProjectForPreview'>
+> &
   Pick<ProjectIndexRepository, 'getProject' | 'workspaceById'>
 
 /** Opaque process-lifetime capability. Home never receives a local Project path. */
@@ -219,8 +221,13 @@ async function readIndexedPreview(
       const cachePath = cacheDirectory
         ? path.join(cacheDirectory, `${request.thumbnailSha256}.webp`)
         : null
-      let bytes = cachePath ? await readVerifiedCache(cachePath, request.thumbnailSha256) : null
-      if (!bytes) {
+      const cached = cachePath ? await readVerifiedCache(cachePath, request.thumbnailSha256) : null
+      let bytes =
+        cached ??
+        (resource.kind === 'thumbnail'
+          ? repository.getDiscoveredThumbnail?.(request.thumbnailSha256)
+          : undefined)
+      if (bytes === undefined) {
         const archive = await readIgsPackage(canonical)
         const member = archive.manifest.members.find((entry) => entry.path === thumbnailMemberPath)
         if (member?.sha256 !== request.thumbnailSha256) {
@@ -236,9 +243,9 @@ async function readIndexedPreview(
         bytes = await archive.readMember(
           resource.kind === 'thumbnail' ? thumbnailMemberPath : mergedMemberPath,
         )
-        if (cachePath) {
-          await archive.extractMemberToFile(thumbnailMemberPath, cachePath).catch(() => undefined)
-        }
+      }
+      if (cachePath && !cached) {
+        await publishThumbnail(cachePath, bytes).catch(() => undefined)
       }
       if ((await fileFingerprint(canonical)) !== current.fileFingerprint) {
         return unavailableResponse(404)
@@ -337,5 +344,34 @@ async function readVerifiedCache(filePath: string, expectedSha256: string): Prom
     return null
   } finally {
     await handle?.close()
+  }
+}
+
+/** Publish the verified bytes on demand. A disposable cache failure never hides the preview. */
+async function publishThumbnail(destination: string, bytes: Buffer): Promise<void> {
+  const temporary = path.join(path.dirname(destination), `.${randomUUID()}.webp.tmp`)
+  const file = await open(temporary, 'wx', 0o600)
+  let published = false
+  try {
+    try {
+      await file.writeFile(bytes)
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+    const existing = await lstat(destination).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null
+      }
+      throw error
+    })
+    if (!existing || existing.isFile()) {
+      await rename(temporary, destination)
+      published = true
+    }
+  } finally {
+    if (!published) {
+      await unlink(temporary).catch(() => undefined)
+    }
   }
 }

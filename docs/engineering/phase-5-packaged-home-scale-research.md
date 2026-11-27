@@ -1602,3 +1602,105 @@ mutation logs remain in `runs/packaged-home-scale/20261127-r25` and
 `20261127-r26`. After physical process exit and retained byte verification,
 cleanup released 3,113,250,816 allocated bytes. The test AppImages and raw
 profiles were removed from these two runs.
+
+## Reuse verified small thumbnails after Home discovery
+
+The first thumbnail requests on a fresh profile repeated work from discovery.
+`ProjectIndexRepository` verified the entire bounded snapshot. On a cache
+miss the `igs-preview` handler verified that archive again to serve one
+embedded WebP. Earlier packaged scale fixtures used one shared 66-byte
+thumbnail across the catalog, which obscured distinct-thumbnail misses.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/app/services/images/images_default.py::create` calls
+`image_files/image_files_disk.py::save` under the image mutation lock. It
+prepares and caches the separate WebP with `invokeai/app/util/thumbnails.py`
+and the bounded image-file cache. `gallery/gallery_default.py::_to_item`
+supplies the URL. `invokeai/app/api/routers/images.py::get_image_thumbnail`
+checks media access and maintenance before resolving it through
+`images_default.py::get_path` and reading the WebP. The disk repair path uses
+same-directory temporary files and `invokeai/app/util/no_replace.py`.
+ImageGen Studio adapts the prepared derivative to self-contained external
+`.igs` files, which still go through the package validator on first discovery.
+
+Full snapshot validation can retain the already streamed WebP body after the
+archive, member digest and WebP structure checks succeed. The index keeps up
+to 256 recent digests with up to 64 KiB per body, a maximum of 16 MiB of WebP
+bytes per repository. These limits apply to memory retention. The existing
+package limits and lazy reads cover larger previews, evicted entries and the
+exact-archive witness path. The first authorized request publishes the
+verified bytes in the existing disposable
+SHA cache. The writer uses exclusive temporary-file creation, sync and
+rename, retaining the existing ability to replace a poisoned regular cache
+file. The resource still checks the open catalog scope, lifecycle, workspace
+path and current file fingerprint before serving bytes, and rechecks the
+fingerprint before responding. The merged PNG takes its ordinary package
+path.
+
+### Main comparison on distinct thumbnails
+
+The matched ext4 replay used the real Home catalog service, index repository,
+project lock, SQLite and thumbnail resource. One corpus contained 64 Projects,
+256 distinct 1024px Raster PNGs and 64 distinct 256px WebPs.
+Each of six fresh database and disk-cache samples used the same archive
+bytes and requested all 64 thumbnails, eight at a time, after discovery.
+This comparison ran in Node at the Main boundary.
+
+| Main boundary                                  | Control `2609c9c0` median (range) | Candidate median (range) |
+| ---------------------------------------------- | --------------------------------: | -----------------------: |
+| Full discovery                                 |                2.07 s (1.98–2.16) |       2.49 s (1.97–2.65) |
+| Cold thumbnail requests                        |                1.82 s (1.72–1.84) |       0.11 s (0.10–0.13) |
+| Discovery plus cold requests                   |                3.89 s (3.70–4.00) |       2.61 s (2.08–2.75) |
+| PNG inflator starts during discovery           |                               256 |                      256 |
+| PNG inflator starts on cold thumbnail requests |                               320 |                        0 |
+
+All cold and warm responses and final cache files matched the independent
+WebP inputs byte for byte. The merged PNG matched its expected digest and used
+the original validation in both versions. Each replay checked the 64 exact
+ready records in a copy of the closed database and the original archive
+fingerprints and SHA-256 values. The first attempt hit a harness issue when
+the read-only verification connection itself created empty SQLite companions
+after the app database closed. The six accepted samples verified an exact copy
+of the closed file instead. Discovery itself had overlapping ranges and a
+higher candidate median. The supported-host speed target for Home remains open.
+
+The 109 focused tests, full typecheck, scoped lint and format checks, and
+AppImage build passed. On an isolated source copy, bypassing the retained
+bytes reached the preview consumer and failed the zero-ZIP-reads assertion.
+Restoring the original bytes passed that test again. The test also checks
+that the disk cache starts empty, persists the requested thumbnail and can be
+repaired on a fresh repository after cache poisoning.
+
+The driver, input identities, mutation and six phase reports are in
+`runs/home-thumbnail-main/20261127-cache-replay`.
+
+### Packaged complete discovery in one and three workspaces
+
+Both runs used AppImage SHA-256
+`f661b36c47fe7801df505e8d99dd295cc8375268bd52bff540ace216dabff422`
+on private software-rendered KDE Wayland on local ext4. The native fixture
+contained 256 Projects, 1,024 distinct Raster PNGs and one common WebP. It
+exercised list and grid, search, saved merged previews, manual Refresh, and
+linked-workspace navigation where applicable. The timing starts immediately
+before spawn and the full-card reading checks all expected titles and waits
+two animation frames.
+
+| Native boundary                            | One workspace R27 | Three workspaces R28 |
+| ------------------------------------------ | ----------------: | -------------------: |
+| First selectable cards from an empty index | 7.10 s (60 cards) |    7.58 s (64 cards) |
+| All 256 cards from an empty index          |           18.53 s |              19.07 s |
+| All 256 cards after indexed restart        |            7.33 s |               7.49 s |
+
+The three-workspace catalog contained 64, 96 and 96 Projects. All four
+lifetimes closed normally. These single samples cover the packaged catalog
+and renderer on the local software-rendered host. The distinct-WebP effect
+is measured in the Main replay above. The product speed target and
+supported-host coverage remain open. The two native reports are in
+`runs/packaged-home-scale/20261127-r27` and `20261127-r28`.
+
+Closed readback verified the embedded ASAR, 512 original archives and 4,608
+ZIP entries, both exact 256-row SQLite indexes, their archive witnesses and
+SQLite integrity and foreign keys. The compact reports and closed database
+copies are retained with the physical exit receipts. Cleanup of the disposable
+AppImage, profiles, fixture archive bodies and source scratch reclaimed
+2,904,776,704 allocated bytes.

@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import * as yauzl from 'yauzl'
 
 import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
@@ -293,7 +294,7 @@ test('Home thumbnail URL is an untampered process capability without a filesyste
   assert.equal(parseProjectThumbnailImageUrl(url.replace('igs-preview:', 'file:')), null)
 })
 
-test('Home serves embedded thumbnail and repairs a poisoned derived cache', async () => {
+test('Home serves the discovered thumbnail, persists it on demand and repairs a poisoned cache', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-home-preview-'))
   const database = openAppDatabase(directory, migrations)
   try {
@@ -304,8 +305,8 @@ test('Home serves embedded thumbnail and repairs a poisoned derived cache', asyn
       placeholdersDir,
       scratchDir: path.join(directory, 'scratch'),
     })
-    const record = await repository.indexSaved(filePath, workspace.id)
-    assert.ok(record.thumbnailSha256)
+    const [record] = await repository.scanWorkspace(workspace.id)
+    assert.ok(record?.thumbnailSha256)
     const archive = await readIgsPackage(filePath)
     const expected = await archive.readMember('preview/thumbnail.webp')
     assert.equal(createHash('sha256').update(expected).digest('hex'), record.thumbnailSha256)
@@ -314,19 +315,25 @@ test('Home serves embedded thumbnail and repairs a poisoned derived cache', asyn
     )
     assert.ok(resource)
     const cacheRoot = path.join(directory, 'previews', 'project-thumbnails')
+    const cacheFile = path.join(cacheRoot, `${record.thumbnailSha256}.webp`)
+    await assert.rejects(readFile(cacheFile), { code: 'ENOENT' })
+    assert.deepEqual(repository.getDiscoveredThumbnail(record.thumbnailSha256), expected)
+    const openArchiveMember = t.mock.method(yauzl.ZipFile.prototype, 'openReadStreamPromise')
     const first = await readProjectThumbnail(resource, repository, cacheRoot)
     assert.equal(first.status, 200)
     assert.equal(first.headers.get('content-type'), 'image/webp')
     assert.equal(first.headers.get('cache-control'), 'no-store')
     assert.deepEqual(Buffer.from(await first.arrayBuffer()), expected)
-    const cacheFile = path.join(cacheRoot, `${record.thumbnailSha256}.webp`)
     assert.deepEqual(await readFile(cacheFile), expected)
+    assert.equal(openArchiveMember.mock.callCount(), 0)
 
     await writeFile(cacheFile, Buffer.from('poisoned derived cache'))
-    const repaired = await readProjectThumbnail(resource, repository, cacheRoot)
+    const reopenedRepository = new ProjectIndexRepository(database.db)
+    const repaired = await readProjectThumbnail(resource, reopenedRepository, cacheRoot)
     assert.equal(repaired.status, 200)
     assert.deepEqual(Buffer.from(await repaired.arrayBuffer()), expected)
     assert.deepEqual(await readFile(cacheFile), expected)
+    assert.ok(openArchiveMember.mock.callCount() > 0)
   } finally {
     await database.close()
     await rm(directory, { force: true, recursive: true })

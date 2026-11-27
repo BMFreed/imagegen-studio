@@ -632,9 +632,10 @@ Preview is for inspection, not editing.
    previews for a clean Project; if it is open and dirty, Home routes to
    Project Save. A cache refresh does not rewrite `.igs`.
 4. If a derived cache preview is missing, Home reads the mandatory embedded
-   preview from `.igs` and rebuilds the cache. If an embedded preview is missing,
-   the package is corrupt; Home shows a damaged-project diagnostic rather than
-   presenting a cache rebuild as a repair.
+   preview and rebuilds the cache. Home can reuse small thumbnails retained
+   during discovery after checking the current Project registration and file
+   identity. A miss falls back to the embedded thumbnail in the current `.igs`.
+   If an embedded preview is missing, Home shows a damaged-project diagnostic.
 5. User can zoom/pan.
 6. User can open the project or perform project file actions.
 

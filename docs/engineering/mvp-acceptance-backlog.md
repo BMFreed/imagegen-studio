@@ -161,6 +161,17 @@ environment and remaining limits, and update the current stage and next run.
         reached it at 256 rows. Both clicks were issued at 65 rows and the
         candidate completed discovery and an indexed restart normally.
         [Same-workspace Open](./phase-5-packaged-home-scale-research.md#open-a-verified-project-during-the-first-scan-of-its-own-workspace)
+  - [x] Removed repeat archive validation for first requests of recently
+        verified small thumbnails. On a cold-cache 64-Project Main replay,
+        all 64 exact WebP responses took a median 0.11 s after discovery,
+        down from 1.82 s. Both versions still validated all 256 distinct
+        Raster bodies during discovery.
+        [Cold thumbnail comparison](./phase-5-packaged-home-scale-research.md#reuse-verified-small-thumbnails-after-home-discovery)
+  - [x] Measured all 256 rendered cards on the same AppImage in one and
+        three local workspaces. Fresh profiles reached the full catalog in
+        18.53 s and 19.07 s respectively. Indexed restarts reached it in
+        7.33 s and 7.49 s. The supported-host speed target remains open.
+        [Packaged full catalog](./phase-5-packaged-home-scale-research.md#packaged-complete-discovery-in-one-and-three-workspaces)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

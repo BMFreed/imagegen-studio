@@ -46,6 +46,7 @@ import { ProjectTrashStore } from './project-trash-store.js'
 export const UNCATEGORIZED_WORKSPACE_ID = 'uncategorized'
 
 const MAX_CACHED_ARCHIVES = 512
+const MAX_DISCOVERED_THUMBNAILS = 256
 const MAX_CACHED_PROJECT_BYTES = 64 * 1024
 const MAX_HASHED_ARCHIVE_BYTES = 128 * 1024 * 1024
 
@@ -150,6 +151,7 @@ export class ProjectIndexRepository {
     { metadata: ProjectIndexMetadata; sha256: string }
   >()
   private readonly archiveWitnesses: ProjectArchiveWitnesses | undefined
+  private readonly discoveredThumbnails = new Map<string, Buffer>()
 
   constructor(
     private readonly db: Kysely<DB>,
@@ -278,6 +280,11 @@ export class ProjectIndexRepository {
       )
     }
     return stored
+  }
+
+  /** Bytes from full discovery validation. Callers must still authorize the current Project. */
+  getDiscoveredThumbnail(sha256: string): Buffer | undefined {
+    return this.discoveredThumbnails.get(sha256)
   }
 
   /** Resolve a Home resource without scanning every Project in the workspace again. */
@@ -1161,11 +1168,23 @@ export class ProjectIndexRepository {
         : await readStableArchive(canonicalPath, identity, true)
       if (snapshot?.bytes) {
         const { bytes, sha256 } = snapshot
+        const readFullSnapshot = async () => {
+          const result = await readIgsPackageSnapshot(bytes, validatedPngs)
+          const thumbnail = result.thumbnail
+          if (thumbnail) {
+            this.discoveredThumbnails.delete(thumbnail.sha256)
+            this.discoveredThumbnails.set(thumbnail.sha256, thumbnail.bytes)
+            if (this.discoveredThumbnails.size > MAX_DISCOVERED_THUMBNAILS) {
+              this.discoveredThumbnails.delete(this.discoveredThumbnails.keys().next().value!)
+            }
+          }
+          return result
+        }
         const metadata = (await this.archiveWitnesses?.contains(sha256))
           ? await readPreviouslyValidatedIgsMetadata(bytes, MAX_CACHED_PROJECT_BYTES)
               .then(({ document, manifest }) => ({ manifest, project: document }))
-              .catch(() => readIgsPackageSnapshot(bytes, validatedPngs))
-          : await readIgsPackageSnapshot(bytes, validatedPngs)
+              .catch(readFullSnapshot)
+          : await readFullSnapshot()
         const index = archiveIndexMetadata(metadata.manifest, metadata.project)
         if (this.canCacheArchiveMetadata(canonicalPath, metadata.manifest)) {
           this.archiveMetadata.set(canonicalPath, { metadata: index, sha256 })

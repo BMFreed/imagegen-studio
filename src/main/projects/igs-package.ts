@@ -90,6 +90,8 @@ export interface IgsPackageReadResult {
   project: IgsProjectDocumentV1
   /** This reopens the same package and verifies size and SHA-256 before returning bytes. */
   readMember: (memberPath: string) => Promise<Buffer>
+  /** Small WebP already verified while reading an owned Home discovery snapshot. */
+  thumbnail?: { bytes: Buffer; sha256: string }
 }
 
 export interface IgsPackageOptions {
@@ -113,6 +115,7 @@ type OpenArchive = () => Promise<yauzl.ZipFile>
 
 const MAX_REUSABLE_PNG_BYTES = 8 * 1024 * 1024
 const MAX_VALIDATED_PNGS = 128
+const MAX_DISCOVERY_THUMBNAIL_BYTES = 64 * 1024
 
 type ScannedMember = { bytes: number; header: Buffer; sha256: string }
 
@@ -966,6 +969,7 @@ async function readIgsPackageFromArchive(
   const zip = await openZip()
   const scanned = new Map<string, ScannedMember>()
   const metadata = new Map<string, Buffer>()
+  let thumbnail: IgsPackageReadResult['thumbnail']
   let totalBytes = 0
   try {
     if (zip.entryCount > limits.archiveEntries) {
@@ -986,7 +990,12 @@ async function readIgsPackageFromArchive(
       if (totalBytes > limits.archiveUncompressedBytes) {
         throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
       }
+      const retainThumbnail =
+        validatedPngs !== undefined &&
+        entry.fileName === 'preview/thumbnail.webp' &&
+        entry.uncompressedSize <= MAX_DISCOVERY_THUMBNAIL_BYTES
       const retain =
+        retainThumbnail ||
         entry.fileName === 'mimetype' ||
         entry.fileName === 'manifest.json' ||
         entry.fileName === 'project.json'
@@ -1024,7 +1033,9 @@ async function readIgsPackageFromArchive(
         throw new IgsPackageError('PACKAGE_LIMIT', 'The Project package is too large.')
       }
       scanned.set(entry.fileName, result)
-      if (result.content) {
+      if (result.content && retainThumbnail) {
+        thumbnail = { bytes: result.content, sha256: result.sha256 }
+      } else if (result.content) {
         metadata.set(entry.fileName, result.content)
       }
       if (isImagePath(entry.fileName)) {
@@ -1299,6 +1310,9 @@ async function readIgsPackageFromArchive(
     } catch {
       throw new IgsPackageError('INVALID_IMAGE', 'The owned mask PNG coverage is invalid.')
     }
+  }
+  if (thumbnail) {
+    result.thumbnail = thumbnail
   }
   return result
 }
