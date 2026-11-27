@@ -92,7 +92,9 @@ edge continuous. Both regional frames produced a single centered mug.
 The [ordinary Illustrious tabletop edit](./phase-4-illustrious-smart-tabletop-research.md)
 used the official XL v0.1 checkpoint. Studio and installed InvokeAI kept
 all 163,636 protected pixels and produced identical contribution masks.
-Neither produced a recognizable apple grounded on the tabletop.
+The later [table-only mask](./phase-4-illustrious-smart-tabletop-research.md#table-only-mask)
+kept 234,084 protected pixels and both table edges in each engine.
+The grounded apple criterion remained open in both runs.
 
 ## Startup recovery of committed Project deletion
 
@@ -198,7 +200,10 @@ reopened the saved Project from the new path.
 [Two-plinth placement comparison](./phase-4-regional-reference-placement-research.md)
 passed the signed-worker assignment swap with two stable masks and an ordinary
 control. Both blind readers found the divider and display positions and saw no
-recognizable duck and camera pair. Visual qualification remains open.
+recognizable duck and camera pair. In the
+[named-camera follow-up](./phase-4-regional-reference-placement-research.md#name-the-camera-without-assigning-its-side),
+both ordinary controls fused lens-like details with a plinth. The
+reference-placement criterion remains open.
 
 ## Current ordinary mug IMG color emphasis
 

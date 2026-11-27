@@ -232,3 +232,58 @@ The runs are retained under
 the six original images, comparison sheet, blind observations, source
 and input pins and exact graph and request receipts. This is a visual
 qualification of the existing Current Canvas IMG path on one RTX 4080.
+
+## Name the camera without assigning its side
+
+The follow-up on Studio `7b573aa36b8b3b4aa09693e6e5311b6572cccacd`
+added `and one vintage black film camera with a round lens` to the
+shared gallery positive. The three cases kept the source, camera PNG,
+left and right masks, checkpoint, model resources, seed and inference
+settings from the previous experiment. The authored ordinary control
+had no regional guidance. Each treatment had one image-only owner
+with the same camera PNG and its own mask.
+
+Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+The frontend comparison covered `prepareCanvasInvocation.ts`,
+`core/graph.ts` and `core/canvas/{compileCanvasGraph,addRegionalGuidance}.ts`.
+The backend checked `mask.py`, `sd/{ip_adapter,denoise_latents}.py`,
+`backend/ip_adapter/ip_adapter.py`, and
+`diffusion/{regional_ip_data,shared_invokeai_diffusion}.py`.
+The installed comparison submitted the same three authored cases to
+the original InvokeAI 6.14.3 queue. The retained source readback
+rechecked seven previously pinned donor files and nine installed files.
+The Studio contract SHA-256 is
+`1449d1d25f39525d8832d8481b7f0de1bd6a56965cc9b10af7dd660a5e95aa75`.
+The Invoke contract SHA-256 is
+`ed4b88692f8d698024a4611153007d0ca7dc49645b1adfac07945b7b7c2eaba9`.
+
+Studio completed three CUDA jobs and 57 progress steps. The service
+took 141.06 s and reached 8,852 MiB sampled worker VRAM. Independent
+readback joined the exact PNG and 61,440-pixel masks to the two
+exclusive owners. All three saved Project packages and the independent
+no-region control matched the authored receipts. Invoke finished
+three native queue items in 65.85 s. Independent readback joined their
+executed fields, uploaded alpha planes and result PNGs. The retained
+Invoke main, WAL and SHM preserve all three completed rows. Both
+services closed and recorded zero swap and OOM events within separate
+12 GiB ceilings.
+
+Both readers reviewed the six shuffled images before seeing the
+case identities. In both ordinary frames, a dark lens-like detail
+blends into the left plinth. In both left treatments, the lens and pale
+form still read as part of the plinth. Both right treatments show
+floating rings and more distorted plinths. The readers found zero
+unambiguously recognizable cameras in each image. Both ordinary
+controls therefore failed the prerequisite for interpreting selective
+placement. Human acceptance remains open. A fresh placement recipe
+needs an ordinary control with a recognizable subject before the
+reference cases can qualify relocation.
+
+The runs `runs/regional-reference-single-camera-named/20261128-r1` and
+`runs/invoke-regional-reference-single-camera-named/20261128-r1`
+retain the six output PNGs, comparison sheet, visual verdicts and
+source and request receipts. Cleanup reclaimed 40,624,128 allocated
+bytes of owned raw payloads and scratch. The tests exercised the
+existing Main capture and installed worker in Studio and the installed
+native queue in InvokeAI. Full typecheck and app build passed on the
+sampled checkout.

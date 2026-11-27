@@ -94,3 +94,48 @@ failure. Both original media paths, a five-image comparison sheet, visual
 observations, the protected-pixel counterexample and verified app and Project
 payload archives were kept. Cleanup reclaimed 22,614,016 allocated bytes of
 raw owned payloads and scratch after physical process exit.
+
+## Table-only mask
+
+The follow-up on Studio `7b573aa36b8b3b4aa09693e6e5311b6572cccacd`
+kept the source, official checkpoint, prompts, seed, sampler, strength,
+resolution and fade. It moved and narrowed the raw rectangle to
+`[152,360) × [384,472)` within the tabletop. The four literal protection
+rectangles leave at least 16 pixels around the authored edit and include
+the wall-to-table join and front table edge. Each engine received one
+ordinary request with no regional guidance.
+
+The clean local InvokeAI revision was rechecked at
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The readback covered the
+`core/graphExport.ts` caller, `core/canvas/compileCanvasGraph.ts`,
+`sd/create_gradient_mask.py`, `sd/denoise_latents.py`, `image.py`,
+`composition-nodes.py` and `backend/stable_diffusion/diffusers_pipeline.py`.
+The paired run used installed InvokeAI 6.14.3, with separate pins for its
+installed nodes, queue and model-loading dependencies. Both contracts
+were fixed before execution. The Studio contract SHA-256 is
+`bb73bbe35c10c67230b337020a0a4a9120edd310f00a02e51044ef9df6a77151`.
+The Invoke contract SHA-256 is
+`1c2aa6463038f052df981fd381102ceebf2f35cff08d568aa7cf82a06c45a022`.
+
+Both ran 20 actual Euler ancestral steps with zero swap and OOM events.
+Studio took 50.18 s with 8,424 MiB sampled worker VRAM. Invoke took
+37.51 s. The final mask is byte-identical after converting KEEP to
+contribution polarity. Independent decoded readback confirmed 234,084
+zero-contribution pixels and all 233,344 pixels inside the literal
+protection rectangles unchanged in both composites. A copied-output
+mutation introduced one red pixel at the protected table edge and
+updated both alpha planes and the recorded world PNG digest. The actual
+pixel oracle rejected it on the literal protected rectangle. The
+original files kept their hashes.
+
+Both visible table edges stayed continuous. Studio produced pale
+streaks and small stick-like forms. Invoke produced a detached green
+fragment. The recognizable apple and contact shadow criteria failed
+in both renders. The two visual inspections used known engine
+identities. Human acceptance remains open.
+
+The two `20261128-r1` runs under `runs/illustrious-smart-tabletop` and
+`runs/illustrious-smart-tabletop-invoke` retain the exact PNGs, comparison
+sheet, request and source receipts, and verified payload archives.
+Cleanup reclaimed 15,732,736 allocated bytes from the owned raw paths
+after physical exit. The shared model and runtime were reused.
