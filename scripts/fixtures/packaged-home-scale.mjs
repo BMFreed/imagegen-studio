@@ -29,6 +29,8 @@ import {
   createCardThumbnails,
   indexedThumbnail,
   measureCardThumbnails,
+  measureLayeredThumbnailTail,
+  observeFirstLayeredThumbnail,
   prepareCardCacheControls,
   verifyCardCacheControls,
 } from './packaged-home-card-thumbnails.mjs'
@@ -608,6 +610,7 @@ async function measureHome(
   const inspector = home.getByRole('complementary', { exact: true, name: 'Project inspector' })
   const preview = inspector.getByRole('img', { exact: true, name: 'Project preview canvas' })
   const count = files.length
+  const thumbnailTiming = thumbnailCheck?.timing
 
   const cardsReady = (async () => {
     await assertCards(cards, files, 60_000)
@@ -640,10 +643,17 @@ async function measureHome(
         return measureEarlyPreview(select(file.title), preview, file, count, spawnAt)
       })
     : null
-  const [cardsReadyAt, firstCard, earlyPreviewResult] = await Promise.all([
+  const firstThumbnailObserved = thumbnailTiming
+    ? observeFirstLayeredThumbnail(page, grid, files).then((observation) => ({
+        ...observation,
+        ms: performance.now() - spawnAt,
+      }))
+    : null
+  const [cardsReadyAt, firstCard, earlyPreviewResult, firstThumbnail] = await Promise.all([
     cardsReady,
     firstCardObserved,
     earlyPreviewObserved,
+    firstThumbnailObserved,
   ])
   if (firstCard) {
     assert.ok(files.some(({ title }) => firstCard.name === `Select ${title}`))
@@ -664,29 +674,33 @@ async function measureHome(
     (observation) => native.push(observation),
     root,
   )
-  const cardThumbnails = thumbnailCheck
-    ? await measureCardThumbnails(
-        page,
-        grid,
-        files,
-        root,
-        thumbnailCheck.appData,
-        state.name,
-        thumbnailCheck.controls,
-        thumbnailCheck.refresh
-          ? () =>
-              measureRefresh(
-                page,
-                home.getByRole('button', { exact: true, name: 'Refresh projects' }),
-                cards,
-                count,
-                root,
-                'stale-thumbnail',
-              )
-          : undefined,
-        thumbnailCheck.replaceWithRevision,
-      )
-    : undefined
+  const layeredThumbnailTail = thumbnailTiming
+    ? await measureLayeredThumbnailTail(page, grid, files, root, state.name)
+    : null
+  const cardThumbnails =
+    thumbnailCheck && !thumbnailTiming
+      ? await measureCardThumbnails(
+          page,
+          grid,
+          files,
+          root,
+          thumbnailCheck.appData,
+          state.name,
+          thumbnailCheck.controls,
+          thumbnailCheck.refresh
+            ? () =>
+                measureRefresh(
+                  page,
+                  home.getByRole('button', { exact: true, name: 'Refresh projects' }),
+                  cards,
+                  count,
+                  root,
+                  'stale-thumbnail',
+                )
+            : undefined,
+          thumbnailCheck.replaceWithRevision,
+        )
+      : undefined
   await nativeInput.resize(900, 620)
   const settledMemory = await rendererCounters(page)
   const refresh = await measureRefresh(
@@ -798,11 +812,13 @@ async function measureHome(
           firstSelectableCardMs: firstCard.readyAt - spawnAt,
           shellToFirstSelectableCardMs: firstCard.readyAt - visibleAt,
         }),
+        ...(firstThumbnail && { firstThumbnail }),
         shellMs: visibleAt - spawnAt,
         shellToAllExpectedCardsMs: cardsReadyAt - visibleAt,
         startBoundary: state.spawnedAt === undefined ? 'launch call' : 'before spawn',
         shellBoundary: state.homeVisibleAt === undefined ? 'launch return' : 'visible Home',
       },
+      ...(layeredThumbnailTail && { layeredThumbnailTail }),
     },
     viewportBeforeResize,
   }
@@ -925,6 +941,7 @@ export async function runPackagedHomeScale({
   ].includes(profile)
   const countArgument = process.env.IMAGEGEN_HOME_SCALE_PROJECTS
   const layered256 = (distinct || profile === 'linked-layered') && countArgument === '256'
+  const thumbnailTiming = process.env.IMAGEGEN_HOME_SCALE_THUMBNAIL_TIMING
   const earlyPreview = process.env.IMAGEGEN_HOME_SCALE_EARLY_PREVIEW
   const earlyOpen = process.env.IMAGEGEN_HOME_SCALE_EARLY_OPEN
   assert.ok(
@@ -949,6 +966,16 @@ export async function runPackagedHomeScale({
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(!thumbnailRevision || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
+  assert.ok(
+    thumbnailTiming === undefined ||
+      (['shared', 'distinct'].includes(thumbnailTiming) &&
+        singleDistinct &&
+        layered256 &&
+        earlyOpen === undefined &&
+        earlyPreview === undefined &&
+        process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined),
+    'Use shared or distinct thumbnail timing on the 256-Project single layered workload without other timing or refresh controls.',
+  )
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
   const projectCount = Number(countArgument)
   const proof = JSON.parse(
@@ -981,7 +1008,15 @@ export async function runPackagedHomeScale({
   const workspaces = await prepareWorkspaces(appData, projectCount, linked)
   let raster = tinyRaster
   let replacementThumbnail
-  if (cardThumbnails) {
+  if (thumbnailTiming) {
+    const thumbnails = createCardThumbnails(thumbnailTiming === 'shared' ? 1 : projectCount, {
+      textured: true,
+    })
+    raster = (index) => ({
+      ...distinctRasterFixture(index),
+      cardThumbnail: thumbnails[thumbnailTiming === 'shared' ? 0 : index - 1],
+    })
+  } else if (cardThumbnails) {
     const thumbnails = createCardThumbnails(projectCount + Number(thumbnailRevision))
     if (thumbnailRevision) replacementThumbnail = thumbnails.pop()
     raster = (index) => ({
@@ -998,7 +1033,7 @@ export async function runPackagedHomeScale({
   const canvas = distinct ? { height: largeRasterSize, width: largeRasterSize } : baseRaster.canvas
   const preview = {
     height: canvas.height,
-    ...(!cardThumbnails && { thumbnailSha256 }),
+    ...(!cardThumbnails && !thumbnailTiming && { thumbnailSha256 }),
     width: canvas.width,
   }
   if (distinct) {
@@ -1021,7 +1056,10 @@ export async function runPackagedHomeScale({
     preview,
     totalBytes: files.reduce((bytes, file) => bytes + file.bytes.sizeBytes, 0),
     ...(distinct && { distinctRasterPngCount: projectCount * 4, rasterSeed: distinctRasterSeed }),
-    ...(cardThumbnails && { distinctCardThumbnails: projectCount }),
+    ...((cardThumbnails || thumbnailTiming) && {
+      distinctCardThumbnails: new Set(files.map(({ cardThumbnail }) => cardThumbnail.sha256)).size,
+    }),
+    ...(thumbnailTiming && { thumbnailTiming }),
     ...((linked || singleDistinct) && {
       ...(!distinct && {
         layerSha256: [raster, ...(raster.additionalRasters ?? [])].map((layer) => layer.pngSha256),
@@ -1094,12 +1132,13 @@ export async function runPackagedHomeScale({
             canvas,
             layered256,
             earlyPreview === '1' && name === 'first-index',
-            cardThumbnails
+            cardThumbnails || thumbnailTiming
               ? {
                   appData,
                   controls: cacheControls,
                   refresh: thumbnailRefresh && name === 'first-index',
                   replaceWithRevision: name === 'first-index' ? replaceWithRevision : undefined,
+                  timing: thumbnailTiming,
                 }
               : undefined,
           )
@@ -1133,14 +1172,11 @@ export async function runPackagedHomeScale({
       closedThumbnail = indexedThumbnail(appData, revisedThumbnail.revisedFile.id)
       assert.deepEqual(closedThumbnail, revisedThumbnail.after)
       assert.deepEqual(await identity(originalArchive.path), originalArchive)
-      if (name === 'first-index') {
-        const firstDatabase = path.join(root, 'before-thumbnail-restart.sqlite')
-        await copyFile(database, firstDatabase, constants.COPYFILE_EXCL)
-        assert.deepEqual(await identity(firstDatabase), {
-          ...checked.database,
-          path: firstDatabase,
-        })
-      }
+    }
+    if ((revisedThumbnail || thumbnailTiming) && name === 'first-index') {
+      const firstDatabase = path.join(root, 'before-thumbnail-restart.sqlite')
+      await copyFile(database, firstDatabase, constants.COPYFILE_EXCL)
+      assert.deepEqual(await identity(firstDatabase), { ...checked.database, path: firstDatabase })
     }
     const result = {
       ...measured,
@@ -1179,6 +1215,10 @@ export async function runPackagedHomeScale({
         'Exact rendered card names followed by two renderer frames, before native resize',
       interactions:
         'Before Playwright action to expected UI and two renderer frames in the same driver clock',
+      ...(thumbnailTiming && {
+        layeredThumbnails:
+          'First observed decoded viewport image with exact URL digest, and later wheel-to-decoded viewport image plus two frames. The tail screenshot and its pixel check are outside the timing interval.',
+      }),
       restart: 'Same closed AppData and OS cache state',
     },
     package: packageBefore,

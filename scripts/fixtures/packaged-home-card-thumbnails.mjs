@@ -9,9 +9,11 @@ import { expect } from '@playwright/test'
 import Database from 'better-sqlite3'
 
 const size = 16
+const layeredSize = 256
+const layeredThumbnailTimeout = 60_000
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
-export function createCardThumbnails(count) {
+export function createCardThumbnails(count, { textured = false } = {}) {
   const colors = Array.from({ length: count }, (_, index) =>
     [0, 3, 6].map((shift) => 24 + 28 * ((index >> shift) & 7)),
   )
@@ -21,22 +23,34 @@ export function createCardThumbnails(count) {
       [
         '-c',
         [
-          'import base64, io, json, sys',
+          'import base64, hashlib, io, json, sys',
           'from PIL import Image',
+          'size = int(sys.argv[1])',
+          'if size == 256:',
+          '    edge_bytes = 256 * 16 * 3',
+          '    pixels = hashlib.shake_256(b"ImageGen Studio layered thumbnail edge v1").digest(edge_bytes * 2)',
+          '    top = Image.frombytes("RGB", (256, 16), pixels[:edge_bytes])',
+          '    bottom = Image.frombytes("RGB", (256, 16), pixels[edge_bytes:])',
           'result = []',
           'for color in json.load(sys.stdin):',
           '    with io.BytesIO() as buffer:',
-          '        Image.new("RGB", (16, 16), tuple(color)).save(buffer, "WEBP", lossless=True)',
+          '        image = Image.new("RGB", (size, size), tuple(color))',
+          '        if size == 256:',
+          '            image.paste(top, (0, 0))',
+          '            image.paste(bottom, (0, 240))',
+          '        image.save(buffer, "WEBP", lossless=True)',
           '        result.append(base64.b64encode(buffer.getvalue()).decode("ascii"))',
           'json.dump(result, sys.stdout)',
         ].join('\n'),
+        String(textured ? layeredSize : size),
       ],
-      { input: JSON.stringify(colors), timeout: 10_000 },
+      { input: JSON.stringify(colors), maxBuffer: 24 * 1024 * 1024, timeout: 10_000 },
     ),
   )
   assert.equal(encoded.length, count)
   const fixtures = encoded.map((value, index) => {
     const bytes = Buffer.from(value, 'base64')
+    if (textured) assert.ok(bytes.length >= 8 * 1024 && bytes.length <= 64 * 1024)
     return { bytes, rgb: colors[index], sha256: digest(bytes) }
   })
   assert.equal(new Set(fixtures.map((fixture) => fixture.sha256)).size, count)
@@ -118,6 +132,196 @@ function screenshotColors(bytes, { viewportWidth, viewportHeight, x, y }) {
       { input: bytes, timeout: 5_000 },
     ),
   )
+}
+
+function viewThumbnail(image) {
+  return image.evaluate((element) => {
+    const scroll = element.closest('.browser-content')
+    const clip = scroll.getBoundingClientRect()
+    const rect = element.getBoundingClientRect()
+    const x = Math.floor(rect.x + rect.width / 2) - 1
+    const y = Math.floor(rect.y + rect.height / 2) - 1
+    return {
+      clip: { bottom: clip.bottom, left: clip.left, right: clip.right, top: clip.top },
+      clipBottom: clip.bottom,
+      complete: element.complete,
+      declaredLoading: element.loading,
+      height: element.naturalHeight,
+      intersects: rect.top < clip.bottom && rect.bottom > clip.top,
+      paintPointVisible:
+        rect.width >= 3 &&
+        rect.height >= 3 &&
+        x >= Math.max(clip.left, 0) &&
+        y >= Math.max(clip.top, 0) &&
+        x + 3 <= Math.min(clip.right, innerWidth) &&
+        y + 3 <= Math.min(clip.bottom, innerHeight),
+      scrollTop: scroll.scrollTop,
+      source: element.currentSrc || element.src,
+      top: rect.top,
+      viewportHeight: innerHeight,
+      viewportWidth: innerWidth,
+      width: element.naturalWidth,
+      x,
+      y,
+    }
+  })
+}
+
+function assertLayeredThumbnailSource(source, { id, cardThumbnail }) {
+  const url = new URL(source)
+  assert.equal(url.origin, 'null')
+  assert.equal(url.protocol, 'igs-preview:')
+  assert.equal(url.host, 'thumbnail')
+  assert.equal(url.username + url.password + url.search + url.hash, '')
+  assert.match(url.pathname, new RegExp(`^/${id}/${cardThumbnail.sha256}/[a-f0-9]{64}\\.webp$`))
+}
+
+/** Observe the first decoded thumbnail in the viewport while Home is still discovering Projects. */
+export async function observeFirstLayeredThumbnail(page, grid, files) {
+  const deadline = performance.now() + layeredThumbnailTimeout
+  const element = await grid.elementHandle({ timeout: layeredThumbnailTimeout })
+  try {
+    const timeout = Math.ceil(deadline - performance.now())
+    assert.ok(timeout > 0, 'Home grid appeared after the thumbnail observation deadline.')
+    const ready = await page.waitForFunction(
+      async (gridElement) => {
+        const scroll = gridElement.closest('.browser-content')
+        if (!scroll || scroll.scrollTop !== 0) return null
+        const visible = (image, clip) => {
+          const rect = image.getBoundingClientRect()
+          const x = rect.x + rect.width / 2
+          const y = rect.y + rect.height / 2
+          return (
+            rect.width >= 3 &&
+            rect.height >= 3 &&
+            x >= Math.max(clip.left, 0) &&
+            y >= Math.max(clip.top, 0) &&
+            x < Math.min(clip.right, innerWidth) &&
+            y < Math.min(clip.bottom, innerHeight)
+          )
+        }
+        const clip = scroll.getBoundingClientRect()
+        for (const card of gridElement.children) {
+          if (card.getBoundingClientRect().top >= Math.min(clip.bottom, innerHeight)) break
+          const image = card.querySelector('button.row-select:enabled .project-thumbnail img')
+          if (!image?.complete || image.naturalWidth === 0 || !visible(image, clip)) continue
+          const source = image.currentSrc
+          await image.decode()
+          if (
+            !image.isConnected ||
+            image.currentSrc !== source ||
+            !visible(image, scroll.getBoundingClientRect())
+          )
+            return null
+          return {
+            cardCount: gridElement.children.length,
+            id: card.dataset.projectId,
+            source,
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          }
+        }
+        return null
+      },
+      element,
+      { polling: 100, timeout },
+    )
+    const observed = await ready.jsonValue().finally(() => ready.dispose())
+    const file = files.find(({ id }) => id === observed.id)
+    assert.ok(file, `Unexpected viewport Project ${observed.id}`)
+    assert.ok(observed.cardCount > 0 && observed.cardCount <= files.length)
+    assert.equal(observed.width, layeredSize)
+    assert.equal(observed.height, layeredSize)
+    assertLayeredThumbnailSource(observed.source, file)
+    return { ...observed, sha256: file.cardThumbnail.sha256 }
+  } finally {
+    await element.dispose()
+  }
+}
+
+async function wheelToEnd(page, scroller) {
+  const bounds = await scroller.boundingBox()
+  assert.ok(bounds)
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  const distance = await scroller.evaluate((element) => element.scrollHeight)
+  const startedAt = performance.now()
+  await page.mouse.wheel(0, distance)
+  await expect
+    .poll(
+      async () =>
+        await scroller.evaluate(
+          (element) =>
+            Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
+        ),
+    )
+    .toBe(true)
+  return startedAt
+}
+
+async function decodeAndPaint(page, image) {
+  await image.evaluate((element) => element.decode())
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  )
+}
+
+/** Measure lazy rendering of the distant card after the full grid becomes available. */
+export async function measureLayeredThumbnailTail(page, grid, files, root, lifetime) {
+  const tail = grid.locator('[data-project-id]').last()
+  const id = await tail.getAttribute('data-project-id')
+  const file = files.find((candidate) => candidate.id === id)
+  assert.ok(file, `Unexpected last Project ${id}`)
+  const { rgb, sha256 } = file.cardThumbnail
+  const image = tail.locator('.project-thumbnail img')
+  const scroller = page.locator('.browser-content')
+  const before = await viewThumbnail(image)
+  assertLayeredThumbnailSource(before.source, file)
+  assert.equal(before.declaredLoading, 'lazy')
+  assert.equal(before.complete, false)
+  assert.equal(before.width, 0)
+  assert.equal(before.height, 0)
+  assert.ok(!before.intersects && before.top > before.clipBottom && before.scrollTop === 0)
+
+  const startedAt = await wheelToEnd(page, scroller)
+  await expect
+    .poll(
+      async () => {
+        const observed = await viewThumbnail(image)
+        return observed.complete && observed.paintPointVisible && observed.width > 0
+      },
+      { intervals: [25, 50, 100], timeout: 15_000 },
+    )
+    .toBe(true)
+  await decodeAndPaint(page, image)
+  const observed = await viewThumbnail(image)
+  const ms = performance.now() - startedAt
+  assert.equal(observed.complete, true)
+  assert.equal(observed.paintPointVisible, true)
+  assert.equal(observed.width, layeredSize)
+  assert.equal(observed.height, layeredSize)
+  assert.equal(observed.source, before.source)
+  assert.ok(observed.scrollTop > before.scrollTop)
+  const screenshot = path.join(root, `${lifetime}-layered-thumbnail-last.png`)
+  const captured = await page.screenshot({ path: screenshot, scale: 'css' })
+  assert.deepEqual(
+    screenshotColors(captured, observed),
+    [rgb],
+    `Unexpected painted WebP on ${file.title}`,
+  )
+  await scroller.evaluate((element) => element.scrollTo(0, 0))
+  return {
+    before,
+    ms,
+    end: {
+      id,
+      observed,
+      rgb,
+      screenshot,
+      screenshotSha256: digest(captured),
+      sha256,
+      title: file.title,
+    },
+  }
 }
 
 export function indexedThumbnail(appData, id) {
@@ -339,37 +543,7 @@ export async function measureCardThumbnails(
   const projects = new Map(files.map((file) => [file.id, file]))
   const article = (id) => grid.locator(`[data-project-id="${id}"]`)
   const img = (id) => article(id).locator('.project-thumbnail img')
-  const view = (id) =>
-    img(id).evaluate((element) => {
-      const scroll = element.closest('.browser-content')
-      const clip = scroll.getBoundingClientRect()
-      const rect = element.getBoundingClientRect()
-      const x = Math.floor(rect.x + rect.width / 2) - 1
-      const y = Math.floor(rect.y + rect.height / 2) - 1
-      return {
-        clip: { bottom: clip.bottom, left: clip.left, right: clip.right, top: clip.top },
-        clipBottom: clip.bottom,
-        complete: element.complete,
-        declaredLoading: element.loading,
-        height: element.naturalHeight,
-        intersects: rect.top < clip.bottom && rect.bottom > clip.top,
-        paintPointVisible:
-          rect.width >= 3 &&
-          rect.height >= 3 &&
-          x >= Math.max(clip.left, 0) &&
-          y >= Math.max(clip.top, 0) &&
-          x + 3 <= Math.min(clip.right, innerWidth) &&
-          y + 3 <= Math.min(clip.bottom, innerHeight),
-        scrollTop: scroll.scrollTop,
-        source: element.currentSrc || element.src,
-        top: rect.top,
-        viewportHeight: innerHeight,
-        viewportWidth: innerWidth,
-        width: element.naturalWidth,
-        x,
-        y,
-      }
-    })
+  const view = (id) => viewThumbnail(img(id))
   const tail = order.at(-1)
   const before = await view(tail)
   assert.equal(before.declaredLoading, 'lazy')
@@ -403,10 +577,7 @@ export async function measureCardThumbnails(
       await page.screenshot({ path: path.join(root, `${lifetime}-thumbnail-failure.png`) })
       throw error
     }
-    await img(id).evaluate((element) => element.decode())
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    )
+    await decodeAndPaint(page, img(id))
     const observed = await view(id)
     assert.equal(observed.paintPointVisible, true)
     assert.equal(observed.height, size)
@@ -438,21 +609,7 @@ export async function measureCardThumbnails(
       [controls.fifo.id, controls.wrongWebp.id],
     )
   }
-  const scrollEnd = async () => {
-    const bounds = await scroller.boundingBox()
-    assert.ok(bounds)
-    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-    await page.mouse.wheel(0, await scroller.evaluate((element) => element.scrollHeight))
-    await expect
-      .poll(
-        async () =>
-          await scroller.evaluate(
-            (element) =>
-              Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
-          ),
-      )
-      .toBe(true)
-  }
+  const scrollEnd = () => wheelToEnd(page, scroller)
   const runTail = async () => {
     await scrollEnd()
     return { end: await sample(tail, 'last') }

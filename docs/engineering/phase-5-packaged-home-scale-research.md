@@ -1705,6 +1705,13 @@ copies are retained with the physical exit receipts. Cleanup of the disposable
 AppImage, profiles, fixture archive bodies and source scratch reclaimed
 2,904,776,704 allocated bytes.
 
+During preparation for R8/R9, a default SQLite CLI connection to the retained
+R27 database removed its zero-byte WAL and 32 KiB SHM on close. The main file
+still matches the original retained SHA-256. An immutable read confirmed
+integrity, foreign keys, all 30 migrations and all 256 ready Project rows.
+The old companion hashes are historical pins. The incident is recorded in
+`runs/packaged-home-scale/20261128-r9/r27-companions-incident.json`.
+
 ### Unreadable derived thumbnail entries
 
 On base `f6f74fef`, the Main thumbnail request opened the derived cache
@@ -1890,3 +1897,72 @@ and six icons were moved back into the run's custody. The daemon still
 holds read-only descriptors to that AppImage. The lifecycle record pins
 the binary until those descriptors close. This covers bounded thumbnail
 correctness on one host. The supported-host speed target remains open.
+
+### Layered catalogs with shared and distinct WebPs
+
+On base `2439a967`, two fresh app-data profiles use the same stock
+AppImage, SHA-256
+`e58fabcf92a03f9f53d1318baac197b16e2fd741a5f6db91e301129c978ddc58`.
+Each holds 256 Projects in one workspace, 1,024 distinct 1024 × 1024
+Raster PNGs, and 1,020,169,625 archive bytes. The 256 × 256 lossless
+WebPs have identical synthetic texture bands and a known center color.
+Each WebP is 24,732 bytes. R8 puts the same WebP in all archives. R9
+varies the center color and embeds 256 distinct digests. Both profiles
+use the same Project metadata, Raster and merged-preview bodies.
+
+The first image probe observes a decoded image in the starting viewport
+and records its exact URL digest and simultaneous card count. Full grid
+timing waits for every expected title and two frames. After the full grid
+loads, one wheel action exposes the last card. The driver records its
+decode and two frames before taking the screenshot used for the 3 × 3
+pixel check. All four last-card probes started outside the viewport with
+zero natural width and ended with the expected signed URL, dimensions
+and pixels.
+
+| Native measurement                         | Shared WebP, R8 | Distinct WebPs, R9 |
+| ------------------------------------------ | --------------: | ----------------: |
+| Fresh index, first decoded thumbnail       |         10.73 s |            9.72 s |
+| Fresh index, visible Home to first decode  |          5.72 s |            5.71 s |
+| Fresh index, all 256 cards                  |         27.91 s |           27.45 s |
+| Fresh index, scroll to last thumbnail      |          282 ms |             254 ms |
+| Indexed restart, first decoded thumbnail   |          9.92 s |            9.56 s |
+| Indexed restart, all 256 cards              |          9.91 s |            9.56 s |
+| Indexed restart, scroll to last thumbnail  |          543 ms |             265 ms |
+
+Both first decodes on a fresh index occurred with 60 cards available.
+Measurements start before spawn unless the row names a later boundary.
+Both variants ran serially on the same i9-11900KF host with ext4, private
+software-rendered KDE Wayland, a 120% CPU quota, 4 GiB memory and zero
+swap. The restart uses the same closed profile and retains OS caches.
+Each cell is one observation. The product speed target and the supported
+host matrix remain open.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
+`invokeai/frontend/webv2/src/features/gallery/ui/useGalleryData.ts`
+and `GalleryImageGrid.tsx` request pages and render virtual rows through
+`features/gallery/data/{queries,backend}.ts` and
+`invokeai/app/api/routers/gallery.py`. The gallery service queries
+`services/shared/database/queries/gallery.py::GalleryQueries.page` over
+managed records. `GalleryThumbnail.tsx` and
+`invokeai/app/api/routers/images.py::get_image_thumbnail` deliver the
+materialized WebP. Studio Home scans and verifies saved external `.igs`
+archives. This fixture measures the existing catalog and image consumer
+at their respective boundaries.
+
+Run with `IMAGEGEN_HOME_SCALE_FIXTURE=single-layered-distinct`,
+`IMAGEGEN_HOME_SCALE_PROJECTS=256`, `IMAGEGEN_HOME_SCALE_SOFTWARE=1`
+and `IMAGEGEN_HOME_SCALE_THUMBNAIL_TIMING=shared` or `distinct`.
+The receipts and comparison are under `runs/packaged-home-scale/20261128-r8`
+and `20261128-r9`. Independent readback verified the package and embedded
+ASAR, 19 source pins, 512 archives with 4,608 ZIP entries, 1,536 matched
+non-WebP member pairs and four closed SQLite databases with 256 ready rows
+each. It also confirmed four pixel samples and physical exit for all 40
+recorded PID identities. Both scopes stayed within memory limits with zero
+OOM events. The 113 focused tests, typecheck, scoped lint, formatting and
+stock packaging passed. The prior 129 small WebP fixture digests also
+matched exactly on regeneration.
+
+Cleanup released 2,581,204,992 allocated bytes after the four normal
+exits and independent readback. The four closed database bodies,
+matched comparison, screenshots and a sampled `.igs` and WebP from
+each profile remain with the retention records.

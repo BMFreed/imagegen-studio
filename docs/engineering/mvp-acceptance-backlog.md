@@ -213,6 +213,13 @@ environment and remaining limits, and update the current stage and next run.
         18.53 s and 19.07 s respectively. Indexed restarts reached it in
         7.33 s and 7.49 s. The supported-host speed target remains open.
         [Packaged full catalog](./phase-5-packaged-home-scale-research.md#packaged-complete-discovery-in-one-and-three-workspaces)
+  - [x] Compared a shared WebP with 256 distinct WebPs on the same layered
+        catalog and AppImage. Both fresh launches decoded a visible
+        thumbnail at 60 of 256 cards. The distinct set reached all cards
+        at 27.45 s fresh and 9.56 s after restart. The distant card decoded
+        and painted the expected pixels within 0.27 s of scrolling on
+        both distinct-thumbnail launches.
+        [Layered thumbnail timings](./phase-5-packaged-home-scale-research.md#layered-catalogs-with-shared-and-distinct-webps)
   - [x] A thumbnail request with a FIFO at its derived cache path now
         returns the exact embedded WebP and releases the Project path lock.
         The unusual cache entry and the original Project keep their identities.
