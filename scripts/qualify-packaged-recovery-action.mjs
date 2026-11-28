@@ -45,6 +45,7 @@ assert.ok(
           '--kde-save',
           '--kde-save-after-replace',
           '--kde-save-current',
+          '--kde-save-current-feed-error',
           '--kde-save-current-stale',
           '--kde-save-default',
           '--kde-save-occupied',
@@ -57,8 +58,13 @@ const installNext = rest[0] === '--install-next' || kdeInstallNext
 const afterReplace = rest[0] === '--kde-save-after-replace'
 const kdeRetireMixed = rest[0] === '--kde-retire-mixed-current'
 const kdeRetireCurrent = rest[0] === '--kde-retire-current' || kdeRetireMixed
+const kdeSaveCurrentFeedError = rest[0] === '--kde-save-current-feed-error'
 const kdeSaveCurrentStale = rest[0] === '--kde-save-current-stale'
-const kdeSaveCurrent = rest[0] === '--kde-save-current' || kdeSaveCurrentStale || kdeRetireCurrent
+const kdeSaveCurrent =
+  rest[0] === '--kde-save-current' ||
+  kdeSaveCurrentFeedError ||
+  kdeSaveCurrentStale ||
+  kdeRetireCurrent
 const kdeSaveOccupied = rest[0] === '--kde-save-occupied'
 const kdeSaveDefault =
   rest[0] === '--kde-save-default' ||
@@ -954,7 +960,7 @@ async function launch(filename, version, suffix = '') {
   const stdout = await fs.open(path.join(run, `${logName}.stdout`), 'wx', 0o600)
   const stderr = await fs.open(stderrPath, 'wx', 0o600)
   try {
-    const args = kdeSaveCurrentStale ? ['--disable-gpu'] : []
+    const args = kdeSaveCurrentStale || kdeSaveCurrentFeedError ? ['--disable-gpu'] : []
     state.child = spawn(filename, args, { cwd, env, stdio: ['ignore', stdout.fd, stderr.fd] })
     state.exit = once(state.child, 'close')
     // Capture failure in the bounded poll below rather than as an unhandled rejection.
@@ -1369,11 +1375,15 @@ async function editPositivePrompt(page, projectId, text) {
     })
     .toBe(true)
 }
-async function openUpdates(page, expectCurrent = false) {
+async function openUpdates(page, expected = 'download') {
   await page.getByRole('button', { name: 'Help menu', exact: true }).click()
   await page.getByText('Check for Updates…', { exact: true }).click()
   const modal = page.getByRole('dialog', { name: 'Application Updates', exact: true })
-  if (expectCurrent) {
+  if (expected === 'error') {
+    await expect(modal.getByText('Update check failed', { exact: true })).toBeVisible()
+    await expect(modal.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+    await expect(modal.getByRole('button', { name: 'Download', exact: true })).toBeHidden()
+  } else if (expected === 'up-to-date') {
     await expect(modal.getByText('ImageGen Studio is up to date.', { exact: true })).toBeVisible()
     await expect(modal.getByRole('button', { name: 'Download', exact: true })).toBeHidden()
   } else {
@@ -2218,6 +2228,7 @@ async function exerciseRecoveryAction() {
   assert.equal(packages.length, 1)
   const project = path.join(workspace, packages[0])
   const projectSha = await hash(project)
+  const beforeRecovery = kdeSaveCurrentFeedError ? (await readIgsPackage(project)).project : null
   const mixedNeighbors = kdeRetireMixed ? await prepareMixedNeighbors(project) : null
   if (installedProject) {
     assert.equal(project, installedProject.filename)
@@ -2226,8 +2237,11 @@ async function exerciseRecoveryAction() {
     assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
   }
   if (kdeSaveCurrentStale) await editPositivePrompt(first, projectId, staleDraft)
-  offered = recoveryRelease
-  const updates = await openUpdates(first, kdeSaveCurrent)
+  offered = kdeSaveCurrentFeedError ? null : recoveryRelease
+  const updates = await openUpdates(
+    first,
+    kdeSaveCurrentFeedError ? 'error' : kdeSaveCurrent ? 'up-to-date' : 'download',
+  )
   const save = updates.getByRole('button', { name: 'Save recovery AppImage', exact: true })
   if (kdeSaveDefault) {
     const status = updates.getByRole('region', { name: 'Application update recovery at startup' })
@@ -2256,10 +2270,15 @@ async function exerciseRecoveryAction() {
   if (!kdeSaveCurrent) await expect(save).toBeEnabled({ timeout: 120_000 })
   const checked = await call(first, 'applicationUpdates', 'getStatus')
   const onlyMetadataRequest = [
-    { method: 'GET', range: null, route: '/latest-linux.yml', status: 200 },
+    {
+      method: 'GET',
+      range: null,
+      route: '/latest-linux.yml',
+      status: kdeSaveCurrentFeedError ? 503 : 200,
+    },
   ]
   if (kdeSaveCurrent) {
-    assert.equal(checked.status, 'up-to-date')
+    assert.equal(checked.status, kdeSaveCurrentFeedError ? 'error' : 'up-to-date')
     assert.equal(checked.currentVersion, recoveryVersion)
     assert.equal(checked.availableVersion, null)
     assert.deepEqual(requests, onlyMetadataRequest)
@@ -2267,8 +2286,26 @@ async function exerciseRecoveryAction() {
     report.currentRecovery = { check: checked, visibleAfterCheck: await save.isVisible() }
     await expect(
       save,
-      'A verified retained AppImage can be saved when the feed has no newer version.',
+      'A verified retained AppImage can be saved without a newer release.',
     ).toBeEnabled({ timeout: 5_000 })
+    if (kdeSaveCurrentFeedError) {
+      await expect(save).toBeVisible()
+      assert.deepEqual(checked, {
+        availableVersion: null,
+        currentVersion: recoveryVersion,
+        downloadedBytes: null,
+        notesTruncated: false,
+        releaseNotes: null,
+        status: 'error',
+        totalBytes: null,
+        verification: null,
+      })
+      report.currentRecoveryFeedError = {
+        saveActionEnabled: true,
+        viewport: await first.evaluate(() => ({ height: innerHeight, width: innerWidth })),
+      }
+      await first.screenshot({ path: path.join(run, 'feed-error-recovery-available.png') })
+    }
   } else {
     assert.equal(checked.availableVersion, recoveryVersion)
     assert.equal(checked.verification, 'signed-release')
@@ -2327,6 +2364,11 @@ async function exerciseRecoveryAction() {
     .toBe(1)
   await expect(save).toBeEnabled()
   await assert.rejects(fs.lstat(newPath), { code: 'ENOENT' })
+  if (kdeSaveCurrentFeedError) {
+    assert.deepEqual(requests, onlyMetadataRequest)
+    assert.deepEqual(await call(first, 'applicationUpdates', 'getStatus'), checked)
+    assert.equal(await hash(project), projectSha)
+  }
   if (occupied) {
     await expect(updates.getByText(conflictMessage, { exact: true })).toBeVisible()
     await expect(updates.getByText('Recovery AppImage saved', { exact: true })).toBeHidden()
@@ -2393,9 +2435,8 @@ async function exerciseRecoveryAction() {
   const recovered = await launch(newPath, recoveryVersion)
   const second = recovered.page
   assert.equal(requests.length, requestCount)
-  assert.deepEqual(await call(second, 'applicationUpdates', 'getRecoveryStatus'), {
-    status: 'clear',
-  })
+  const recoveryAfterReopen = await call(second, 'applicationUpdates', 'getRecoveryStatus')
+  assert.deepEqual(recoveryAfterReopen, { status: 'clear' })
   const reopened = await call(second, 'projects', 'list')
   assert.equal(reopened.length, 1)
   assert.equal(reopened[0].id, projectId)
@@ -2403,6 +2444,15 @@ async function exerciseRecoveryAction() {
   await expect(projectTab(second)).toBeVisible()
   const recoveredTab = (await call(second, 'projects', 'open', projectId)).tab
   assert.equal(recoveredTab.dirty, false)
+  if (kdeSaveCurrentFeedError) {
+    assert.equal(recoveredTab.documentId, beforeRecovery.documentId)
+    assert.equal(recoveredTab.documentRevision, beforeRecovery.documentRevision)
+    report.currentRecoveryFeedError.reopened = {
+      documentId: recoveredTab.documentId,
+      documentRevision: recoveredTab.documentRevision,
+      recovery: recoveryAfterReopen,
+    }
+  }
   const recoveredRuntime = installedRuntime ? await readInstalledReady(second) : undefined
   let downloadedC
   let installed
@@ -2618,7 +2668,9 @@ try {
       normalCode,
       pid,
       scopeExit,
-      ...(kdeRetireCurrent || kdeLateStage || kdeSaveCurrentStale ? { start } : {}),
+      ...(kdeRetireCurrent || kdeLateStage || kdeSaveCurrentStale || kdeSaveCurrentFeedError
+        ? { start }
+        : {}),
       version,
     }),
   )

@@ -274,6 +274,11 @@ environment and remaining limits, and update the current stage and next run.
         path using only the local target. The copy reopened the exact
         Project and the original stage and backup stayed intact.
         [Recovery without a newer release](./phase-5-application-update-interruption-research.md#recovery-without-a-newer-release)
+  - [x] When the publisher metadata returned HTTP 503, the AppImage still
+        offered local signed recovery. KDE Cancel and Save used the
+        retained current image. The saved copy reopened the exact Project
+        revision and reported recovery clear with no artifact transfer.
+        [Recovery after a publisher error](./phase-5-application-update-interruption-research.md#save-a-verified-local-copy-after-a-publisher-error)
   - [x] During the real KDE Save dialog, a same-byte replacement of the
         current AppImage triggered a stale refusal. It preserved the stage
         and the open draft. After explicit Project Save and normal exit,

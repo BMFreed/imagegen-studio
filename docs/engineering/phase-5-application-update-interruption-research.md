@@ -295,6 +295,51 @@ the same-version Save and the downloaded-release control at 900×620.
 Typecheck, scoped lint and AppImage packaging passed. Independent source
 review found no blocking issue.
 
+## Save a verified local copy after a publisher error
+
+At Studio `a4c0db7e`, the private signed two-release AppImage fixture
+answered the explicit update Check with HTTP 503 from its loopback
+publisher. Updates displayed **Update check failed** and **Check again**
+while the application file remained verified and **Save recovery
+AppImage** was enabled. The complete HTTP log contains one `GET
+/latest-linux.yml` with status 503. Both cold starts and the two Save
+attempts made zero requests.
+
+The real KDE SaveFile portal canceled the first attempt and accepted a
+fresh name on the second. The mode published the exact current signed
+AppImage at the new path. Both application lifetimes closed normally.
+Launching that image reopened the same saved Project document and revision
+and reported recovery clear. The original target, retained stage, backup
+and admission lock kept their exact identities through both launches.
+
+The fixture uses the existing retained-current selection in
+`src/shared/application-updates.ts` and the existing verified copy owner.
+InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7` publishes database
+copies through `invokeai/app/util/database_copy.py::_move_into_place`
+and `invokeai/app/util/no_replace.py::publish_noreplace`. This run
+exercises the already implemented Studio workflow after a failed Check.
+
+Prepare with `node --import tsx scripts/prepare-packaged-recovery-action.mjs
+<run> --kde-save`. In the private Wayland session, run `node --import tsx
+scripts/qualify-packaged-recovery-action.mjs <run>
+--kde-save-current-feed-error`. The run used software-rendered KDE Wayland
+at 1380 × 900, a 120% CPU quota, 4 GiB memory and zero swap.
+
+Independent readback verified both signed packages and embedded ASARs,
+42 desktop assets per package, ten source pins, six retained filesystem
+identities and two closed Project/SQLite pairs. It confirmed both portal
+responses and physical exit of all 18 recorded process identities. One
+source file was edited after the run for a separate queue fixture. Its
+exact native source pin was verified against the base Git blob. The
+application-update suite passed 647 tests, with one Linux-inapplicable
+host test skipped. Typecheck, scoped lint, formatting and packaging passed.
+
+Cleanup released 1,354,788,864 allocated bytes. Closed databases,
+Projects, stage metadata, package digests and screenshots remain under
+`runs/packaged-recovery-action/20261128-feed-error-r1`. The scope is a
+local verified recovery copy with a qualification publisher. Legacy-writer
+ownership and production delivery remain open.
+
 ## Archive a dedicated old AppImage folder after exit
 
 Re-read clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7`.
