@@ -11,8 +11,10 @@ The two-plinth reference swap and the named-camera control failed their
 visual gates in Studio and installed InvokeAI. A simpler two-duck IMG
 scene passed the ordinary prerequisite at strength 0.30. The regional
 reference still failed to localize yellow body appearance in either engine
-after removing the color adjective. On Anima, the image-wide scarf negative
-preserved both scarves even with the accessory omitted from the positives.
+after removing the color adjective. The user accepted both ordinary controls
+and all four Anima tabletop placements on seeds 123 and 124. The image-wide
+scarf negative preserved both scarves even with the accessory omitted from
+the positives.
 The table-only Smart Inpaint edit in both engines preserved all protected
 pixels and kept the table edges intact. The apple insertion still failed.
 Explicit Refresh and indexed restart passed local
@@ -42,9 +44,9 @@ environment and remaining limits, and update the current stage and next run.
         [Global subject and Invoke comparison](./phase-4-anima-countertop-global-subjects-research.md)
   - [x] With an explicit tabletop gap in the Anima global positive, both
         ordinary controls and all four opposite-side assignments passed
-        blind agent review on seeds 123 and 124. Human acceptance and
-        independent local-negative utility remain open.
-        [Two-seed placement result](./phase-4-anima-countertop-separation-research.md)
+        the blind agent reviews and the user's letter-labeled review on
+        seeds 123 and 124. Independent local-negative utility remains open.
+        [Two-seed human placement result](./phase-4-anima-countertop-separation-research.md#human-review-of-the-two-seed-placement)
   - [x] Ran ordinary Smart Inpaint on official Illustrious XL v0.1 and
         the matched installed InvokeAI graph. Both preserved all 163,636
         protected pixels and failed the single grounded apple criterion.

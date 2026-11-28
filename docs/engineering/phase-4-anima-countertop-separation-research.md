@@ -56,11 +56,29 @@ The installed CUDA worker completed six requests and 120 ordered progress
 events. Independent audits checked all six exact output PNGs, masks,
 original Project archives and closed SQLite logical snapshots, as well
 as source pins and the physical exit of the two controllers and six
-workers. These are two fixed seeds with one checkpoint, and the readings
-are agent verdicts. Human acceptance, independent local-negative utility
-and the Illustrious visual checks remain open.
+workers. The earlier readings were agent verdicts for two fixed seeds
+with one checkpoint.
 
 The exact contracts, requests, output images, blind readings and verified
 closed-fixture archives are retained under
 `runs/anima-countertop-separate-subjects/20261128-r1` and `20261128-r2`
 in the artifact root. The comparison sheet is in R2.
+
+## Human review of the two-seed placement
+
+The user saw the six original outputs together under letter labels. The
+panel hid the seed, treatment and earlier verdict. A side mark meant one
+recognizable apple, one recognizable mug, open tabletop between them and
+no duplicate or visible join. The two ordinary controls required the scene
+criteria. The regional cases also required the assigned side.
+
+| Seed | Ordinary | Assigned, apple left | Swapped, apple right |
+| ---- | -------- | -------------------- | -------------------- |
+| 123  | B, pass  | F, pass              | D, pass              |
+| 124  | E, pass  | C, pass              | A, pass              |
+
+The user confirmed the left-side mark for C before the mapping was revealed.
+The initial response, confirmation and six source SHA-256 pins are retained
+under `runs/anima-countertop-separate-subjects/20261128-human-panel-a`.
+This accepts the tabletop placement on the two tested seeds. Independent
+Anima local-negative utility and the Illustrious visual checks remain open.
