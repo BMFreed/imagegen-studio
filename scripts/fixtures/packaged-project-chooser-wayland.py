@@ -104,6 +104,8 @@ def start_private_session(command):
                      and os.environ.get('IMAGEGEN_SAVED_RESULTS_KEYBOARD') == '1')
                     or (scenario == 'workspace-chooser'
                         and os.environ.get('IMAGEGEN_WORKSPACE_ADD_KEYBOARD') == '1')
+                    or (scenario == 'queue-startup-recovery'
+                        and os.environ.get('IMAGEGEN_QUEUE_HISTORY_KEYBOARD') == '1')
                     or (scenario is None and os.environ.get('IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL')
                         == 'review-keyboard'))
         if (scenario not in ('home-recovery-keyboard', 'model-install-history', 'trash', 'home-scale',

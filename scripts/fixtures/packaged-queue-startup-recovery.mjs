@@ -78,7 +78,7 @@ async function readFrozenInputs(ownedRunRoot, identity) {
   return { payload, sourcePins, targetPngBytes }
 }
 
-async function prepareQueue({ appData, projectPath, project, frozen, root }) {
+async function prepareQueue({ appData, projectPath, project, frozen, root, mixedHistory = false }) {
   const scratch = path.join(root, 'queue-seed')
   await mkdir(scratch, { mode: 0o700 })
   const target = path.join(scratch, 'target.png')
@@ -122,13 +122,47 @@ async function prepareQueue({ appData, projectPath, project, frozen, root }) {
       return item
     }
 
+    async function claimNext() {
+      const pending = await enqueue()
+      const claim = await queue.claimNextPending()
+      assert.equal(claim?.item.id, pending.id)
+      assert.equal(claim.item.status, 'running')
+      assert.equal(claim.item.statusSequence, 1)
+      return claim.item
+    }
+
     const terminal = await enqueue()
     assert.equal((await queue.cancel(terminal.id, 0)).status, 'canceled')
-    const running = await enqueue()
-    const claim = await queue.claimNextPending()
-    assert.equal(claim?.item.id, running.id)
-    assert.equal(claim.item.status, 'running')
-    assert.equal(claim.item.statusSequence, 1)
+    const running = await claimNext()
+    if (mixedHistory) {
+      const failed = await queue.failRunning(running.id, running.statusSequence, {
+        code: 'FIXTURE_GENERATION_FAILED',
+        message: 'Controlled failure for the keyboard history fixture.',
+      })
+      assert.equal(failed.status, 'failed')
+      assert.equal(failed.statusSequence, 2)
+
+      // Seed the history shape left after a completed job has no live candidate.
+      // The real completion owner also publishes a candidate receipt and needs
+      // generated output. This fixture is only about clearing terminal history.
+      const completed = await claimNext()
+      const now = new Date().toISOString()
+      const updated = await database.db
+        .updateTable(tableQueue)
+        .set({
+          finished_at: now,
+          status: 'completed',
+          status_sequence: completed.statusSequence + 1,
+          updated_at: now,
+        })
+        .where('id', '=', completed.id)
+        .where('status', '=', 'running')
+        .where('error_code', 'is', null)
+        .where('status_sequence', '=', completed.statusSequence)
+        .executeTakeFirst()
+      assert.equal(Number(updated.numUpdatedRows), 1)
+      return { canceled: terminal.id, completed: completed.id, failed: failed.id }
+    }
     const pending = await enqueue()
     return { terminal: terminal.id, running: running.id, pending: pending.id }
   } finally {
@@ -198,17 +232,7 @@ async function retainInputs({ appData, ids, destination, baseline, identity }) {
   return result
 }
 
-export async function runPackagedQueueStartupRecovery({
-  root,
-  appData,
-  ownedRunRoot,
-  packageBefore,
-  launch,
-  readPorts,
-  closeNormally,
-  retainOwnStore,
-  identity,
-}) {
+async function prepareOwnedQueueProject({ root, appData, ownedRunRoot, packageBefore, identity }) {
   const proofPath = path.join(path.dirname(root), 'package-proof.json')
   assert.ok((await regularFile(proofPath)).size <= 16 * 1024)
   const proof = JSON.parse(await readFile(proofPath, 'utf8'))
@@ -233,6 +257,12 @@ export async function runPackagedQueueStartupRecovery({
   assert.deepEqual(await identity(projectPath), { ...source, path: projectPath })
   const { project } = await readIgsPackage(projectPath)
   const frozen = await readFrozenInputs(ownedRunRoot, identity)
+  return { source, projectPath, initial, project, frozen }
+}
+
+export async function runPackagedQueueStartupRecovery(options) {
+  const { root, appData, launch, readPorts, closeNormally, retainOwnStore, identity } = options
+  const { source, projectPath, initial, project, frozen } = await prepareOwnedQueueProject(options)
   const ids = await prepareQueue({ appData, projectPath, project, frozen, root })
   const before = await retainOwnStore('before-startup')
   const beforeRows = closedSnapshot(before).tables[tableQueue].rows
@@ -343,5 +373,177 @@ export async function runPackagedQueueStartupRecovery({
       retainedBefore,
       retainedAfter,
     },
+  }
+}
+
+export async function runPackagedQueueHistoryKeyboard(options) {
+  const { root, appData, launch, readPorts, closeNormally, retainOwnStore, identity } = options
+  const { runPackagedQueueHistoryKeyboard: driveHistory, inspectPackagedQueueHistoryKeyboard } =
+    await import('./packaged-queue-history-keyboard.mjs')
+  const { source, projectPath, initial, project, frozen } = await prepareOwnedQueueProject(options)
+  const ids = await prepareQueue({
+    appData,
+    projectPath,
+    project,
+    frozen,
+    root,
+    mixedHistory: true,
+  })
+  const before = await retainOwnStore('before-keyboard-history')
+  const baselineRows = closedSnapshot(before).tables[tableQueue].rows
+  assert.equal(baselineRows.length, 3)
+  for (const [status, id] of Object.entries(ids)) {
+    const row = baselineRows.find((item) => item.id === id)
+    assert.equal(row?.status, status)
+    assert.equal(row.status_sequence, status === 'canceled' ? 1 : 2)
+    assert.ok(Number.isFinite(Date.parse(row.finished_at)))
+  }
+  const inputWitness = path.join(root, 'before-inputs')
+  const retainedBefore = await retainInputs({ appData, ids, destination: inputWitness, identity })
+  const remainingIds = { canceled: ids.canceled, failed: ids.failed }
+  const sqlite = path.join(appData, 'database/app.sqlite')
+  const projectId = localProjectRecoveryKey(projectPath)
+  let acceptedRows
+
+  async function inspectAcceptedProject(state) {
+    const ports = await readPorts(state)
+    assert.equal(ports.runtime.value.kind, 'not-installed')
+    assert.equal(ports.projects.value.length, 1)
+    const [entry] = ports.projects.value
+    assert.equal(entry.id, projectId)
+    assert.equal(entry.title, project.title)
+    assert.equal(entry.recoveryStatus, 'none')
+    return entry
+  }
+
+  async function openAcceptedProject(state, entry) {
+    await state.page.getByRole('button', { name: `Open ${entry.title}`, exact: true }).click()
+    await assertOpened(state, projectId)
+  }
+
+  function assertStore(snapshot, activeIds) {
+    const active = Object.values(activeIds)
+    assert.equal(snapshot.integrityCheck, 'ok')
+    assert.deepEqual(snapshot.foreignKeyCheck, [])
+    for (const name of emptyTables) assert.deepEqual(snapshot.tables[name].rows, [], name)
+    assert.deepEqual(
+      snapshot.tables[tableQueue].rows,
+      baselineRows.filter((row) => active.includes(row.id)),
+    )
+    const accepted = snapshot.tables.project_accepted_result_index.rows
+    assert.equal(accepted.length, 1)
+    assert.equal(accepted[0].local_project_key, projectId)
+    assert.equal(accepted[0].document_id, project.documentId)
+    assert.equal(accepted[0].document_revision, project.documentRevision)
+    acceptedRows ??= accepted
+    assert.deepEqual(accepted, acceptedRows)
+  }
+
+  async function assertVisibleState(state, activeIds) {
+    const response = await state.page.evaluate(() => window.api.projects.getGenerationQueue())
+    assert.equal(response.ok, true, response.error?.message)
+    assert.deepEqual(response.value.counts, {
+      canceled: Number(Boolean(activeIds.canceled)),
+      completed: Number(Boolean(activeIds.completed)),
+      failed: Number(Boolean(activeIds.failed)),
+      pending: 0,
+      running: 0,
+    })
+    assert.equal(response.value.nextCursor, null)
+    assert.deepEqual(
+      response.value.items.map(({ id }) => id).sort(),
+      Object.values(activeIds).sort(),
+    )
+    for (const [status, id] of Object.entries(activeIds)) {
+      const item = response.value.items.find((entry) => entry.id === id)
+      assert.equal(item.status, status)
+      assert.equal(item.statusSequence, status === 'canceled' ? 1 : 2)
+      assert.equal(item.projectKey, projectId)
+      assert.equal(item.documentId, project.documentId)
+      assert.equal(item.publicationPending, false)
+    }
+    assertStore(snapshotDatabase(sqlite), activeIds)
+    await retainInputs({ appData, ids: activeIds, baseline: inputWitness, identity })
+    const file = await regularFile(projectPath)
+    assert.deepEqual([file.dev, file.ino], [initial.dev, initial.ino])
+    assert.deepEqual(await identity(projectPath), before.project)
+  }
+
+  async function checkpoint(name, activeIds) {
+    const store = await retainOwnStore(name)
+    assertStore(closedSnapshot(store), activeIds)
+    assert.deepEqual(store.project, before.project)
+    assert.deepEqual(await identity(path.join(root, store.retainedProject)), {
+      ...before.project,
+      path: path.join(root, store.retainedProject),
+    })
+    return store
+  }
+
+  async function runClear({ name, mode, beforeIds, afterIds }) {
+    const state = await launch(name)
+    const entry = await inspectAcceptedProject(state)
+    await assertVisibleState(state, beforeIds)
+    const keyboard = await driveHistory({
+      state,
+      root,
+      mode,
+      beforeIds: Object.values(beforeIds),
+      afterIds: Object.values(afterIds),
+      assertPreserved: async () => await assertVisibleState(state, beforeIds),
+      assertPruned: async () => await assertVisibleState(state, afterIds),
+    })
+    await assertVisibleState(state, afterIds)
+    await openAcceptedProject(state, entry)
+    await closeNormally(state)
+    return keyboard
+  }
+
+  const completed = await runClear({
+    name: 'keyboard-completed-history',
+    mode: 'completed',
+    beforeIds: ids,
+    afterIds: remainingIds,
+  })
+  const afterCompleted = await checkpoint('after-completed-history', remainingIds)
+  const retainedSurvivors = await retainInputs({
+    appData,
+    ids: remainingIds,
+    destination: path.join(root, 'after-completed-inputs'),
+    baseline: inputWitness,
+    identity,
+  })
+
+  const failedOrCanceled = await runClear({
+    name: 'keyboard-failed-canceled-history',
+    mode: 'failed-or-canceled',
+    beforeIds: remainingIds,
+    afterIds: {},
+  })
+  const afterFailedOrCanceled = await checkpoint('after-failed-canceled-history', {})
+
+  const cold = await launch('keyboard-empty-history')
+  const entry = await inspectAcceptedProject(cold)
+  await assertVisibleState(cold, {})
+  const empty = await inspectPackagedQueueHistoryKeyboard({ state: cold, root, expectedIds: [] })
+  await openAcceptedProject(cold, entry)
+  await closeNormally(cold)
+  const afterEmptyReopen = await checkpoint('after-empty-reopen', {})
+  assert.deepEqual(await identity(source.path), source)
+  for (const pin of frozen.sourcePins) assert.deepEqual(await identity(pin.path), pin)
+
+  return {
+    mode: 'mixed-terminal-history-keyboard',
+    completedSeed: 'synthetic terminal row without a live candidate',
+    before,
+    ids,
+    project: source,
+    sourcePins: frozen.sourcePins,
+    retainedBefore,
+    afterCompleted,
+    retainedSurvivors,
+    afterFailedOrCanceled,
+    afterEmptyReopen,
+    keyboard: { completed, failedOrCanceled, empty },
   }
 }

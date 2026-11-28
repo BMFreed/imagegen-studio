@@ -109,6 +109,11 @@ environment and remaining limits, and update the current stage and next run.
         and Cancel. The returned outline measures 8.07:1 against the button
         fill. Browser controls also cover Repair and retained focus on Help.
         [Setup and Repair keyboard result](./phase-5-runtime-setup-ui-research.md#keyboard-dismissal-and-focus-return)
+  - [x] On the stock AppImage, keyboard Clear history removed the completed
+        row alone, then the exact failed and canceled rows after restart.
+        Escape and Keep history preserved all inputs. The empty queue and
+        accepted Project survived a third normal launch.
+        [Stock selective queue cleanup](./phase-5-generation-queue-delete-focus-research.md#selective-keyboard-cleanup-in-the-stock-appimage)
   - [x] Saved generations exposes a modal dialog in Chromium and retains
         visible keyboard focus through Tab, Shift+Tab, Escape and Close.
         Both stock AppImage FUSE lifetimes also preserved the exact

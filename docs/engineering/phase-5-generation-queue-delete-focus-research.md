@@ -147,3 +147,59 @@ recorded exit 0. The report has zero page errors and 27 wire requests.
 All 75 controlled peer PIDs had a matching successful exit. The source
 and live build hashes matched the recorded pins. The final two idle
 scratch directories released another 4,734,976 allocated bytes.
+
+## Selective keyboard cleanup in the stock AppImage
+
+The stock AppImage built at `a4c0db7e` uses the existing packaged
+queue-startup fixture and the pinned accepted NoobAI Project. The owned
+store starts with one canceled job from `cancel`, one failed job from
+`failRunning`, and one fixture-seeded completed terminal row. The
+completed row represents operational history with no live candidate.
+All three have independently pinned frozen input files. The runtime
+stays uninstalled throughout this action check.
+
+At 900 × 620 on private software-rendered KDE Wayland, trusted keyboard
+input opened Queue Manager from Home. Escape closed Clear history while
+keeping the queue and trigger focus. The confirmation started on
+**Keep history** and contained Tab and Shift+Tab. Escape and explicit
+Keep history preserved all three rows and files. Confirming **Completed
+jobs** removed its one row and private input while retaining the failed
+and canceled rows and inputs byte for byte.
+
+The next cold launch had the same two survivors and disabled **Completed
+jobs**. Confirming **Failed and canceled jobs** removed exactly the two
+survivors and their inputs. After each confirmed action, focus stayed in
+Queue Manager. Closing the queue returned focus to the launcher. The
+third cold launch showed an empty queue. All three lifetimes opened the
+same accepted Project, kept its exact `.igs` and indexed result, and
+closed normally.
+
+Reviewed clean InvokeAI `64ff2c600f04d220e470fdaeec570bd402af42a7` in
+`invokeai/app/api/routers/session_queue.py::{clear,prune}`,
+`app/services/session_queue/session_queue_default.py::{clear,prune,cancel_queue_item}`,
+`app/services/shared/database/queries/session_queue.py` and the completion
+caller in `app/services/session_processor/session_processor_default.py`.
+The fixture drives Studio's existing status-scoped prune through the
+renderer, preload, Main and SQLite.
+
+Independent R3 readback checked the AppImage and embedded ASAR, 20 source
+pins, all 30 migrations in four closed SQLite snapshots, exact frozen
+inputs and all four `.igs` copies. It confirmed the queue counts
+`3 → 2 → 0 → 0`, 65 trusted keydowns, ten screenshots and all 30
+recorded process identities gone. Native peak memory was 1,214,853,120
+bytes with zero OOM events. The 165 focused tests, scoped lint,
+formatting, syntax checks and stock packaging passed.
+
+With `IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT=queue-startup-recovery`,
+set `IMAGEGEN_QUEUE_HISTORY_KEYBOARD=1` and run the existing private
+Wayland AppImage smoke with its software keyboard helper. Receipts are
+under `runs/packaged-queue-startup-recovery/20261128-r3`. The first
+attempt used a directory name refused by the fixture guard. R1 started
+the keyboard sequence from the Project editor and exhausted the Tab
+search before reaching the launcher. R2 reached all three normal closes
+and stopped at the generic smoke footer, which still expected two.
+R3 requires the exact three lifetime names after the keyboard checks.
+
+Cleanup released 549,470,208 allocated bytes across these owned runs.
+The final snapshots, frozen input witnesses, screenshots, package identity
+and the failed-attempt logs remain with their retention records.

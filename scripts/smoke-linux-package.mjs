@@ -97,12 +97,19 @@ const savedResults = offlineProject === 'saved-results'
 const savedResultsKeyboardMode = process.env.IMAGEGEN_SAVED_RESULTS_KEYBOARD
 const savedResultsKeyboard = savedResultsKeyboardMode === '1'
 assert.ok(savedResultsKeyboardMode === undefined || (savedResultsKeyboard && savedResults))
+const queueHistoryKeyboardMode = process.env.IMAGEGEN_QUEUE_HISTORY_KEYBOARD
+const queueHistoryKeyboard = queueHistoryKeyboardMode === '1'
+assert.ok(
+  queueHistoryKeyboardMode === undefined ||
+    (queueHistoryKeyboard && offlineProject === 'queue-startup-recovery'),
+)
 const softwareRenderer =
   homeScaleSoftware ||
   workspaceAddKeyboard ||
   workspaceTrashRestore ||
   runtimeInstallationWarmRecheck === '1' ||
   runtimeSetupReviewKeyboard ||
+  queueHistoryKeyboard ||
   updatesKeyboard ||
   savedResultsKeyboard
 assert.ok(
@@ -134,6 +141,7 @@ const nativeWaylandKeyboard =
     workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
     runtimeSetupReviewKeyboard ||
+    queueHistoryKeyboard ||
     updatesKeyboard ||
     savedResultsKeyboard ||
     homeScale)
@@ -1083,6 +1091,15 @@ if (offlineProject === 'queue-startup-recovery')
       'src/main/projects/igs-package.ts',
       'src/main/projects/project-identity.ts',
       'src/renderer/components/GenerationQueueManager.vue',
+    ].map((file) => path.join(repo, file)),
+  )
+if (queueHistoryKeyboard)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-queue-history-keyboard.mjs',
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
+      'src/renderer/App.vue',
+      'src/renderer/components/AppChrome.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (
@@ -2143,6 +2160,9 @@ async function runOwnedProjectProfile() {
       }
     }
     if (offlineProject === 'queue-startup-recovery') {
+      if (queueHistoryKeyboard) {
+        return { offlineProjectResult: await fixture.runPackagedQueueHistoryKeyboard(args) }
+      }
       return await fixture.runPackagedQueueStartupRecovery(args)
     }
     if (offlineProject === 'model-install-startup') {
@@ -2627,6 +2647,15 @@ try {
       )
     } else if (updatesKeyboard) {
       assert.equal(lifetimes.length, 1)
+    } else if (queueHistoryKeyboard) {
+      assert.deepEqual(
+        lifetimes.map(({ name }) => name),
+        [
+          'keyboard-completed-history',
+          'keyboard-failed-canceled-history',
+          'keyboard-empty-history',
+        ],
+      )
     } else {
       assert.equal(
         lifetimes.length,
@@ -2661,7 +2690,7 @@ try {
     applicationUpdateResult = applicationUpdateSmoke.finalize()
   }
   const packageAfter = await identity(appImage)
-  if (noobaiCandidateMatrix || runtimeSetupReviewKeyboard)
+  if (noobaiCandidateMatrix || runtimeSetupReviewKeyboard || queueHistoryKeyboard)
     assert.deepEqual(packageAfter, packageBefore)
   await writeJson('report.json', {
     schemaVersion: 1,
@@ -2675,8 +2704,10 @@ try {
             : 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
           : portableNoobaiLocate
             ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
-            : (offlineProjectScope ??
-              'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.')
+            : queueHistoryKeyboard
+              ? 'Stock AppImage prunes two disjoint terminal queue subsets by keyboard while preserving the accepted Project across cold starts.'
+              : (offlineProjectScope ??
+                'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.')
       : legacyNoobai
         ? 'Actual stock AppImage migrates a DB17 legacy NoobAI profile, reads its queue and reopens the accepted Raster.'
         : incompatibleWorker
@@ -2909,8 +2940,10 @@ console.log(
           : 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
         : portableLocate
           ? 'PASS native NoobAI Locate Project and three normal physical closes'
-          : (offlineProjectMessage ??
-            `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`)
+          : queueHistoryKeyboard
+            ? 'PASS stock AppImage keyboard pruning of mixed terminal queue history and three normal physical closes'
+            : (offlineProjectMessage ??
+              `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`)
     : legacyNoobaiProfile
       ? 'PASS legacy NoobAI queue, accepted provenance, DB17 backup and two normal physical closes'
       : incompatibleWorker
