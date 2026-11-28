@@ -222,6 +222,11 @@ environment and remaining limits, and update the current stage and next run.
         the index and the same thumbnail URL returned 200 and painted the
         expected pixels. Both stock AppImage lifetimes closed normally.
         [Retry after external Project replacement](./phase-5-packaged-home-scale-research.md#retry-the-same-thumbnail-url-after-an-external-replacement)
+  - [x] Saving a new `.igs` revision externally at the same path produced
+        a new thumbnail on Refresh and cold restart. The previous URL
+        returned 404 on both sides of Refresh. The other 127 archives
+        kept their exact bytes.
+        [Refresh a revised Project thumbnail](./phase-5-packaged-home-scale-research.md#refresh-a-revised-project-thumbnail)
 - [ ] **3. Finish interrupted application-update recovery.** Saving and
       launching a signed recovery copy and applying the next signed update from
       that path already passed locally. Manual archive procedures for

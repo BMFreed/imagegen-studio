@@ -1,7 +1,17 @@
 /** Measure Home with owned synthetic Projects in the actual packaged renderer. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { crc32, deflateSync } from 'node:zlib'
@@ -9,7 +19,7 @@ import { crc32, deflateSync } from 'node:zlib'
 import { expect } from '@playwright/test'
 
 import { openAppDatabase } from '../../src/main/db/database.ts'
-import { saveIgsPackage } from '../../src/main/projects/igs-package.ts'
+import { readIgsPackage, saveIgsPackage } from '../../src/main/projects/igs-package.ts'
 import { ProjectIndexRepository } from '../../src/main/projects/project-index.ts'
 import {
   createEmptyProjectDocumentV1,
@@ -17,6 +27,7 @@ import {
 } from '../../src/shared/projects/project-schema.ts'
 import {
   createCardThumbnails,
+  indexedThumbnail,
   measureCardThumbnails,
   prepareCardCacheControls,
   verifyCardCacheControls,
@@ -673,6 +684,7 @@ async function measureHome(
                 'stale-thumbnail',
               )
           : undefined,
+        thumbnailCheck.replaceWithRevision,
       )
     : undefined
   await nativeInput.resize(900, 620)
@@ -900,7 +912,8 @@ export async function runPackagedHomeScale({
   identity,
 }) {
   const profile = process.env.IMAGEGEN_HOME_SCALE_FIXTURE
-  const thumbnailRefresh = profile === 'single-thumbnail-refresh'
+  const thumbnailRevision = profile === 'single-thumbnail-revision'
+  const thumbnailRefresh = profile === 'single-thumbnail-refresh' || thumbnailRevision
   const cardThumbnails = profile === 'single-thumbnails' || thumbnailRefresh
   const singleDistinct = profile === 'single-layered-distinct'
   const distinct = singleDistinct || profile === 'linked-layered-distinct'
@@ -935,6 +948,7 @@ export async function runPackagedHomeScale({
     'Use IMAGEGEN_HOME_SCALE_EARLY_OPEN=1 only with the 256-project distinct layered profiles and without EARLY_PREVIEW.',
   )
   assert.ok(!linked || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
+  assert.ok(!thumbnailRevision || process.env.IMAGEGEN_HOME_SCALE_REFRESH_CONTROL === undefined)
   assert.ok(process.env.IMAGEGEN_CHOOSER_KWIN_PID, 'Use the isolated native KWin session.')
   const projectCount = Number(countArgument)
   const proof = JSON.parse(
@@ -966,8 +980,10 @@ export async function runPackagedHomeScale({
   const database = path.join(appData, 'database/app.sqlite')
   const workspaces = await prepareWorkspaces(appData, projectCount, linked)
   let raster = tinyRaster
+  let replacementThumbnail
   if (cardThumbnails) {
-    const thumbnails = createCardThumbnails(projectCount)
+    const thumbnails = createCardThumbnails(projectCount + Number(thumbnailRevision))
+    if (thumbnailRevision) replacementThumbnail = thumbnails.pop()
     raster = (index) => ({
       ...tinyRaster,
       cardThumbnail: thumbnails[index - 1],
@@ -1017,6 +1033,39 @@ export async function runPackagedHomeScale({
   }
   await writeJson(root, 'home-scale-input.json', input)
 
+  let originalArchive
+  const replaceWithRevision = thumbnailRevision
+    ? async (file) => {
+        const { path: filename, sha256, sizeBytes } = file.bytes
+        const backup = path.join(root, 'before-thumbnail-revision.igs')
+        await copyFile(filename, backup, constants.COPYFILE_EXCL)
+        originalArchive = await identity(backup)
+        assert.deepEqual(originalArchive, { path: backup, sha256, sizeBytes })
+        const oldProject = (await readIgsPackage(backup)).project
+        const index = files.indexOf(file) + 1
+        assert.ok(index > 0 && file.title === scaleProjectTitle(index) && replacementThumbnail)
+        const revision = `e98c6d46-5794-4dbb-9425-${String(index).padStart(12, '0')}`
+        const replacement = await writeScaleProject(
+          filename,
+          index,
+          file.title,
+          revision,
+          identity,
+          { ...raster(index), cardThumbnail: replacementThumbnail },
+          file.workspaceId,
+        )
+        assert.deepEqual((await readIgsPackage(filename)).project, {
+          ...oldProject,
+          documentRevision: revision,
+        })
+        const preserved = ({ path: member }) =>
+          member === 'preview/merged.png' || member.startsWith('assets/layers/')
+        assert.deepEqual(replacement.members.filter(preserved), file.members.filter(preserved))
+        return replacement
+      }
+    : undefined
+  let currentFiles = files
+  let revisedThumbnail
   const lifetimes = []
   let freshness
   let cacheControls
@@ -1040,7 +1089,7 @@ export async function runPackagedHomeScale({
         : await measureHome(
             state,
             root,
-            files,
+            currentFiles,
             launchStart,
             canvas,
             layered256,
@@ -1050,6 +1099,7 @@ export async function runPackagedHomeScale({
                   appData,
                   controls: cacheControls,
                   refresh: thumbnailRefresh && name === 'first-index',
+                  replaceWithRevision: name === 'first-index' ? replaceWithRevision : undefined,
                 }
               : undefined,
           )
@@ -1062,20 +1112,43 @@ export async function runPackagedHomeScale({
     } finally {
       await closeNormally(state)
     }
+    if (thumbnailRevision && name === 'first-index') {
+      const change = measured.cardThumbnails.externalReplacement
+      assert.ok(change.revisedFile && originalArchive)
+      revisedThumbnail = change
+      currentFiles = files.map((file) =>
+        file.id === change.revisedFile.id ? change.revisedFile : file,
+      )
+    }
     if (cacheControls) await verifyCardCacheControls(cacheControls)
     const checked = await assertSavedState(
       workspaces,
       database,
-      freshness?.expectedFiles ?? files,
+      freshness?.expectedFiles ?? currentFiles,
       identity,
       freshness?.missing,
     )
+    let closedThumbnail
+    if (revisedThumbnail) {
+      closedThumbnail = indexedThumbnail(appData, revisedThumbnail.revisedFile.id)
+      assert.deepEqual(closedThumbnail, revisedThumbnail.after)
+      assert.deepEqual(await identity(originalArchive.path), originalArchive)
+      if (name === 'first-index') {
+        const firstDatabase = path.join(root, 'before-thumbnail-restart.sqlite')
+        await copyFile(database, firstDatabase, constants.COPYFILE_EXCL)
+        assert.deepEqual(await identity(firstDatabase), {
+          ...checked.database,
+          path: firstDatabase,
+        })
+      }
+    }
     const result = {
       ...measured,
       database: checked.database,
-      filesUnchanged: !freshness,
+      filesUnchanged: !freshness && !revisedThumbnail,
       indexedProjects: checked.projects.length,
       normalPhysicalExit: state.normalPhysicalExit,
+      ...(closedThumbnail && { closedThumbnail }),
     }
     await writeJson(root, `${name}-measurements.json`, result)
     lifetimes.push(result)
@@ -1086,7 +1159,7 @@ export async function runPackagedHomeScale({
   }
 
   return {
-    filesUnchanged: !freshness,
+    filesUnchanged: !freshness && !revisedThumbnail,
     input,
     lifetimes,
     measurement: {
@@ -1112,5 +1185,6 @@ export async function runPackagedHomeScale({
     projectCount,
     ...(cacheControls && { cardCacheControls: 'card-cache-controls.json' }),
     ...(freshness && { refreshControl: 'home-scale-refresh-control.json' }),
+    ...(revisedThumbnail && { thumbnailRevision: { originalArchive, ...revisedThumbnail } }),
   }
 }

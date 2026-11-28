@@ -1840,3 +1840,53 @@ formatting and the stock AppImage build passed.
 Cleanup released 607,883,264 allocated bytes. The retained evidence
 includes both run reports and viewport images, the sampled Project
 archive and WebP, the final closed SQLite and exact source receipts.
+
+### Refresh a revised Project thumbnail
+
+On base `db8c00b3`, `single-thumbnail-revision` updates the last card in a
+128-Project grid before its first image request. The fixture uses the
+existing `.igs` writer to save a new revision and embedded WebP. The file
+path, Project key, document ID, title, merged preview and Raster stay
+the same. The new archive has a different inode and SHA-256. The live
+SQLite row still carries the original revision and thumbnail before Refresh.
+
+Scrolling to the card produced an image error, a 404 for its original URL
+and the folder placeholder. Manual Refresh completed its busy cycle with
+128 entries. The new digest returned 200 and the card painted `[24, 24, 80]`
+in the sampled viewport patch. An uncached request for the original URL
+returned 404 again. Cold launch signed a separate URL for the new digest
+and painted the same pixels. Both lifetimes closed normally. Both closed
+SQLite bodies hold the new revision, fingerprint and thumbnail digest.
+
+The source comparison uses the same clean InvokeAI revision and gallery
+callers recorded above. Invoke resolves its thumbnail URL from a gallery
+record and uses a recovery URL revision for a moved image-store entry.
+Studio's fixture covers an externally revised `.igs` at the same path
+through the existing Project index and signed `igs-preview` handler.
+
+R6 and R7 ran on the same stock AppImage, local ext4 and private KDE
+Wayland with software rendering. Run R6 with
+`IMAGEGEN_HOME_SCALE_FIXTURE=single-thumbnail-revision`,
+`IMAGEGEN_HOME_SCALE_PROJECTS=128` and `IMAGEGEN_HOME_SCALE_SOFTWARE=1`.
+R7 replays `single-thumbnail-refresh` with the shared fixture changes.
+The same-byte replacement still recovers at the original URL with the
+404 and 200 sequence and preserves all archives. Both replays also pass
+the FIFO and wrong-WebP cache controls.
+
+Independent R6 readback verified the embedded ASAR, 19 source pins,
+129 archive bodies with 516 members, 127 unchanged archives, both closed
+128-row databases, six rendered viewport samples and physical exit across
+20 PID identities. SQLite integrity, foreign keys and 30 migrations
+passed. The request sequence is recorded by the native browser fixture.
+The focused suite passed 113 tests. Typecheck, scoped lint, formatting
+and the stock AppImage build passed.
+
+The receipts are under `runs/packaged-home-scale/20261128-r6` and
+`20261128-r7`. Cleanup released 392,900,608 allocated bytes. The original
+and revised archives, embedded thumbnail bodies, both closed R6 SQLite
+bodies and screenshots remain. AppImageLauncher briefly integrated the
+R6 binary during package inspection. The binary, generated desktop entry
+and six icons were moved back into the run's custody. The daemon still
+holds read-only descriptors to that AppImage. The lifecycle record pins
+the binary until those descriptors close. This covers bounded thumbnail
+correctness on one host. The supported-host speed target remains open.

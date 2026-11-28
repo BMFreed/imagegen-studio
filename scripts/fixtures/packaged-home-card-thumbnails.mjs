@@ -120,7 +120,7 @@ function screenshotColors(bytes, { viewportWidth, viewportHeight, x, y }) {
   )
 }
 
-function indexedThumbnail(appData, id) {
+export function indexedThumbnail(appData, id) {
   const database = new Database(path.join(appData, 'database/app.sqlite'), {
     fileMustExist: true,
     readonly: true,
@@ -151,7 +151,7 @@ async function archiveIdentity(filename) {
   }
 }
 
-async function replaceIndexedArchive(appData, file) {
+async function replaceIndexedArchive(appData, file, replaceWithRevision) {
   const filename = file.bytes.path
   assert.equal(path.dirname(filename), path.join(appData, 'workspaces/Uncategorized'))
   const original = await archiveIdentity(filename)
@@ -166,17 +166,69 @@ async function replaceIndexedArchive(appData, file) {
     revision: file.revision,
     thumbnailSha256: file.cardThumbnail.sha256,
   })
-  const pending = path.join(path.dirname(filename), '.thumbnail-refresh-replacement.tmp')
-  await copyFile(filename, pending, constants.COPYFILE_EXCL)
-  execFileSync('/usr/bin/touch', ['-r', filename, '--', pending], { timeout: 5_000 })
-  assert.deepEqual(await archiveIdentity(filename), original)
-  await rename(pending, filename)
+  let revisedFile
+  if (replaceWithRevision) {
+    revisedFile = await replaceWithRevision(file)
+    assert.equal(revisedFile.bytes.path, filename)
+    assert.equal(revisedFile.documentId, file.documentId)
+    assert.equal(revisedFile.id, file.id)
+    assert.equal(revisedFile.title, file.title)
+    assert.equal(revisedFile.workspaceId, file.workspaceId)
+    assert.notEqual(revisedFile.revision, file.revision)
+    assert.notEqual(revisedFile.cardThumbnail.sha256, file.cardThumbnail.sha256)
+  } else {
+    const pending = path.join(path.dirname(filename), '.thumbnail-refresh-replacement.tmp')
+    await copyFile(filename, pending, constants.COPYFILE_EXCL)
+    execFileSync('/usr/bin/touch', ['-r', filename, '--', pending], { timeout: 5_000 })
+    assert.deepEqual(await archiveIdentity(filename), original)
+    await rename(pending, filename)
+  }
   const replacement = await archiveIdentity(filename)
-  assert.equal(replacement.sha256, original.sha256)
-  assert.equal(replacement.size, original.size)
+  if (revisedFile) {
+    assert.equal(replacement.sha256, revisedFile.bytes.sha256)
+    assert.equal(replacement.size, revisedFile.bytes.sizeBytes)
+    assert.notEqual(replacement.sha256, original.sha256)
+  } else {
+    assert.equal(replacement.sha256, original.sha256)
+    assert.equal(replacement.size, original.size)
+  }
   assert.notEqual(replacement.inode, original.inode)
   assert.deepEqual(indexedThumbnail(appData, file.id), before)
-  return { before, original, replacement }
+  return { before, original, replacement, ...(revisedFile && { revisedFile }) }
+}
+
+async function probeOldThumbnail(page, oldSource) {
+  const session = await page.context().newCDPSession(page)
+  try {
+    await session.send('Network.enable')
+    await session.send('Network.setCacheDisabled', { cacheDisabled: true })
+    const [response, event] = await Promise.all([
+      page.waitForResponse((reply) => reply.url() === oldSource, { timeout: 10_000 }),
+      page.evaluate(
+        (url) =>
+          new Promise((resolve) => {
+            const probe = new Image()
+            const deadline = setTimeout(() => resolve('timeout'), 7_000)
+            probe.onload = () => {
+              clearTimeout(deadline)
+              resolve('load')
+            }
+            probe.onerror = () => {
+              clearTimeout(deadline)
+              resolve('error')
+            }
+            probe.src = url
+          }),
+        oldSource,
+      ),
+    ])
+    assert.equal(response.status(), 404)
+    assert.equal(event, 'error')
+    return { event, status: response.status(), url: response.url() }
+  } finally {
+    await session.send('Network.setCacheDisabled', { cacheDisabled: false })
+    await session.detach()
+  }
 }
 
 async function refreshStaleThumbnail({
@@ -188,6 +240,7 @@ async function refreshStaleThumbnail({
   page,
   readView,
   refreshCatalog,
+  replaceWithRevision,
   root,
   sample,
   scrollEnd,
@@ -208,11 +261,14 @@ async function refreshStaleThumbnail({
   })
   const responses = []
   const observeResponse = (response) => {
-    if (response.url() === before.source) responses.push(response.status())
+    if (response.url().startsWith(`igs-preview://thumbnail/${file.id}/`)) {
+      responses.push({ status: response.status(), url: response.url() })
+    }
   }
   page.on('response', observeResponse)
   try {
-    const changed = await replaceIndexedArchive(appData, file)
+    const changed = await replaceIndexedArchive(appData, file, replaceWithRevision)
+    const expected = changed.revisedFile ?? file
     await scrollEnd()
     await expect(image).toHaveCount(0)
     assert.equal(await page.evaluate(() => globalThis.__igsThumbnailFailure), before.source)
@@ -225,12 +281,27 @@ async function refreshStaleThumbnail({
     const fallbackBytes = await page.screenshot({ path: fallback, scale: 'css' })
     const refresh = await refreshCatalog()
     const after = indexedThumbnail(appData, file.id)
-    assert.deepEqual(after, { ...changed.before, fingerprint: changed.replacement.fingerprint })
+    assert.deepEqual(after, {
+      ...changed.before,
+      fingerprint: changed.replacement.fingerprint,
+      revision: expected.revision,
+      thumbnailSha256: expected.cardThumbnail.sha256,
+    })
     await scrollEnd()
-    const end = await sample()
-    assert.equal(end.observed.source, before.source)
+    const end = await sample(expected)
     assert.deepEqual(await archiveIdentity(file.bytes.path), changed.replacement)
-    assert.deepEqual(responses, [404, 200])
+    assert.deepEqual(responses, [
+      { status: 404, url: before.source },
+      { status: 200, url: end.observed.source },
+    ])
+    let oldAfterRefresh
+    if (changed.revisedFile) {
+      assert.notEqual(end.observed.source, before.source)
+      oldAfterRefresh = await probeOldThumbnail(page, before.source)
+      await assert.rejects(lstat(cache), { code: 'ENOENT' })
+    } else {
+      assert.equal(end.observed.source, before.source)
+    }
     return {
       end,
       observation: {
@@ -239,7 +310,8 @@ async function refreshStaleThumbnail({
         fallback,
         fallbackSha256: digest(fallbackBytes),
         refresh,
-        responses,
+        responses: responses.map(({ status }) => status),
+        ...(oldAfterRefresh && { requests: responses, oldAfterRefresh }),
       },
     }
   } finally {
@@ -257,6 +329,7 @@ export async function measureCardThumbnails(
   lifetime,
   controls,
   refreshCatalog,
+  replaceWithRevision,
 ) {
   const scroller = page.locator('.browser-content')
   const order = await grid
@@ -309,8 +382,7 @@ export async function measureCardThumbnails(
     })
   }
 
-  const sample = async (id, label) => {
-    const file = projects.get(id)
+  const sample = async (id, label, file = projects.get(id)) => {
     const { rgb, sha256 } = file.cardThumbnail
     await expect(
       article(id).getByRole('button', { name: `Select ${file.title}`, exact: true }),
@@ -395,8 +467,9 @@ export async function measureCardThumbnails(
         page,
         readView: () => view(tail),
         refreshCatalog,
+        replaceWithRevision,
         root,
-        sample: () => sample(tail, 'last'),
+        sample: (file) => sample(tail, 'last', file),
         scrollEnd,
       })
     : await runTail()
