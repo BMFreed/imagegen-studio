@@ -10,7 +10,9 @@ requires the production publisher in step 5.
 The two-plinth reference swap and the named-camera control failed their
 visual gates in Studio and installed InvokeAI. A simpler two-duck IMG
 scene passed the ordinary prerequisite at strength 0.30. The regional
-reference still failed to localize yellow body appearance in either engine.
+reference still failed to localize yellow body appearance in either engine
+after removing the color adjective. On Anima, the image-wide scarf negative
+preserved both scarves even with the accessory omitted from the positives.
 The table-only Smart Inpaint edit in both engines preserved all protected
 pixels and kept the table edges intact. The apple insertion still failed.
 Explicit Refresh and indexed restart passed local
@@ -56,6 +58,11 @@ environment and remaining limits, and update the current stage and next run.
         and both earlier local assignments. The local suppression gate
         stays open.
         [Image-wide negative control](./phase-4-anima-apple-negative-research.md#image-wide-negative-on-the-same-apple)
+  - [x] Removed scarf instructions from the Anima positives and compared
+        an empty global negative with `(red scarf)1.5`. The two cats and
+        both red scarves remained in Studio and on the current Invoke
+        denoiser. This recipe leaves the local negative criterion open.
+        [Optional scarf comparison](./phase-4-anima-negative-spatial-utility-research.md#image-wide-negative-with-optional-scarves)
   - [x] Compared the failed Illustrious two-plinth assignment and swap
         with installed InvokeAI. Both engines failed recognizable
         placement on the held recipe.
@@ -76,6 +83,10 @@ environment and remaining limits, and update the current stage and next run.
         replayed the control byte for byte before moving the yellow reference
         between owners. Both engines kept the bodies gray on both sides.
         [Two-duck control and reference comparison](./phase-4-regional-reference-placement-research.md#two-gray-ducks-on-a-plain-field)
+  - [x] Removed `gray` from the held two-duck positive. The ordinary
+        frame passed and replayed byte for byte. Both engines kept
+        both duck bodies gray through the left and right assignments.
+        [Color adjective comparison](./phase-4-regional-reference-placement-research.md#remove-the-gray-adjective)
 - [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
       contrast and Home performance checks on the candidate.
   - [x] The stock AppImage kept Trash across workspace removal and restart,

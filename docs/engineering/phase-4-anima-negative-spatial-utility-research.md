@@ -136,3 +136,72 @@ payloads were compacted after physical exit and dependency checks. Archive
 `92d286e491463303ef7c9e8ca6459561432bab3e593449d1b5a56b08c749f01d`.
 Removal of the four owned directories reclaimed about 11.5 MiB after
 retention. The retained evidence remains available for image and byte review.
+
+## Image-wide negative with optional scarves
+
+The follow-up on Studio `00606be6ae61a43a31e816c25796f5c25ecd0e84`
+keeps the exact opaque source, split masks, Cyberfalafel Anima v1.0 checkpoint,
+Qwen3 and Wan VAE from the earlier scarf comparison. The global
+positive is `two separate white cats, simple illustration, plain light background`.
+Each owner uses `one white cat` as its local positive. Both local
+negatives are empty. The sole difference between the two new
+requests is empty global negative versus `(red scarf)1.5`.
+Seed 123, Heun20, strength 0.5, CFG 4 and Auto VAE are fixed.
+The gate requires both red scarves and both cats in the control,
+then visible removal of both scarves while the cats remain in the
+treatment. The two positive regions remain in both jobs.
+
+Re-read local clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The owners are
+`core/graph.ts::buildAnimaGraph`,
+`core/canvas/{compileCanvasGraph,addRegionalGuidance}.ts`,
+`app/invocations/text_encoder/anima_text_encoder.py::_encode_prompt`
+and `app/invocations/anima/anima_denoise.py::_run_diffusion`.
+The source passes the unmasked global negative through the CFG
+negative pass with image-wide coverage. Its encoder uses one active
+pad/eos token for empty Qwen input. Weighted T5 ranges come from
+`backend/anima/prompt_weighting.py`. The original Invoke denoiser
+comparison uses the same frozen source, local positives, masks,
+model and Studio VAE boundary.
+
+The two Studio jobs recorded 19 inference evaluations each and exited normally.
+The compiled global treatment has cleaned text `red scarf` and
+weight 1.5 on the literal span `[0,9)`. Both blind readers
+recognized two white cats with red scarves in both images. The
+shape of each loose left scarf end changed. Both recognizable
+scarves remained. Of the 2,845 fixed pixels in each scarf core,
+the control had 2,845 and 2,845 red pixels. The treatment had
+2,806 and 2,811. The image-wide removal prerequisite failed and
+the local negative visual criterion stays open.
+
+The matched comparison executed the original current Invoke backbone,
+prompt path and Heun denoiser directly. It used the same model and held
+the Studio VAE posterior and decode. Both cases recorded 19 Heun
+iterations, with 19 positive and 19 negative forwards per case. The
+positive masks covered their own 512 queries each, and the sole
+negative bank covered all 1,024 queries. All four prompt encodings
+matched Studio for cleaned text, Qwen IDs, states and masks, and T5
+IDs and weights. Both blinded readers again saw two readable cats
+wearing recognizable red scarves. The fixed red-pixel counts were:
+
+| Case | Studio left / right | Current Invoke left / right |
+| --- | ---: | ---: |
+| Empty global negative | 2,845 / 2,845 | 2,845 / 2,845 |
+| Weighted global negative | 2,806 / 2,811 | 2,787 / 2,788 |
+
+The first comparison attempt refused the historical model-loader
+digest before denoising and produced no image. The current Invoke
+loader selects filtered tensor names before reading values. For the
+retry, a CPU preflight joined that selector to the exact checkpoint
+header and verified the same 685 dense tensors and 28-block
+configuration as the current-revision bridge. The successful retry
+recorded zero swap and OOM and closed the private controller.
+
+The Studio pair is retained under `runs/anima-scarf-optional-global/20261128-r1`.
+The setup refusal and completed current-source pair are in
+`runs/anima-scarf-optional-global-invoke/{20261128-r1,20261128-r2}`.
+These runs retain the original images, comparison sheet, frozen
+requests, current source receipts, and the Studio Project and SQLite
+evidence. Cleanup removed 12,894,208 allocated bytes of owned scratch
+and review copies after the runs closed. This result is specific to
+the held source and recipe.

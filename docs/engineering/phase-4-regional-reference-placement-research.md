@@ -400,3 +400,44 @@ replay, two blind panels and saved Project packages. The Invoke runs
 keep the executed graph receipts, SQLite source bodies and materialized
 database snapshots. Cleanup reclaimed 62,685,184 allocated bytes from
 idle owned payloads and review copies across the five runs.
+
+### Remove the gray adjective
+
+At Studio `00606be6ae61a43a31e816c25796f5c25ecd0e84`, the new
+recipe removes only `gray ` from the global positive. Its source,
+reference, seed, masks, adapter settings and strength 0.30 are held
+against the preceding control and treatments. The Studio request
+readback verifies the exact change after normalizing owned output
+and staging paths. The installed InvokeAI comparison uses 6.14.3.
+
+The local Invoke checkout was clean at
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. Re-read
+`prepareCanvasInvocation.ts`, `core/graphExport.ts`,
+`core/canvas/{compileCanvasGraph,addRegionalGuidance}.ts`,
+`app/invocations/mask.py`,
+`app/invocations/sd/{ip_adapter,denoise_latents}.py` and
+`backend/stable_diffusion/diffusion/{regional_ip_data,shared_invokeai_diffusion}.py`.
+The comparison pins the distinct installed 6.14.3 sources and
+checks that the executed adapter and mask are consumed by the
+denoiser in each treatment.
+
+The ordinary Studio image passed two blind reviews for recognizable
+gray ducks and a wide gap. It replayed byte for byte at SHA-256
+`393d5f6a748879bf14cb691958c96c0106262923ec5397f4add6cd45d31c4c43`
+before the left and right reference requests. The three matched
+Invoke queue items completed with ten Euler steps each.
+
+Two blinded readers saw two readable gray ducks in every output
+from both engines. Warm highlights and pastel streaks varied.
+Each targeted body core had zero pixels meeting the frozen
+yellow criterion in both engines. This recipe failed the visual
+localization criterion with the color adjective removed.
+The visual reference gate stays open.
+
+The runs `runs/regional-reference-two-ducks-no-gray/{20261128-r1,20261128-r2}`
+and `runs/invoke-regional-reference-two-ducks-no-gray/20261128-r1`
+retain the inputs, completed outputs, comparison sheet, visual verdicts,
+native receipts, and inspected SQLite copies. Full typecheck and app
+build passed. The controllers and inference children exited with zero
+swap and OOM in the owned scopes.
+Cleanup reclaimed 41,840,640 allocated bytes across the three runs.
