@@ -8,9 +8,11 @@ and exact model relink in step 4. The same source passed Setup and
 Repair on ext4 with the qualification publisher. The stock Setup path
 requires the production publisher in step 5.
 The two-plinth reference swap and the named-camera control failed their
-visual gates in Studio and installed InvokeAI. The table-only Smart
-Inpaint edit in both engines preserved all protected pixels and kept
-the table edges intact. The apple insertion still failed.
+visual gates in Studio and installed InvokeAI. A simpler two-duck IMG
+scene passed the ordinary prerequisite at strength 0.30. The regional
+reference still failed to localize yellow body appearance in either engine.
+The table-only Smart Inpaint edit in both engines preserved all protected
+pixels and kept the table edges intact. The apple insertion still failed.
 Explicit Refresh and indexed restart passed local
 256-project checks. Early selection, preview and Open also passed with
 one workspace. Broader complete-discovery performance remains open in step 2.
@@ -66,9 +68,14 @@ environment and remaining limits, and update the current stage and next run.
   - [x] Named one film camera in the shared prompt without assigning its
         side. The ordinary controls in both engines fused a lens-like
         detail with the left plinth. Both failed the recognizable-camera
-        prerequisite for qualifying reference placement. The next recipe
-        needs a passing ordinary control for the chosen subject.
+        prerequisite for qualifying reference placement.
         [Named-camera controls](./phase-4-regional-reference-placement-research.md#name-the-camera-without-assigning-its-side)
+  - [x] Used two gray ducks on a plain source. The strength-0.50 ordinary
+        comparison had the same ambiguous bill detail in both engines.
+        At strength 0.30, both ducks and the gap remained readable. Studio
+        replayed the control byte for byte before moving the yellow reference
+        between owners. Both engines kept the bodies gray on both sides.
+        [Two-duck control and reference comparison](./phase-4-regional-reference-placement-research.md#two-gray-ducks-on-a-plain-field)
 - [ ] **2. Close remaining UI and data checks.** Finish the keyboard, focus,
       contrast and Home performance checks on the candidate.
   - [x] The stock AppImage kept Trash across workspace removal and restart,

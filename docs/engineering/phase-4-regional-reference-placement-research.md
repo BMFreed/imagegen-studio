@@ -287,3 +287,116 @@ bytes of owned raw payloads and scratch. The tests exercised the
 existing Main capture and installed worker in Studio and the installed
 native queue in InvokeAI. Full typecheck and app build passed on the
 sampled checkout.
+
+## Two gray ducks on a plain field
+
+Studio base `13fb09c075ce74bfcd15c49b0b7b2e9efb4e7261`. The next
+ordinary control starts with two identical neutral-gray duck figures
+and a broad empty center. The fixture converts the retained original
+yellow duck card to luma, scales two copies and feathers their outer
+square edges into an opaque neutral 512×512 source. The reference
+keeps the exact yellow card. Source SHA-256 is
+`3f9085f90340d2b55f3342a172d858701de5e8d5d5f5b63253b12a7b5b290c70`
+and reference SHA-256 is
+`9f1bfbbb898cb2835a624b5d75abe62e629eea7eefe352ee91ab388858be625e`.
+
+This scene already supplies the two subject outlines. The visual
+question is whether the reference appearance follows its owner
+while both figures and their separation stay legible. The frozen
+test wants visibly yellow on the assigned duck body, with the
+opposite body predominantly neutral. It requires the effect on
+both sides when the same reference changes owner. The two masks
+retain the previous geometry and the positive describes gray
+ceramic ducks. The ordinary Project genuinely authors an empty
+Regional Guidance list. Its two ducks, eyes, bills, and bodies
+must be readable before reference treatments are submitted.
+
+Re-read clean InvokeAI
+`64ff2c600f04d220e470fdaeec570bd402af42a7`. The SDXL canvas
+`graftImageToImage` and `setCanvasDenoisingRange` in
+`core/canvas/compileCanvasGraph.ts` connect the source encoder and
+convert strength to start. `addRegionalGuidance.ts` attaches each
+owner's mask to that owner's adapter. Backend
+`app/invocations/mask.py` and
+`app/invocations/sd/{ip_adapter,denoise_latents}.py` consume alpha,
+the original reference and the resulting conditioning. In
+`denoise_latents.py`, the scheduler caller uses the rounded cutoff
+against the leading Euler grid. The Studio ordinary and regional
+IMG workers retain the same training-timestep cutoff on this grid.
+
+### Initial ordinary comparison at strength 0.50
+
+Both engines used the official checkpoint, seed 123, 30 nominal
+Euler/Normal steps, CFG 5 with rescale 0, embedded FP16 VAE and empty
+negative. Studio completed one real Main capture and installed
+worker request with 16 progress steps. The isolated installed
+InvokeAI 6.14.3 queue finished the matched ordinary graph. Two
+blind readers of the Studio frame recognized both ducks and the
+clear gap. One found the right bill ambiguous. Both engines show
+dark or cyan merged bill details, reflected colors and a spur
+behind the right duck. The strict ordinary gate was inconclusive.
+The trial stopped before the regional treatments.
+
+The same visual defects appeared in 512×512 images that differ
+at 141,641 decoded RGB positions. The visual agreement is specific to this recipe. Both commands finished
+normally, with zero swap and OOM in the owned scopes.
+
+### Strength 0.30 control and gated references
+
+The follow-up changed only image denoising strength, from 0.50 to
+0.30. Its frozen Euler prediction was 10 evaluations from 298 to 1.
+The sole ordinary Studio request finished all 10. Two blinded readers
+recognized separate gray ducks, readable eyes, distinct bills and
+bodies, and the empty gap. They noted faint outlines and color
+streaks around the right figure. The control passed the preregistered
+scene criterion for this seed. Its original PNG SHA-256 is
+`1554a33733841ef76fe81bd880750a948aee507607b6dc577e6df2e2841f3886`.
+
+The next Studio run required an exact byte replay of this control
+before submitting either treatment. The ordinary replay recorded the
+same PNG digest. Each treatment assigns the same full-weight
+original reference to exactly one owner, first left and then right.
+Both keep the source, text, fixed sampling, full step range, and
+disjoint half-open masks `[0,192) × [64,384)` and
+`[320,512) × [64,384)`.
+
+Both Studio treatment images retain two gray ducks with readable eyes,
+bills, bodies and an empty middle. Highlights, outlines and peripheral
+streaks vary. Two readers saw no body visibly turn yellow on either
+side. Installed InvokeAI 6.14.3 ran the matching three queue graphs
+with the same authored range, source, reference and masks. Two blind
+reads of its outputs reached the same result. The visual verdict is
+**NOT_QUALIFIED** for selective body appearance on this recipe.
+
+Each body-core sample has 3,354 pixels. With the fixed yellow witness
+`R-B ≥ 24`, `G-B ≥ 16`, and `|R-G| ≤ 64`, the counts were:
+
+| Case | Studio left / right | InvokeAI left / right |
+| --- | ---: | ---: |
+| Ordinary | 20 / 15 | 29 / 32 |
+| Left reference | 6 / 0 | 3 / 0 |
+| Right reference | 0 / 0 | 0 / 0 |
+
+The counts corroborate the visual observations of a low yellow signal
+in the body cores. The comparison establishes a usable
+ordinary subject control and a shared failure of reference localization
+under the held prompt and strength. Broader model quality and human
+acceptance remain open.
+
+Studio completed 30 progress events in the gated run, with a sampled
+worker peak of 8,852 MiB VRAM. InvokeAI completed three queue records in
+65.12 seconds. The executed graphs and captured Studio requests match
+the reference image and both 61,440-pixel owner masks. The ordinary
+control has zero region or adapter inputs. Both scopes reached their
+12 GiB memory limit with zero swap and OOM events. All controllers and
+inference processes exited. Full typecheck and app build passed.
+
+The exact sources, contracts and visual gate are retained under
+`runs/regional-reference-two-ducks-inputs/20261128-r1`,
+`runs/regional-reference-two-ducks/{20261128-r1,20261128-r3,20261128-r4}`
+and `runs/invoke-regional-reference-two-ducks/{20261128-r1,20261128-r2}`.
+The Studio R4 run keeps the annotated comparison sheet, exact ordinary
+replay, two blind panels and saved Project packages. The Invoke runs
+keep the executed graph receipts, SQLite source bodies and materialized
+database snapshots. Cleanup reclaimed 62,685,184 allocated bytes from
+idle owned payloads and review copies across the five runs.

@@ -205,6 +205,10 @@ recognizable duck and camera pair. In the
 both ordinary controls fused lens-like details with a plinth. The
 reference-placement criterion remains open.
 
+On a simpler [two-duck scene](./phase-4-regional-reference-placement-research.md#two-gray-ducks-on-a-plain-field),
+strength 0.30 preserved both ducks and their separation in the ordinary
+control. Swapping the yellow reference kept both bodies gray in each engine.
+
 ## Current ordinary mug IMG color emphasis
 
 [Mug IMG with explicit color emphasis](./phase-4-ordinary-img-mug-weight-research.md)
