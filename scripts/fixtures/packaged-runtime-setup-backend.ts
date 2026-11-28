@@ -67,7 +67,7 @@ export async function createPackagedRuntimeSetupManager(
   dataRoot: string,
   advisory: RuntimeAdvisory,
 ): Promise<RuntimeManager> {
-  const artifacts = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
+  const artifacts = path.join(os.userInfo().homedir, '.codex/artifacts/imagegen-studio')
   const qualificationRuns = path.join(artifacts, 'runs/packaged-runtime-setup')
   const configPath = process.env.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG
   const uid = process.getuid?.()

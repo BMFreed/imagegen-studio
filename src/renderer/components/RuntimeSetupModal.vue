@@ -118,6 +118,7 @@ function formatBytes(bytes: number | null): string {
   >
     <NCard
       :aria-label="title"
+      aria-modal="true"
       class="runtime-setup-modal"
       contentScrollable
       role="dialog"

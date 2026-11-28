@@ -12,8 +12,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   check: []
-  install: []
-  repair: []
+  install: [event: MouseEvent]
+  repair: [event: MouseEvent]
 }>()
 
 const outpaintNeedsRepair = computed(
@@ -92,20 +92,22 @@ const description = computed(() => {
       <NButton
         v-if="status?.kind === 'not-installed'"
         key="n-button-1"
+        class="runtime-setup-trigger"
         :disabled="pending !== null"
         :loading="pending === 'install'"
         secondary
-        @click="emit('install')"
+        @click="emit('install', $event)"
       >
         Set up
       </NButton>
       <NButton
         v-else-if="status?.kind === 'needs-repair' || outpaintNeedsRepair"
         key="n-button-2"
+        class="runtime-setup-trigger"
         :disabled="pending !== null"
         :loading="pending === 'repair'"
         secondary
-        @click="emit('repair')"
+        @click="emit('repair', $event)"
       >
         Repair
       </NButton>
@@ -178,5 +180,10 @@ const description = computed(() => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.runtime-setup-trigger:focus-visible {
+  outline: 2px solid var(--app-text);
+  outline-offset: -2px;
 }
 </style>

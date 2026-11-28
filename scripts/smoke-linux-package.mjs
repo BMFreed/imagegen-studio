@@ -39,6 +39,7 @@ import {
 const execute = promisify(execFile)
 const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
+const runtimeSetupReviewKeyboard = runtimeSetupControl === 'review-keyboard'
 const protocolRepair = runtimeSetupControl === 'protocol-repair'
 const protocolRepairTrainedFlag = process.env.IMAGEGEN_LINUX_PACKAGE_PROTOCOL_REPAIR_TRAINED
 const protocolRepairTrained = protocolRepairTrainedFlag === '1'
@@ -101,6 +102,7 @@ const softwareRenderer =
   workspaceAddKeyboard ||
   workspaceTrashRestore ||
   runtimeInstallationWarmRecheck === '1' ||
+  runtimeSetupReviewKeyboard ||
   updatesKeyboard ||
   savedResultsKeyboard
 assert.ok(
@@ -131,6 +133,7 @@ const nativeWaylandKeyboard =
     workspaceAddKeyboard ||
     workspaceTrashKeyboard === '1' ||
     modelInstallHistory ||
+    runtimeSetupReviewKeyboard ||
     updatesKeyboard ||
     savedResultsKeyboard ||
     homeScale)
@@ -163,7 +166,7 @@ assert.equal(process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined, nativeW
 const nativeMemoryGiB = boundedTrained ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
-  : runtimeSetupControl
+  : runtimeSetupControl && !runtimeSetupReviewKeyboard
     ? 360
     : noobaiInstall
       ? noobaiComponentInstall
@@ -180,7 +183,11 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    privateDesktop || projectExport || continuityFixture || noobaiCandidateX11
+    privateDesktop ||
+      projectExport ||
+      continuityFixture ||
+      noobaiCandidateX11 ||
+      runtimeSetupReviewKeyboard
       ? {
           ...options,
           env: {
@@ -347,6 +354,7 @@ assert.ok(
   runtimeSetupControl === undefined ||
     ([
       'incompatible',
+      'review-keyboard',
       'cancel',
       'corrupt',
       'disk',
@@ -1149,6 +1157,21 @@ if (runtimeSetupControl) {
   ]) {
     sourcePaths.push(path.join(repo, `scripts/fixtures/${fixture}.mjs`))
   }
+}
+if (runtimeSetupReviewKeyboard) {
+  sourcePaths.push(
+    ...[
+      'scripts/prepare-packaged-runtime-setup.mjs',
+      'scripts/fixtures/packaged-runtime-setup-backend.ts',
+      'scripts/fixtures/packaged-runtime-setup-keyboard.mjs',
+      'scripts/fixtures/packaged-home-recovery-keyboard.mjs',
+      'src/main/runtime/index.ts',
+      'src/main/runtime/runtime-setup-ipc.ts',
+      'src/renderer/App.vue',
+      'src/renderer/components/RuntimeNotice.vue',
+      'src/renderer/components/RuntimeSetupModal.vue',
+    ].map((file) => path.join(repo, file)),
+  )
 }
 if (protocolRepair) {
   sourcePaths.push(
@@ -2458,7 +2481,12 @@ try {
             assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
           } else {
             const state = await launch(runtimeSetupControl)
-            result = await setupControl.run(state.page)
+            try {
+              result = await setupControl.run(state)
+            } catch (error) {
+              if (runtimeSetupReviewKeyboard) await closeNormally(state)
+              throw error
+            }
             await closeNormally(state)
           }
           const leafDiagnostics = lifetimes
@@ -2466,6 +2494,7 @@ try {
             .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
             .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
           if (fullLifecycle) assert.deepEqual(leafDiagnostics, [])
+          if (runtimeSetupReviewKeyboard) assert.deepEqual(leafDiagnostics, [])
           if (runtimeSetupControl === 'disk') {
             assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
           }
@@ -2632,7 +2661,8 @@ try {
     applicationUpdateResult = applicationUpdateSmoke.finalize()
   }
   const packageAfter = await identity(appImage)
-  if (noobaiCandidateMatrix) assert.deepEqual(packageAfter, packageBefore)
+  if (noobaiCandidateMatrix || runtimeSetupReviewKeyboard)
+    assert.deepEqual(packageAfter, packageBefore)
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
@@ -2659,19 +2689,21 @@ try {
                 ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
                 : noobaiPreview
                   ? 'Actual fused AppImage through public CivitAI Preview, exact file choice and Cancel with real ModelService and SQLite.'
-                  : runtimeSetupControl
-                    ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
-                    : trainedGeneration
-                      ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
-                      : historicalUpgrade
-                        ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-                        : packagedProjectImageExport
-                          ? 'Actual stock AppImage exports full-resolution Project PNGs with the installed CPU worker and the real KDE SaveFile portal.'
-                          : packagedRuntimeContinuity
-                            ? 'Successive stock AppImages Save the same Project through an unchanged installed CPU worker.'
-                            : engine
-                              ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-                              : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+                  : runtimeSetupReviewKeyboard
+                    ? 'Qualification AppImage reviews signed Setup metadata and dismisses by native keyboard in private software-rendered KDE Wayland.'
+                    : runtimeSetupControl
+                      ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
+                      : trainedGeneration
+                        ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+                        : historicalUpgrade
+                          ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+                          : packagedProjectImageExport
+                            ? 'Actual stock AppImage exports full-resolution Project PNGs with the installed CPU worker and the real KDE SaveFile portal.'
+                            : packagedRuntimeContinuity
+                              ? 'Successive stock AppImages Save the same Project through an unchanged installed CPU worker.'
+                              : engine
+                                ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+                                : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: appImageFuse
       ? 'Direct FUSE AppImage; native Wayland on private virtual KWin; Chromium CDP loopback.'
       : kdeChooser

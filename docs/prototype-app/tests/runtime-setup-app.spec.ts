@@ -562,6 +562,113 @@ test('Cancel and Escape revoke loaded consent without installation, and reopenin
   expect(observed.previews[0]!.token).not.toBe(observed.previews[1]!.token)
 })
 
+test('Setup keyboard review exposes a named modal in Chromium and contains both actions', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  await mountSetupApp(page)
+  const setup = notice(page).getByRole('button', { exact: true, name: 'Set up' })
+  await setup.focus()
+  await page.keyboard.press('Enter')
+  const review = dialog(page)
+  const cancel = review.getByRole('button', { exact: true, name: 'Cancel' })
+  const install = review.getByRole('button', { exact: true, name: 'Install' })
+  await expect(install).toBeEnabled()
+  await expect(cancel).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(install).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(cancel).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(install).toBeFocused()
+
+  const browser = await page.context().newCDPSession(page)
+  try {
+    const { nodes } = await browser.send('Accessibility.getFullAXTree')
+    const accessible = nodes.filter(
+      (node) =>
+        !node.ignored &&
+        node.role?.value === 'dialog' &&
+        node.name?.value === 'Set up image generation',
+    )
+    expect(accessible).toHaveLength(1)
+    expect(accessible[0]?.properties?.find(({ name }) => name === 'modal')?.value.value).toBe(true)
+    await expect(review).toHaveAttribute('aria-modal', 'true')
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('open-review.png') })
+  } finally {
+    await browser.detach()
+    await page.keyboard.press('Escape')
+  }
+  await expect(review).toHaveCount(0)
+  await expect(setup).toBeFocused()
+  await expect(setup).toHaveCSS('outline-style', 'solid')
+  await expect(setup).toHaveCSS('outline-width', '2px')
+  await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('returned-focus.png') })
+  expect((await snapshot(page)).operations).toEqual([])
+})
+
+for (const { confirmName, mode, openerName, status } of [
+  { confirmName: 'Install', mode: 'install', openerName: 'Set up', status: 'not-installed' },
+  { confirmName: 'Repair', mode: 'repair', openerName: 'Repair', status: 'needs-repair' },
+] as const) {
+  for (const dismissKey of ['Escape', 'Enter']) {
+    const action = dismissKey === 'Escape' ? 'Escape' : 'Cancel'
+    test(`Setup keyboard ${mode} review returns focus after ${action} settles`, async ({
+      page,
+    }) => {
+      await mountSetupApp(page, { discardHeld: true, status })
+      const opener = notice(page).getByRole('button', {
+        name: new RegExp(`^(loading )?${openerName}$`),
+      })
+      await opener.focus()
+      await page.keyboard.press('Enter')
+      const review = dialog(page, mode)
+      await expect(review.getByRole('button', { exact: true, name: confirmName })).toBeEnabled()
+      await expect(review.getByRole('button', { exact: true, name: 'Cancel' })).toBeFocused()
+      await page.keyboard.press(dismissKey)
+      await expect(review).toHaveCount(0)
+      await expect.poll(async () => (await snapshot(page)).discards).toBe(1)
+      await expect(opener).toBeDisabled()
+      await release(page, 'discard')
+      await expect(opener).toBeEnabled()
+      await expect(opener).toBeFocused()
+      expect(await opener.evaluate((element) => element.matches(':focus-visible'))).toBe(true)
+      await expect(opener).toHaveCSS('outline-style', 'solid')
+      await expect(opener).toHaveCSS('outline-width', '2px')
+      const observed = await snapshot(page)
+      expect(observed.previews.map((preview) => preview.mode)).toEqual([mode])
+      expect(observed.operations).toEqual([])
+    })
+  }
+}
+
+test('Setup keyboard dismissal preserves another control chosen while discarding the review', async ({
+  page,
+}) => {
+  await mountSetupApp(page, { discardHeld: true })
+  const opener = notice(page).getByRole('button', { name: /^(loading )?Set up$/ })
+  await opener.focus()
+  await page.keyboard.press('Enter')
+  const review = dialog(page)
+  await expect(review.getByRole('button', { exact: true, name: 'Install' })).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(review).toHaveCount(0)
+  await expect.poll(async () => (await snapshot(page)).discards).toBe(1)
+  await expect(opener).toBeDisabled()
+  const help = page.getByRole('button', { exact: true, name: 'Help menu' })
+  await help.focus()
+  await page.keyboard.press('Shift+Tab')
+  await expect(help).not.toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(help).toBeFocused()
+  await release(page, 'discard')
+  await expect(opener).toBeEnabled()
+  await expect(help).toBeFocused()
+  const observed = await snapshot(page)
+  expect(observed.previews.map((preview) => preview.mode)).toEqual(['install'])
+  expect(observed.operations).toEqual([])
+})
+
 test('dismissed pending review cannot reopen on its late response, and dismissal settles before new consent', async ({
   page,
 }) => {

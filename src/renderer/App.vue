@@ -647,6 +647,7 @@ let runtimeSetupProgressRevision = -1
 let unsubscribeSetupProgress: (() => void) | undefined
 let runtimeSetupEpoch = 0
 let runtimeSetupPreviewSettled: Promise<void> | null = null
+let runtimeSetupTrigger: HTMLButtonElement | null = null
 const windowClosePending = ref(false)
 let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
@@ -6289,6 +6290,8 @@ async function dismissRuntimeSetup() {
     return
   }
   const epoch = ++runtimeSetupEpoch
+  const trigger = runtimeSetupTrigger
+  runtimeSetupTrigger = null
   runtimeSetupOpen.value = false
   runtimeSetupReview.value = null
   const previewSettled = runtimeSetupPreviewSettled
@@ -6306,6 +6309,19 @@ async function dismissRuntimeSetup() {
     await previewSettled
     if (!rendererDisposed && epoch === runtimeSetupEpoch) {
       runtimePending.value = null
+      // Naive can attempt to return focus while the notice button is still disabled.
+      await nextTick()
+      const active = document.activeElement
+      if (
+        !rendererDisposed &&
+        epoch === runtimeSetupEpoch &&
+        !windowClosePending.value &&
+        trigger?.isConnected &&
+        !trigger.disabled &&
+        (active === document.body || active?.closest('.runtime-setup-modal'))
+      ) {
+        trigger.focus({ preventScroll: true })
+      }
     }
   }
 }
@@ -6325,6 +6341,7 @@ function clearRuntimeSetupControl(operationId: string) {
   runtimeSetupCancelPending.value = false
   runtimeSetupOperationError.value = null
   runtimeSetupReview.value = null
+  runtimeSetupTrigger = null
   runtimeSetupOpen.value = false
   runtimeSetupSubmitting.value = false
   runtimePending.value = null
@@ -6534,7 +6551,7 @@ async function confirmRuntimeSetup() {
   }
 }
 
-async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
+async function runRuntimeAction(action: 'check' | 'install' | 'repair', event?: MouseEvent) {
   if (runtimePending.value !== null) {
     return
   }
@@ -6560,6 +6577,8 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
         applyRuntimeResult(result)
       }
     } else {
+      const trigger = event?.currentTarget
+      runtimeSetupTrigger = trigger instanceof HTMLButtonElement ? trigger : null
       runtimeSetupMode.value = action
       runtimeSetupReview.value = null
       runtimeSetupOpen.value = true
@@ -6599,6 +6618,7 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
   } finally {
     if (!rendererDisposed && epoch === runtimeSetupEpoch) {
       if (!runtimeSetupOpen.value) {
+        runtimeSetupTrigger = null
         runtimePending.value = null
       }
       variantDiagnosticsEpoch.value += 1
@@ -7010,8 +7030,8 @@ onBeforeUnmount(() => {
           :pending="runtimePending"
           :status="status?.kind === 'ready' && runtimeError ? null : status"
           @check="runRuntimeAction('check')"
-          @install="runRuntimeAction('install')"
-          @repair="runRuntimeAction('repair')"
+          @install="runRuntimeAction('install', $event)"
+          @repair="runRuntimeAction('repair', $event)"
         />
         <NAlert
           v-if="globalNotice"

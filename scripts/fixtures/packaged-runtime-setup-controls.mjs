@@ -148,6 +148,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, p
   assert.ok(
     [
       'incompatible',
+      'review-keyboard',
       'cancel',
       'corrupt',
       'disk',
@@ -159,7 +160,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, p
   )
   assert.equal(Boolean(protocolRepair), mode === 'protocol-repair')
   const runs = path.join(
-    os.homedir(),
+    os.userInfo().homedir,
     '.codex/artifacts/imagegen-studio/runs/packaged-runtime-setup',
   )
   assert.ok(root.startsWith(`${runs}/`) && path.resolve(root) === root)
@@ -187,6 +188,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, p
 
   const expectedRoutes = {
     incompatible: [],
+    'review-keyboard': [],
     cancel: ['/runtime.zip'],
     corrupt: ['/runtime.zip'],
     disk: ['/runtime.zip', '/big-lama.pt'],
@@ -340,7 +342,8 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, p
         rollback: mode === 'rollback',
       })
     },
-    async run(page) {
+    async run(state) {
+      const { page } = state
       const setup = 'install'
       const initialStatus = await getRuntimeSetupStatus(page)
       assert.equal(initialStatus.kind, 'not-installed')
@@ -353,6 +356,27 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs, p
         await absentSlots(runtime)
         await absence(journal)
         await absence(lama)
+      }
+      if (mode === 'review-keyboard') {
+        const { runPackagedRuntimeSetupKeyboard } =
+          await import('./packaged-runtime-setup-keyboard.mjs')
+        const progress = await getRuntimeSetupProgress(page)
+        const assertPristine = async () => {
+          await noConsentWrites()
+          assert.deepEqual(await getRuntimeSetupProgress(page), progress)
+          assert.deepEqual(await readdir(path.join(dataRoot, 'logs/worker')), [])
+        }
+        await assertPristine()
+        const keyboard = await runPackagedRuntimeSetupKeyboard({
+          root,
+          state,
+          review,
+          noConsentWrites: assertPristine,
+        })
+        const status = await getRuntimeSetupStatus(page)
+        assert.deepEqual(status, initialStatus)
+        await assertPristine()
+        return { mode, review, keyboard, status, progress, requests }
       }
       await openRuntimeSetupReview(page, setup, review)
       await noConsentWrites()

@@ -148,6 +148,55 @@ retention and Git publication are separate receipts. Payload disposal and final
 publication are recorded in the lifecycle/commit proof; deleted raw fixtures
 must be reconstructed at fresh owned paths, never resumed.
 
+## Keyboard dismissal and focus return
+
+On base `7a5e9c96`, the Chromium tests reproduced five failures on the
+production renderer through controlled API ports. The named review had
+`modal: false`, and neither Escape nor explicit Cancel restored focus to
+Set up or Repair when Main's discard acknowledgment arrived after the
+dialog left. Focus on a different control during discard stayed there.
+
+The custom Naive card now exposes `aria-modal="true"`. The App remembers
+the exact originating button and waits for the existing review and discard
+settlement plus the Vue update before restoring focus. It restores only to
+a live, enabled button when focus would otherwise be left on the body or
+closing review. A keyboard-only outline uses the same app text token as
+Home row focus.
+
+In the final renderer, 34 focused Chromium cases cover Setup and Repair,
+including four held-discard returns and a keyboard move to Help that
+survives settlement. The focused browser logs and screenshots are under
+`runs/runtime-setup-keyboard/20261128-r1`. Typecheck, scoped lint,
+formatting and the desktop build passed.
+
+The AppImage `review-keyboard` control uses the existing private signed
+Setup qualification publisher and exercises real Main, preload and
+review IPC. In private software-rendered KDE Wayland at 900×620, 19
+trusted keyboard inputs reached Setup, traversed both actions in both
+directions and dismissed by Escape and by Cancel. Both actions remained
+inside the viewport. Chromium exposed a single modal Setup dialog. The
+application returned focus to Set up both times and closed normally.
+The transfer log is empty, the operation remains empty and the status
+stays `not-installed`. No pointer, journal, runtime slot, LaMa or worker
+log was created.
+
+The first AppImage run restored focus with Naive's subtle background
+change. The second shows a two-pixel outline with sampled contrast of
+8.07:1 against the button fill and 11.73:1 against the adjacent surface
+after either dismissal. The exact reports, screenshots and comparison
+are under `runs/packaged-runtime-setup/20261128-keyboard-r1` and
+`20261128-keyboard-r2`. Independent readback verified each AppImage and
+embedded ASAR, 44 ASAR members, 19 source pins, the keyboard and pixel
+receipts and ten process identities per launch. The final Vue change
+after R2 reorders two class attributes for lint. The browser checks and
+desktop build were repeated with that source. The packaged check covers
+Setup with the qualification publisher on one host. The renderer checks
+cover Repair in this keyboard slice.
+
+Cleanup released 1,084,039,168 allocated bytes from the two owned builds
+and profiles. Both closed SQLite files, screenshots, package digests and
+native receipts remain with the retention records.
+
 Root's full archive/live byte self-audit retained **752 entries**, with zero
 omissions, in `retained-payloads.tar.gz` (19,227,047 bytes). Exact idle payloads
 and the failed focused browser scratch were then removed, releasing

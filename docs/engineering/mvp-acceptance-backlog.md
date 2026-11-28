@@ -102,6 +102,11 @@ environment and remaining limits, and update the current stage and next run.
         corrected modal semantics and the four sampled labels meet 4.5:1
         text contrast at 900×620.
         [Native Updates result](./phase-5-application-updates-keyboard-research.md#packaged-verification)
+  - [x] The signed qualification Setup review exposes modal semantics,
+        keeps Tab inside and returns keyboard focus to Set up after Escape
+        and Cancel. The returned outline measures 8.07:1 against the button
+        fill. Browser controls also cover Repair and retained focus on Help.
+        [Setup and Repair keyboard result](./phase-5-runtime-setup-ui-research.md#keyboard-dismissal-and-focus-return)
   - [x] Saved generations exposes a modal dialog in Chromium and retains
         visible keyboard focus through Tab, Shift+Tab, Escape and Close.
         Both stock AppImage FUSE lifetimes also preserved the exact
